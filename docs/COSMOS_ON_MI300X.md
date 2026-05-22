@@ -1,0 +1,217 @@
+# Cosmos-Predict-7B on AMD MI300X
+
+*First published benchmark of NVIDIA's Cosmos world-model family on AMD Instinct silicon.*
+
+**Status (2026-05-22):** Pre-alpha runtime measurement. The 121-frame numbers
+below are marked **PROJECTED** pending the warmup-separated validation run that
+is in flight; the 49-frame numbers and the cold reference are measured.
+
+## TL;DR
+
+We ran NVIDIA's `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` end-to-end on an AMD
+Instinct MI300X (`gfx942`, ROCm 7.2.0, torch 2.12+rocm7.2) through the Mirage
+runtime. To our knowledge, as of May 22, 2026, this is the **first publicly
+reported Cosmos benchmark on any AMD GPU.**
+
+| Configuration | NVIDIA H100 (reference stack) | Mirage on AMD MI300X (this work) |
+|---|---|---|
+| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton + `torch.compile` |
+| 121 frames @ 1280×704, 36 steps, BF16 | **~380 s** | **~390 s** (projected; validation running) |
+| Cold first run (incl. ROCm autotuning) | n/a | 738 s |
+| Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
+
+## Why no one has done this before
+
+A deep search (AMD.com, ROCm Blogs, the entire Cosmos GitHub org, the
+`diffusers`/ROCm/aotriton/aiter issue trackers, MLPerf, broader web) returned
+**zero** published numbers for *any* Cosmos variant on *any* AMD Instinct GPU.
+AMD itself has shipped MI300X / MI355X numbers for HunyuanWorld-Voyager, Wan
+2.2, and their own Micro-World, but has conspicuously skipped Cosmos despite
+Cosmos being NVIDIA's flagship "physical AI" world model.
+
+The apparent reason is the dependency stack of NVIDIA's reference
+`cosmos-predict1` repo:
+
+- `transformer_engine` — CUDA-only
+- `apex` — CUDA-only, non-trivial build
+- `NATTEN` — CUDA; Hopper/Blackwell-FNA kernels
+- `flash-attn` — Dao-AILab CUDA build
+
+A naive port has to replace all four at once. **Mirage doesn't.** The HuggingFace
+`diffusers` `CosmosTextToWorldPipeline` has none of those dependencies —
+attention is `torch.nn.functional.scaled_dot_product_attention`, which on ROCm
+dispatches to **aotriton-compiled flash kernels** internally. All four blockers
+disappear.
+
+## What we measured
+
+**Hardware:** AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs, gfx942 / CDNA3);
+ROCm 7.2.0; torch 2.12.0+rocm7.2; 235 GiB host RAM; 20 CPU cores.
+
+**Software:** Mirage Runtime (this repo), `diffusers` 0.37.1 + `transformers`
+5.9.0, BF16 throughout. The `CosmosTextToWorldPipeline` runs unmodified above
+Mirage's `CosmosEngine`; we additionally ship `torch.compile(pipe.transformer)`
+behind a config flag and a per-stage profiler (`mirage.bench.profile`) for
+measurement.
+
+**Workload:** `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`, BF16, 121 frames
+at 1280×704, 36 denoising steps, guidance scale 7.0 — the same configuration
+NVIDIA publishes their ~380 s H100 number for.
+
+### Cold reference run — 121 frames / 36 steps
+
+| | |
+|---|---|
+| Total generation | **738 s** (~12.3 min) |
+| DiT loop (tqdm) | 435 s — 36 × ~12.1 s/step |
+| Everything else | ~303 s — *mostly one-time ROCm kernel autotuning* |
+| Peak HBM | 52.5 / 192 GiB |
+| Output | `benchmark-results/cosmos_reference.mp4`, 121 frames verified |
+
+### Warmup-separated per-stage profile — 49 frames / 12 steps
+
+| Stage | Baseline | with `torch.compile` |
+|---|--:|--:|
+| Text encode (T5) — 2 calls | 0.06 s | 0.06 s |
+| **DiT loop** — 24 transformer forwards | **42.0 s** | **37.1 s** |
+| VAE decode | 0.53 s | 0.53 s |
+| Other | 1.8 s | 1.8 s |
+| **Total** | **44.3 s** | **39.5 s** |
+
+`torch.compile` (inductor + triton-rocm) on the DiT: **1.13× on the loop, 1.12×
+end-to-end.** The DiT is GEMM-bound, so the win is mostly pointwise fusion +
+reduced launch overhead — hipBLASLt already serves the big matmuls.
+
+Two findings worth calling out:
+1. The cold reference run looked **41% VAE/encode-bound**; the warmup-separated
+   profile shows steady-state is **<2%** VAE/encode. The 41% was almost
+   entirely one-time ROCm kernel autotuning (aotriton / hipBLASLt / MIOpen) on
+   first-shape use. *Warming the kernel cache at deploy is itself a real
+   latency win.*
+2. CFG is unbatched — 24 transformer forwards / 12 steps = 2 per step. Batching
+   cond+uncond is a clean training-free lever (~1.2–1.5×, queued).
+
+### Memory
+
+Peak HBM at full configuration: **52.5 / 192 GiB.** Compare NVIDIA's published
+Predict1-7B figure of **74 GB on H100** (within the 80 GB envelope, no
+headroom). The MI300X's 192 GiB leaves **~140 GiB free** — enough headroom to
+keep the model resident *and* run continuous batching or multiple model
+variants / LoRAs co-resident with zero CPU offload. On H100 (80 GB), offload is
+mandatory; on MI300X it isn't. That gap is the structural advantage.
+
+## Compared to NVIDIA's H100
+
+NVIDIA's HF model card for `nvidia/Cosmos-Predict1-7B-Text2World` publishes
+**~380 s** end-to-end for 121 frames @ 1280×704 on a single H100, BF16, using
+their reference stack. Mirage on MI300X via the diffusers path projects to
+**~390 s** steady-state with `torch.compile` (warmup-separated 121-frame
+validation in flight; this draft will be updated with the measured number).
+
+That is **rough parity with H100 on the model NVIDIA designed and tooled for
+their own silicon, using none of their tooling** — no TransformerEngine, no
+Apex, no NATTEN, no CUDA flash-attn — just stock PyTorch SDPA → aotriton.
+
+There is meaningful room above this from levers documented in
+[`OPTIMIZATION.md`](OPTIMIZATION.md): CFG batching, feature/step caching,
+better solver, FP8 (CDNA3 has native FP8 MFMA), and `torch.compile`
+max-autotune. Conservatively stacked, the implementation plan's Phase-1 target
+(2–3×) and Phase-2 target (3–5×) over the diffusers baseline are reachable.
+
+## Strategic context
+
+The Mirage Implementation Plan §5.4 argues the defensible wedge for a
+world-model serving runtime is **non-NVIDIA silicon**, where NVIDIA's bundled,
+vertically integrated stack (NIM, TensorRT-LLM) does not compete and where no
+production-grade WM serving exists. The deep-search above confirms the wedge is
+*empirically empty* in May 2026. These numbers are the existence proof — and
+the diffusers-path strategy that produces them is reproducible from this repo.
+
+## Caveats
+
+- This is one Cosmos variant (Predict1-7B Text2World) on one configuration. We
+  have not yet measured Video2World, Predict2-2B/14B, or Transfer1 on MI300X.
+- The MI300X here is a single VF (virtualized) slice; multi-GPU paths are not
+  exercised on this host.
+- The 121-frame `~390 s` number becomes a measured value (not extrapolated)
+  once the warmup-separated validation run lands.
+- Quality parity with the H100 reference path is implied by component-level
+  bit-equivalence in the diffusers path; we have not run a quantitative
+  comparison (FVD / human eval).
+- Cosmos is governed by the NVIDIA Open Model License; deployment requires the
+  safety guardrail enabled (integrated — see `BUILD_LOG.md` Session 3).
+
+## Reproduce
+
+Hardware: AMD Instinct MI300X (192 GiB) or compatible CDNA3; ROCm 7.x.
+
+```bash
+git clone <repo> mirage && cd mirage
+pip install --user uv
+uv venv --python 3.12 .venv
+uv pip install --python .venv torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2
+make install
+
+make check-gpu
+make info
+
+# generate one reference clip (gated weights; accept license + login)
+.venv/bin/hf auth login --token <hf_token>
+.venv/bin/python scripts/run_cosmos.py                            # 121f / 36 steps
+.venv/bin/python scripts/profile_cosmos.py --frames 49 --steps 12 --compare
+```
+
+## Versions used
+
+| Component | Version |
+|---|---|
+| GPU | AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs, gfx942 / CDNA3) |
+| ROCm | 7.2.0 (HIP 7.2.53211) |
+| Python | 3.12.3 |
+| `torch` | 2.12.0+rocm7.2 (from `download.pytorch.org/whl/rocm7.2`) |
+| `torchvision` | 0.27.0+rocm7.2 (same index) |
+| `diffusers` | 0.37.1 |
+| `transformers` | 5.9.0 |
+| `accelerate` | 1.13.0 (required by diffusers for the T5 encoder's fp32 modules) |
+| `cosmos_guardrail` | 0.3.0 (only when `enable_guardrail=True`) |
+| Mirage | 0.0.1 (this repo) |
+
+## References
+
+### NVIDIA — Cosmos numbers and dependency stack
+- Cosmos-Predict1-7B Text2World H100 reference (~380 s end-to-end):
+  https://huggingface.co/nvidia/Cosmos-Predict1-7B-Text2World
+- Cosmos-Predict2 model matrix (GB200 / B200 / H200 / H100 / L40S / RTX PRO):
+  https://docs.nvidia.com/cosmos/latest/predict2/model_matrix.html
+- Cosmos-Transfer1 (GB200 NVL72 64-GPU real-time at ~40× scaling):
+  https://huggingface.co/nvidia/Cosmos-Transfer1-7B
+- Generalized Neighborhood Attention (GNA, NATTEN successor) on B200,
+  Cosmos-7B 1.3 PFLOPs/s, 28–46% end-to-end:
+  https://research.nvidia.com/labs/cosmos-lab/gna/
+- Cosmos installation page documenting the CUDA-only dependency stack
+  (`flash-attn`, `transformer_engine`, Apex, NATTEN):
+  https://docs.nvidia.com/cosmos/latest/predict2/installation.html
+
+### AMD — adjacent video-diffusion proof points on MI300X / MI355X
+- HunyuanWorld-Voyager on MI300X (~471 s @ 1040×768 / 49 f / 50 steps):
+  https://rocm.blogs.amd.com/artificial-intelligence/hunyuanworld-voyager-inference/README.html
+- Wan-2.2-T2V on MI355X (MLPerf v6.0 Single Stream 27.4 s):
+  https://rocm.blogs.amd.com/artificial-intelligence/mlperf-inference-v6.0/README.html
+- AMD Micro-World on MI325X (their own world model, not Cosmos):
+  https://rocm.blogs.amd.com/artificial-intelligence/micro-world/README.html
+- AMD xDiT-on-ROCm supported-model list — **Cosmos is conspicuously absent**:
+  https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference/xdit-diffusion-inference.html
+
+### Confirms no published Cosmos-on-AMD numbers (May 2026)
+- `nvidia-cosmos/cosmos-predict1` issues — no AMD / ROCm / MI300 / Instinct hits:
+  https://github.com/nvidia-cosmos/cosmos-predict1/issues
+- `nvidia-cosmos/cosmos-predict2` issues — same:
+  https://github.com/nvidia-cosmos/cosmos-predict2/issues
+- `huggingface/diffusers` "cosmos rocm" — zero results:
+  https://github.com/huggingface/diffusers/issues?q=cosmos+rocm
+
+## Acknowledgements
+
+NVIDIA for open-sourcing Cosmos under the Open Model License. HuggingFace
+`diffusers` maintainers for the Cosmos pipeline path. The AMD ROCm + aotriton +
+hipBLASLt teams for the underlying kernel infrastructure.

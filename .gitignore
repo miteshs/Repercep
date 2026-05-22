@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+# model weights / large artifacts — never commit
+weights/
+*.safetensors
+*.pt
+*.bin
+# local runtime
+.cache/
+*.log
+benchmark-results/
