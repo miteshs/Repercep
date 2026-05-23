@@ -51,9 +51,9 @@ Measured so far (49 f / 12 steps, warmup-separated):
   24 → 6 DiT calls. Quality dial — visual verification of the cached output
   is still pending.
 - **At the full reference config (121 f / 36 steps), caching scales further:
-  164 s single-run measurement → 2.84× over the MI300X baseline, 2.32×
-  FASTER than NVIDIA's published H100 reference (~380 s).** Same caveat:
-  quality verification pending.
+  154 s warmup-separated → 3.02× over the MI300X baseline, 2.47× FASTER than
+  NVIDIA's published H100 reference (~380 s).** Same caveat: quality
+  verification pending.
 
 ## 3. Optimization tiers
 

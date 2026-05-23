@@ -507,9 +507,10 @@ reduces *call count* the same proportionally; combined with CFG batching, the
 effective DiT-loop work reduction at `skip=4` is ~3×.
 
 Caveats:
-- **Single-run measurement** (no warmup separation) — first-call autotuning
-  may inflate slightly. Steady-state should be a few % better. A clean
-  warmup-separated profile is queued.
+- **Warmup-separated profile (follow-up):** 154.1 s total / 152.5 s DiT / 12
+  calls. The single-run 164 s number included ~10 s of one-time autotuning;
+  the clean steady-state is **154 s — 2.47× faster than H100 reference, 3.02×
+  over the MI300X baseline**.
 - **Quality is a dial.** The video stats are in a healthy range (brightness
   108, std 67.2, motion 4.69 — same band as the uncached 121 f reference at
   brightness 106 / std 65.1). Visual verification is the gating test; if
