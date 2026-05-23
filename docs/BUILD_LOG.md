@@ -813,3 +813,96 @@ Implementation Plan's Phase-2 3-5× target. Adaptive replaces the F16/F17
   Phase-2 scope but deferred to a later session (depend on app.py
   wiring through the Rust router).
 
+## Session 10 — 2026-05-23 — Stage 4: serving wired to the Rust core
+
+### Agent H — `/v2/generate/stream` through router + scheduler
+
+The three Rust crates (`mirage-cache`, `mirage-scheduler`, `mirage-router`)
+were importable but unused — the FastAPI handler in
+`src/mirage/serving/app.py` ran `engine.generate(...)` inline. This
+session adds a second API surface — `/v2/...` — that exercises the
+full Rust-core path while keeping `/v1/...` byte-stable for callers.
+
+**Path:** HTTP handler → `Router.accept(id, priority, payload)` → adapter
+forwards `Scheduler.submit(id, priority, payload)` → background driver
+thread `Scheduler.next_blocking` → `engine.generate(...)` → for each
+frame, `asyncio.run_coroutine_threadsafe(Router.push_frame(...))` →
+client receives NDJSON line.
+
+**Files landed**
+
+- `src/mirage/serving/driver.py` (new, 354 LOC) — the engine driver
+  thread plus the `_SchedulerAdapter` that bridges the router's 2-arg
+  `submit(id, priority)` to the scheduler's 3-arg
+  `submit(id, priority, payload)` (the router crate doesn't forward the
+  payload across the duck-typed `SchedulerHandle` seam; see
+  `crates/mirage-router/src/lib.rs::529`).
+- `src/mirage/serving/app.py` — adds a FastAPI `lifespan` context that
+  builds Scheduler+Adapter+Router+Driver at startup and tears them down
+  on shutdown. New routes: `POST /v2/generate/stream`,
+  `POST /v2/generate/{id}/cancel`, `GET /v2/generate/{id}/state`. v1
+  routes unchanged (regression-tested).
+- `tests/test_serving_v2.py` (new, 17 tests) — covers accept-and-stream,
+  per-priority routing, validation errors, cancel-in-flight, capacity
+  overflow → 503, shutdown drain, and a v1 regression check.
+
+### Thread-safety mechanism (no Rust changes needed)
+
+The router's `push_frame` is exposed as a Python `async def` via
+`pyo3-async-runtimes::tokio::future_into_py`, which requires a running
+asyncio loop on the caller's thread. The driver runs in a worker
+thread without a loop — calling `router.push_frame(...)` there
+synchronously raises *"no running event loop"* even before the awaitable
+is awaited.
+
+Fix: wrap each push in a coroutine and schedule it on the FastAPI loop:
+
+```python
+async def _do_push() -> None:
+    await router.push_frame(id, idx, payload, is_final)
+
+fut = asyncio.run_coroutine_threadsafe(_do_push(), self._loop)
+fut.result(timeout=30.0)
+```
+
+`run_coroutine_threadsafe` evaluates the body only once the coroutine
+is running on the target loop, so the loop-thread invariant inside
+`future_into_py` is satisfied. The driver still blocks until the push
+completes (or backpressure trips), so the engine never out-runs the
+router's per-request queue.
+
+**Did NOT touch the Rust crates.** A `push_frame_blocking` shim on the
+router was the alternative; the `run_coroutine_threadsafe` approach is
+purely Python-side and avoids touching a stable seam.
+
+### Frame wire format
+
+Each NDJSON line is a `FrameChunk`-shaped JSON object plus two v2
+additions: `is_final: bool` and `pixels_b64: str` (base64 of the
+uint8 H×W×3 tensor). Field shape and key names match v1's
+`FrameChunk` so a future client migration is a URL swap. The
+driver-side encoder lives in `mirage.serving.driver.encode_frame_line`;
+the matching `decode_frame_line` is symmetric and used by the tests.
+
+### Acceptance
+
+- `make lint` — clean (ruff over all source + tests + scripts).
+- `make typecheck` — clean (`mypy --strict` over 47 source files;
+  driver.py and test_serving_v2.py added without overrides).
+- `make test` — 103 pytest passing, 8 skipped (the 8 are pre-existing
+  GPU-gated skips). The 17 new v2 tests run in ~17 s on CPU.
+- `cargo test --workspace` — 41/41 (unchanged; no Rust modified).
+
+### Scope choices that survived the session
+
+- Single driver thread, single engine — concurrent generation is a
+  later seam. v0's backpressure is *at submit time*: the scheduler
+  rejects with `QueueFull` (default capacity 64) and the v2 endpoint
+  maps that to 503.
+- Request IDs are server-minted UUIDs (`uuid.uuid4().hex`). Not echoed
+  in the streaming response in v0 — the cancel/state endpoints take
+  the id from the URL when callers have it via another channel.
+- Priority defaults to `"normal"`. Body schema is composed
+  (`{request: GenerationRequest, priority: "low" | "normal" | "high"}`)
+  rather than inheritance so the v1 wire stays bit-stable.
+
