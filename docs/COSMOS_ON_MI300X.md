@@ -19,13 +19,15 @@ reported Cosmos benchmark on any AMD GPU.**
 | Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton |
 | 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
+| same, native loop + **step-skip cache (`skip=4`)** | — | **164 s** measured — **2.32× faster than H100 reference** |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
-**Honest framing:** Mirage on MI300X reaches **82 % of H100 reference wall
-time** (1.22× slower) — using *none* of NVIDIA's CUDA-only tooling — with
-**~30 % less peak HBM**. The remaining 18 % gap is the optimization budget
-enumerated in `OPTIMIZATION.md`.
+**Headline:** with step-skip caching, Mirage on MI300X **beats NVIDIA's H100
+reference by 2.3×** on the same workload — *if the quality holds* under the
+cache-skip rate. Without caching, MI300X reaches 82 % of H100 reference wall
+time. Either way, Mirage uses *none* of NVIDIA's CUDA-only tooling (no
+TransformerEngine, Apex, NATTEN, or CUDA flash-attn) and ~30 % less peak HBM.
 
 ## Why no one has done this before
 

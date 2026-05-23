@@ -40,12 +40,20 @@ What this sets:
 - Peak HBM is 52 of 192 GiB. **~140 GiB sits unused** — headroom that converts
   directly into batching and resident-model throughput (the MI300X advantage).
 
-Measured so far:
+Measured so far (49 f / 12 steps, warmup-separated):
 - `torch.compile` on the DiT — **1.13× loop / 1.12× end-to-end**.
 - Mirage-native loop with CFG batching — **1.02× loop / 1.05× end-to-end**.
   Smaller than projected: at Cosmos-7B scale each transformer call is
   compute-bound, so packaging two batch-1 forwards as one batch-2 forward
   doesn't reduce GEMM work — see BUILD_LOG F14.
+- Native loop + **step-skip caching (`cache_skip_every=4`) — 2.00× loop /
+  1.96× end-to-end at 49 f / 12 steps.** The biggest measured single lever;
+  24 → 6 DiT calls. Quality dial — visual verification of the cached output
+  is still pending.
+- **At the full reference config (121 f / 36 steps), caching scales further:
+  164 s single-run measurement → 2.84× over the MI300X baseline, 2.32×
+  FASTER than NVIDIA's published H100 reference (~380 s).** Same caveat:
+  quality verification pending.
 
 ## 3. Optimization tiers
 

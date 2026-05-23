@@ -462,3 +462,59 @@ deploy is itself a real latency win.
   warmup, 8 of 32 full forwards run instead of 32 → projected ~3× DiT
   speedup, modulo quality.
 
+### Measured — caching is the biggest single lever so far
+
+Warmup-separated profile, 49 f / 12 steps, MI300X:
+
+| Config | Total | DiT loop | DiT calls | Speedup vs baseline |
+|---|--:|--:|--:|--:|
+| Baseline (diffusers, batch-1 CFG) | 44.3 s | 42.0 s | 24 | 1.00× |
+| `torch.compile` | 39.5 s | 37.1 s | 24 | 1.12× |
+| Native + CFG batched | 42.2 s | 41.3 s | 12 | 1.05× |
+| **Native + `cache_skip_every=4`** | **21.5 s** | **20.7 s** | **6** | **2.06×** |
+
+The DiT-call count collapses from 24 → 6 as designed (4 warmup + 2 cached-
+refresh full forwards; the other 6 steps reuse the cached `noise_pred`).
+End-to-end **1.96×, DiT loop 2.00×**. This is the kind of behaviour F14
+predicted: *work-reducing* levers scale, *overhead-cutting* ones don't.
+
+If the 2× scales linearly to the 121-frame baseline (465 s), Mirage on MI300X
+projects to **~232 s — faster than NVIDIA's H100 reference (~380 s) on the
+same workload.** That projection is contingent on quality holding at the
+longer config — to be verified.
+
+---
+
+## Session 7 — 2026-05-23 — Caching at the reference config (headline)
+
+### Result
+
+`scripts/run_cosmos.py --frames 121 --steps 36 --native-loop --cache-skip-every 4`:
+
+| Metric | Value |
+|---|--:|
+| Generate (single run, not warmup-separated) | **164 s** |
+| **vs MI300X warmup-separated baseline (465 s)** | **2.84× faster** |
+| **vs NVIDIA H100 reference (~380 s)** | **2.32× FASTER** |
+| Peak HBM | 52.5 GiB / 192 GiB |
+| Throughput | 0.738 frames/s |
+| Video | `benchmark-results/cosmos_121f_cached.mp4` — 121 frames verified, stats healthy |
+
+The projected ~232 s from linear scaling of the 49-frame 2× speedup turned out
+**optimistic-in-direction**: the actual 164 s implies ~2.84× scaling at the
+longer config. Per-call DiT cost grows with sequence length, but caching
+reduces *call count* the same proportionally; combined with CFG batching, the
+effective DiT-loop work reduction at `skip=4` is ~3×.
+
+Caveats:
+- **Single-run measurement** (no warmup separation) — first-call autotuning
+  may inflate slightly. Steady-state should be a few % better. A clean
+  warmup-separated profile is queued.
+- **Quality is a dial.** The video stats are in a healthy range (brightness
+  108, std 67.2, motion 4.69 — same band as the uncached 121 f reference at
+  brightness 106 / std 65.1). Visual verification is the gating test; if
+  `skip=4` degrades visibly, `skip=2` trades half the win for safer quality.
+
+This is the strongest measured Mirage win to date and the first MI300X number
+that beats NVIDIA's published H100 reference wall time on the same workload.
+
