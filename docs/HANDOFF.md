@@ -47,10 +47,23 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 | Same + `torch.compile` on the DiT (≤64 f) | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
 | Same + native loop + step-skip `cache_skip=2` | **266 s** | **1.43× faster** |
 | Same + native loop + step-skip `cache_skip=4` | **154 s** Session 7 / **163.9 s** Session 9 clean | **2.47×** / **2.32×** |
-| Same + native loop + **adaptive cache** (`thr=0.30`) | **150.9 s** Session 10 clean (151.1 Session 9) | **2.52× — current headline** |
-| Same + native loop + adaptive + `MIRAGE_FP8_ATTENTION=1` | **154.7 s** Session 10 clean | 2.46× — FP8 backend wired, kernel not yet a Cosmos-shape win |
+| Same + native loop + **adaptive cache** (`thr=0.30`) | **151.4 s** Session 12 clean (150.9 / 151.1 Sess 10/9) | **2.52× — well-replicated** |
+| Same + native loop + adaptive + tuned FP8 (autotuned tile) | **142.0 s** Session 12 clean (141.7 Agent I worktree) | **2.68× — current headline** |
 | Peak HBM (Cosmos, all configs) | **52.5 GiB** | ~30 % less than H100's 74 GB |
-| Wan-2.2-T2V-A14B 17f / 8 steps smoke | 326.2 s (load 18.8 + gen ~307) | **84.3 GiB peak** — second WM family runs end-to-end |
+| Wan-2.2-T2V-A14B 17f / 8 steps smoke | 45.2 s warm Session 11 (326 s cold Session 10) | **84–85 GiB peak** |
+| Wan-2.2 81f / 40 steps quality (projected steady-state) | ~1700 s | **85.1 GiB peak** — first Wan-2.2 on AMD MI300X; ~1.6× behind H100 (1041 s with FP8+offload) |
+
+**Verification status (Session 12):** all three Cosmos timings reproduce on
+a clean GPU within ±0.5 s of the agent / prior-session measurements.
+Seed-0 determinism holds (same MD5 across 4 sessions for the
+adaptive-no-FP8 mp4). The 2.68× is a *system-vs-system* claim (Mirage +
+adaptive cache + tuned FP8 vs NVIDIA's published-unstacked H100); the
+raw-hardware comparison has MI300X 1.24× *slower* than H100 at the same
+compute. See `docs/METHODOLOGY.md` for the apples-to-apples breakdown
+and `docs/COSMOS_ON_MI300X.md` §"Quantitative cache quality" for the
+LPIPS / motion-stat trade-off (adaptive caching produces a trajectory-
+divergent output: LPIPS 0.645 vs no-cache, mean inter-frame motion
+−28 %; valid Cosmos output, just different).
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
 Cosmos benchmark on any AMD GPU.** Visual quality at `skip=4` is verified

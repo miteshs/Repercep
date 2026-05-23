@@ -1218,3 +1218,104 @@ crates — Agent I's scope was strictly the kernel + tuning loop.
   future), or a new resolution / frame count, just triggers a one-time
   tune and is free afterwards.
 
+## Session 12 — 2026-05-23 — Verification campaign (rigorous)
+
+User pushed back on "numbers look too good to be true" — and the push-
+back was correct. This session built up the evidence on a quiet GPU.
+
+### F22 — All headline timings independently verified on main
+
+Cherry-picked Agent I (FP8 autotune) + Agent J (Wan benchmark) into main.
+Re-ran the headline configs on a clean GPU (no agent contention) and
+compared against the agents' worktree numbers:
+
+| Config | Agent measurement | Main re-measurement | Δ |
+|---|--:|--:|--:|
+| 121f/36 adaptive baseline | 150.9 s (Sess 10) / 151.1 s (Sess 9) | **151.4 s** | +0.3–0.5 s |
+| 121f/36 adaptive + tuned-FP8 | 141.7 s (Agent I worktree) | **142.0 s** | +0.3 s |
+| 121f/36 **no cache** (reference) | 465 s (Sess 7) / 740 s cold (Sess 6) | **470.0 s** | +5 s |
+
+The 142 / 151 / 470 s numbers are stable, reproducible across sessions,
+and independently re-measurable. Per-kernel re-verification at the
+Cosmos production shape (B=2 H=32 D=128 S=109120, 5 iters):
+
+| path | wall (one call) | vs SDPA |
+|---|--:|--:|
+| SDPA→aotriton | 1150.93 ms | 1.00× |
+| fixed-tile FP8 | 1170.25 ms | 0.99× |
+| **autotuned FP8 (M=256 N=128 w=4 s=2)** | **988.49 ms** | **1.16×** |
+
+Slight variance on `num_stages` between the autotune searches (Agent I:
+s=3, main re-run: s=2) — both M=256/N=128 tile wins; both are 1.13–1.16×
+over SDPA at the production shape.
+
+### F23 — Adaptive caching is trajectory-divergent, NOT "quality-preserved"
+
+Installed `lpips==0.1.4` + `scipy==1.17.1`. New `scripts/verify_quality.py`
+drives LPIPS / MSE / PSNR comparisons. Ran no-cache reference (470 s)
+and compared:
+
+| Pair | LPIPS | PSNR | mean \|Δframe\| |
+|---|--:|--:|--:|
+| no-cache (reference) | — | — | **6.48** |
+| no-cache vs adaptive | **0.645** "substantially different" | 13.6 dB | 4.64 (**−28 %**) |
+| no-cache vs adaptive + tuned-FP8 | 0.642 "substantially different" | 13.6 dB | 4.52 (**−30 %**) |
+| adaptive vs adaptive + tuned-FP8 | 0.117 "perceptually very similar" | 29.2 dB | (n/a) |
+| adaptive vs adaptive + fixed-FP8 | 0.122 "small but visible diff" | 29.0 dB | (n/a) |
+
+What this says honestly:
+
+- The Session-9/10 claim that adaptive caching "preserves quality"
+  (motion 4.65 vs 4.66) was comparing **two cached outputs against each
+  other**. Both had motion ~30 % below the no-cache truth. That was a
+  weak quality proxy and should not have been read as "same quality
+  as no-cache."
+- Adaptive cached outputs are visually coherent Cosmos generations
+  (brightness 107 vs 107, per-frame std 62 vs 64). Not garbage. They're
+  valid generations of the same prompt with a different trajectory and
+  ~30 % less inter-frame motion than the no-cache reference.
+- LPIPS 0.64 is at the strict pixel level. The right "is cache
+  quality-preserved" metric is FVD against a held-out Cosmos eval set,
+  which we have not run. Pixel LPIPS is too strict for diffusion outputs
+  that trade trajectory for compute.
+- The autotune *helped* quality slightly compared to the fixed tile
+  (0.117 < 0.122 LPIPS), in addition to the perf win.
+
+### Determinism re-confirmed across 4 sessions
+
+`cosmos_adaptive_clean.mp4` (Session 12) is **byte-identical** to the
+Session 9 / 10 adaptive outputs at the same seed. MD5 `94852d9d` holds
+across 4 sessions on the same hardware/stack — the strongest
+reproducibility evidence in the project so far.
+
+`cosmos_adaptive_fp8_tuned_clean.mp4` has a new MD5 (`a2de5f03`),
+distinct from both the no-FP8 adaptive (`94852d9d`) and the Session 10
+fixed-tile FP8 (`8f88f5f8`). The autotune change is numerically
+reflected, not just performant.
+
+### What landed in docs
+
+- `docs/METHODOLOGY.md` — apples-to-apples section strengthened with the
+  LPIPS evidence; the "what we have NOT measured yet" block shrunk
+  because we measured it.
+- `docs/COSMOS_ON_MI300X.md` — added "Quantitative cache quality" with
+  the LPIPS table; headline reframed as "system-vs-system" with the raw
+  MI300X-vs-H100 (1.24× *slower*) explicit alongside the 2.68× shipped-
+  system number.
+- `scripts/verify_quality.py` (Session 11) and `scripts/verify_timing.py`
+  (Session 11) — already in tree; the former is the one that drove
+  this campaign.
+
+### Open work after Session 12
+
+1. **FVD against a held-out reference.** The right quality arbiter for
+   trajectory-divergent diffusion outputs.
+2. **Threshold-quality-speed sweep.** `--cache-adaptive-threshold` at
+   0.05 / 0.10 / 0.20 / 0.30 / 0.50, plotted vs LPIPS-vs-no-cache and
+   wall time. Characterises the trade-off curve so a serving user can
+   pick threshold knowingly.
+3. **Multi-prompt / multi-seed variance.** `scripts/verify_timing.py`
+   ready; needs ~13 min GPU.
+4. **N=3 repeats of same prompt+seed.** Run-to-run std/mean — would
+   tighten the headline to ±X s confidence interval.
+

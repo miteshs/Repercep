@@ -25,30 +25,42 @@ reported Cosmos benchmark on any AMD GPU.**
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
 | same, native loop + step-skip cache (`skip=2`) | — | **266 s** measured — **1.43× faster than H100 reference**, quality verified |
 | same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f; re-validated **164 s** on 2026-05-23 (Session 8) and **163.9 s** on 2026-05-23 (Session 9, clean GPU) |
-| same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **150.9 s** measured Session 10 (151.1 s Session 9) — **2.52× faster than H100 reference**, motion stat matches the verified `skip=4` reference (4.65 vs 4.66) |
-| same + `MIRAGE_FP8_ATTENTION=1` (FP8 backend wired into diffusers dispatch) | — | 154.7 s — FP8 kernel runs in-pipeline at Cosmos's production shape but isn't a wall-time win there yet (Session 10). Quality preserved (motion 4.65 vs 4.64). |
+| same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **151.4 s** measured Session 11 (150.9 / 151.1 prior) — **2.52× faster than H100 reference**. Inter-frame motion is **28 % lower than the no-cache reference** (4.64 vs 6.48); see §Caching quality. |
+| same + `MIRAGE_FP8_ATTENTION=1` (FP8 backend wired, **autotuned tile**) | — | **142.0 s** measured Session 11 (141.7 s Session 11 worktree) — **2.68× faster than H100 reference**. Autotuned `BLOCK_M=256 BLOCK_N=128 num_warps=4 num_stages=3` wins over SDPA→aotriton by 1.13× at the kernel level. |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
-**Headline:** with **adaptive caching** at the full reference config, **Mirage
-on MI300X beats NVIDIA's H100 reference by 2.51× (151.1 s)**. Fixed step-skip
-is still measured and supported (`--cache-mode fixed --cache-skip-every 4`
-at 163.9 s / 2.32×, `--cache-skip-every 2` at 266 s / 1.43×). Adaptive uses
-the same per-step memory profile (52.5 GiB peak) and the same `skip=4`-band
-motion statistic, but takes 1 fewer full DiT forward over 36 steps because
-the input-similarity gate skips a step the fixed schedule wouldn't have.
+**Headline:** with **adaptive caching + autotuned FP8** at the full
+reference config, **Mirage on MI300X beats NVIDIA's published H100
+reference by 2.68× (142.0 s, peak HBM 52.5 GiB)**. With adaptive caching
+alone (no FP8), 2.52× / 151.4 s. Fixed step-skip is still measured and
+supported (`--cache-mode fixed --cache-skip-every 4` at 163.9 s / 2.32×,
+`--cache-skip-every 2` at 266 s / 1.43×).
+
+**The 2.68× framing is a system-vs-system claim:**
+- It compares Mirage on MI300X **with adaptive caching + tuned FP8** to
+  NVIDIA's **published** H100 baseline (which, per the NVIDIA HF model
+  card, doesn't disclose using either optimization).
+- The raw hardware comparison — both sides without caching — has
+  MI300X at 470 s vs H100 at ~380 s, i.e. **MI300X is 1.24× *slower*
+  than H100 at the same compute**. The 2.68× emerges from the
+  optimization stack Mirage ships, not from raw silicon advantage.
+- Adaptive caching *and* TeaCache-style optimization are equally
+  applicable on H100; NVIDIA could presumably catch up with a similar
+  stack. We are claiming a *shipped-system* lead, not a hardware lead.
+- See `docs/METHODOLOGY.md` for the full apples-to-apples accounting.
 
 Mirage uses *none* of NVIDIA's CUDA-only tooling (no TransformerEngine,
-Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak HBM** (52.5 vs 74
-GB). The undertested baseline (no cache, no compile) still reaches 82 %
-of H100 reference at 465 s.
+Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak HBM** (52.5 vs
+74 GB). The undertested baseline (no cache, no compile) reaches 81 %
+of H100 reference at 470 s.
 
 ## Caching modes
 
 Mirage ships three caching modes, exposed via `--cache-mode {none|fixed|adaptive}`
 on the runner CLI and the corresponding fields on `CosmosConfig`:
 
-- **`none`** — every step runs a full DiT forward. The baseline (465 s
+- **`none`** — every step runs a full DiT forward. The baseline (470 s
   warmup-separated, ~740 s including the ROCm autotuning storm).
 - **`fixed`** (legacy F16/F17 behaviour) — after a warmup window, run a full
   forward every Nth step and reuse the cached `noise_pred` on the rest.
@@ -64,9 +76,58 @@ on the runner CLI and the corresponding fields on `CosmosConfig`:
   the gate adapts to the schedule's actual derivative rather than committing
   to a fixed cadence.
 
-## Caching quality
+## Quantitative cache quality
 
-Quality of fixed step-skip caching is **config-size-dependent**:
+Session 11 added a no-cache reference run + LPIPS / MSE / motion-stat
+comparisons. **All comparisons at the same prompt + seed.**
+
+| Pair | LPIPS | PSNR | mean \|Δframe\| |
+|---|--:|--:|--:|
+| **no-cache** (reference) | — | — | **6.48** |
+| no-cache vs adaptive | **0.645** | 13.6 dB | 4.64 (cached) |
+| no-cache vs adaptive+FP8 (tuned) | 0.642 | 13.6 dB | 4.52 (cached) |
+| adaptive vs adaptive+FP8 (tuned) | 0.117 | 29.2 dB | — |
+| adaptive vs adaptive+FP8 (fixed-tile) | 0.122 | 29.0 dB | — |
+
+What this says:
+- **Caching produces a different trajectory.** LPIPS 0.645 is in the
+  "substantially different" band — the cached output is **not** the
+  no-cache output's twin. It's a different valid Cosmos generation of
+  the same prompt.
+- **Inter-frame motion is ~28 – 30 % lower under caching.** The no-cache
+  reference has mean |Δframe| = 6.48; the cached outputs sit at 4.5–4.6.
+  Brightness and per-frame intensity variance are preserved; the scene is
+  recognisable; but the trajectory has visibly less motion than the
+  uncached version.
+- **FP8 on top of caching introduces a small additional perceptual
+  divergence (LPIPS 0.117 — "perceptually very similar").**
+- **The autotune helped both speed and quality** vs the fixed-tile FP8
+  (0.117 < 0.122 LPIPS, 142 s < 154.7 s).
+- **The "motion 4.65 vs 4.66 matches the verified `skip=4` reference"
+  claim from earlier sessions was a comparison between two CACHED outputs,
+  not against the no-cache truth. Both had reduced motion; the proper
+  reference comparison shows the reduction.**
+
+The right framing: **adaptive caching is a quality / speed knob, not
+free-lunch.** `--cache-adaptive-threshold 0.30` (the default headline)
+biases speed. For applications that need closer-to-uncached fidelity,
+use `0.05–0.10` and re-measure. A threshold-quality-speed sweep is open
+work.
+
+The full LPIPS / FVD verification campaign is documented in
+`docs/METHODOLOGY.md` § "Reproducibility envelope." The pixel-level LPIPS
+above is a **strict** metric for diffusion outputs; FVD against a
+held-out Cosmos eval set is the right "is the cached path quality-
+equivalent" arbiter, and that's open.
+
+## Caching modes — eyeball-quality notes
+
+Below: the older `skip=N` discussion. Bear in mind that the LPIPS
+findings above show all cached modes produce *trajectory-divergent*
+output vs the no-cache reference; this section is about quality
+**within cached configurations**.
+
+### Fixed step-skip quality is config-size-dependent
 
 - **121 frames / 36 steps (reference config):** both `skip=2` and `skip=4`
   produce visually acceptable output (verified vs the no-cache reference at

@@ -212,18 +212,56 @@ should never let that misreading stand uncorrected.
 | LPIPS / FVD between cached and uncached output | not yet measured (open) | low |
 | Per-stage profile (DiT-dominance) | matches BUILD_LOG F4 (~99 % DiT) | medium — re-validate |
 
-What we have measured supports the claim that **the 150.9 s number is
-stable and reproducible** on this hardware/stack. What we have NOT
-measured yet is:
+What we have measured supports the claim that **the 142–151 s numbers
+are stable and reproducible** on this hardware/stack. The independent
+verification on a clean GPU (Session 11+) measured:
 
-- **Variance across prompts.** We've run one prompt at one seed.
-  Different prompts may give different timing (e.g. shorter prompts
-  reduce T5 encode time fractionally, but T5 is < 1 % of total; not
-  expected to move the headline).
-- **Quantitative cache quality.** "Motion stat 4.65 vs 4.66" is a thin
-  proxy; LPIPS or FVD between adaptive-cache and no-cache outputs at
-  the same seed would be the rigorous test. Open work item.
-- **Cold vs warm distribution.** Cold first-shape execution adds ~273 s
+  | Config                    | Run-1 wall | Run-2 wall (clean) | Δ |
+  | ---                       | ---:       | ---:               | ---: |
+  | adaptive baseline         | 150.9 s    | 151.4 s            | +0.5 s |
+  | adaptive + tuned-FP8      | 141.7 s    | 142.0 s            | +0.3 s |
+  | no-cache reference        | 465 s (Session 7) | 470.0 s (Session 11) | +5 s |
+
+What we found in the cache-quality verification (this section is new
+as of 2026-05-23 Session 11; previous wording was too soft):
+
+- **Adaptive caching produces output that is substantially different
+  from the no-cache reference at the same prompt+seed.** LPIPS = **0.645**
+  ("substantially different") between `cosmos_no_cache_clean.mp4` and
+  `cosmos_adaptive_clean.mp4`. PSNR 13.64 dB.
+- **Inter-frame motion is reduced by ~28–30 %** under adaptive caching:
+  no-cache mean |Δframe| = 6.48; adaptive = 4.64; adaptive+FP8 = 4.52.
+  Brightness and per-frame intensity variance are preserved (107 vs 107,
+  std 64 vs 62).
+- The cached videos **are visually coherent Cosmos generations** — same
+  prompt-scene-content, well-formed h264 mp4s, 121 frames each. They
+  are not garbage. They are different valid generations.
+- Earlier text in `docs/BUILD_LOG.md` Session 9 said "motion stat 4.65
+  vs 4.66 matches the verified `skip=4` reference." That comparison was
+  **between two cached outputs**, not against the no-cache truth.
+  The cache trades trajectory equivalence for compute; subsequent
+  pixel-level metrics should not be expected to match the uncached
+  reference.
+
+What this means for the headline:
+- The **timing claims** (142 s tuned-FP8, 151 s adaptive, 2.68× / 2.52×
+  vs the H100 reference) are independently verified and reproducible.
+- The implicit **"same quality as no-cache"** claim is NOT supported by
+  pixel-level metrics. The cached path is a quality/speed trade-off
+  with a knob (`--cache-adaptive-threshold`): lower threshold = fewer
+  skips = closer to no-cache, slower. The default 0.30 is the speed
+  bias; serving users wanting closer-to-uncached fidelity should run
+  at ~0.05–0.10 and re-measure.
+
+Other items still open:
+- **Variance across prompts.** Single (prompt, seed) so far; the
+  reproducibility verified within that point.
+- **FVD against held-out references.** LPIPS measures pixel-trajectory
+  divergence, which is too strict for diffusion outputs that vary by
+  trajectory while preserving distribution-level quality. FVD on a held-
+  out Cosmos eval set would be the right "no-cache vs cache quality"
+  arbiter.
+- **Cold vs warm distribution.** Cold first-shape execution adds ~270 s
   for ROCm autotuning; warmup-separated steady-state numbers are what
   we report. The cold number isn't the published headline, but a
   serving-system user feels it on the first request.
