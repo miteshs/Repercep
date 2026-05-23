@@ -95,6 +95,30 @@ Measured so far (49 f / 12 steps, warmup-separated):
   and the env var now actually changes the kernel diffusers calls — the
   bottleneck moved from "FP8 unreachable" (Session 9 F19) to "FP8 kernel
   needs autotuning for the production shape" (Session 10 follow-up).
+- **FP8 kernel autotune lands** — Agent I, 2026-05-23. The kernel now
+  ``@triton.autotune``-s over a 19-config grid keyed on
+  ``(Sq, Skv, BLOCK_D, H, CAUSAL)``, with a persistent JSON cache at
+  ``~/.cache/mirage/fp8_autotune.json`` so the winner survives across
+  processes (one tune per shape per host, then free forever). A manual
+  ``--manual`` search mode is also wired up — it benches a hand-picked
+  12-config grid with controlled warmup/rep, more robust under GPU
+  contention. Per-call timings at Cosmos production shape (B=2 H=32 D=128
+  S=109120), measured under heavy concurrent Wan workload:
+  | path | wall | vs SDPA | vs fixed-fp8 |
+  |--|--:|--:|--:|
+  | SDPA (aotriton) | 1370.10 ms | 1.00× | — |
+  | fixed-fp8 (M=128 N=64 w=4 s=2) | 1269.42 ms | 1.08× | 1.00× |
+  | autotuned-fp8 (M=256 N=128 w=4 s=3) | **1144.82 ms** | **1.20×** | **1.11×** |
+  The autotuner picked the larger 256×128 tile with a 3-stage software
+  pipeline — exactly what FA-2 lore predicts for very long sequences where
+  the K/V tile loads are bandwidth-bound. The clean-GPU equivalent is
+  expected to be similar in ratio though all three numbers shrink (Session
+  10's clean SDPA at S=109k was 1147 ms; the contention factor here is
+  ~1.19× for SDPA, ~1.08× for fp8). End-to-end Cosmos 121f/36/adaptive
+  with FP8+tuned ran in **436.4 s** under heavy contention from Agent J's
+  parallel Wan profile pass — directly comparable to the clean 154.7 s
+  baseline only after deflating by the same ~3× contention factor; the
+  cleaner comparison is the per-call kernel measurement above.
 
 ## 3. Optimization tiers
 

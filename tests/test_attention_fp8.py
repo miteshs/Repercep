@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path as _Path
 
 from mirage.attention import AttentionKind, AttentionShape
 from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention
@@ -142,3 +146,103 @@ def test_fp8_triton_causal_matches_sdpa() -> None:
     ref_scale = ref.float().abs().mean().item() + 1e-6
     diff = (out.float() - ref.float()).abs()
     assert diff.mean().item() / ref_scale < 0.15
+
+
+# ----- Autotune cache (CPU-only tests for the persistence layer) ------------
+
+
+@pytest.mark.skipif(not _HAS_TRITON, reason="triton required to import the kernel module")
+def test_fp8_autotune_cache_roundtrip(
+    tmp_path: _Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cache load/save round-trips through the kernel's helpers."""
+    cache_path = tmp_path / "fp8_autotune.json"
+    monkeypatch.setenv("MIRAGE_FP8_AUTOTUNE_CACHE", str(cache_path))
+
+    import sys
+    from pathlib import Path
+
+    # Add kernels/ to sys.path so the kernel module is importable.
+    kernels_dir = Path(__file__).resolve().parent.parent / "kernels"
+    if str(kernels_dir) not in sys.path:
+        sys.path.insert(0, str(kernels_dir))
+
+    from triton_kernels.fp8_flash_attn import (
+        _cache_key,
+        _cache_load,
+        _record_config,
+        _resolve_config,
+    )
+
+    # Empty cache → empty dict and no resolved config.
+    assert _cache_load() == {}
+    assert _resolve_config(2, 32, 109120, 109120, 128, False) == {}
+
+    # Round-trip a config.
+    cfg = {"BLOCK_M": 256, "BLOCK_N": 128, "num_warps": 4, "num_stages": 2}
+    _record_config(2, 32, 109120, 109120, 128, False, cfg)
+
+    # On-disk file exists, and the key uses the canonical encoding.
+    assert cache_path.exists()
+    data = _cache_load()
+    assert _cache_key(2, 32, 109120, 109120, 128, False) in data
+    assert _resolve_config(2, 32, 109120, 109120, 128, False) == cfg
+
+    # A different shape misses the cache.
+    assert _resolve_config(1, 8, 8192, 8192, 128, False) == {}
+
+    # A separate save preserves earlier entries.
+    other = {"BLOCK_M": 128, "BLOCK_N": 64, "num_warps": 4, "num_stages": 2}
+    _record_config(1, 8, 8192, 8192, 128, False, other)
+    full = _cache_load()
+    assert len(full) == 2
+    assert _resolve_config(2, 32, 109120, 109120, 128, False) == cfg
+    assert _resolve_config(1, 8, 8192, 8192, 128, False) == other
+
+
+@pytest.mark.skipif(not _HAS_TRITON, reason="triton required to import the kernel module")
+def test_fp8_autotune_cache_corruption_is_ignored(
+    tmp_path: _Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrupt JSON cache must not crash the kernel — treat as a cache miss."""
+    cache_path = tmp_path / "fp8_autotune.json"
+    cache_path.write_text("{ this is not valid json")
+    monkeypatch.setenv("MIRAGE_FP8_AUTOTUNE_CACHE", str(cache_path))
+
+    import sys
+    from pathlib import Path
+
+    kernels_dir = Path(__file__).resolve().parent.parent / "kernels"
+    if str(kernels_dir) not in sys.path:
+        sys.path.insert(0, str(kernels_dir))
+
+    from triton_kernels.fp8_flash_attn import _cache_load, _resolve_config
+
+    assert _cache_load() == {}
+    assert _resolve_config(2, 32, 109120, 109120, 128, False) == {}
+
+
+@pytest.mark.skipif(not _HAS_TRITON, reason="triton required to import the kernel module")
+def test_fp8_autotune_grid_constraints() -> None:
+    """The autotune search grid satisfies the documented constraints."""
+    import sys
+    from pathlib import Path
+
+    kernels_dir = Path(__file__).resolve().parent.parent / "kernels"
+    if str(kernels_dir) not in sys.path:
+        sys.path.insert(0, str(kernels_dir))
+
+    from triton_kernels.fp8_flash_attn import _AUTOTUNE_CONFIGS
+
+    assert len(_AUTOTUNE_CONFIGS) > 0
+    for cfg in _AUTOTUNE_CONFIGS:
+        bm = cfg.kwargs["BLOCK_M"]
+        bn = cfg.kwargs["BLOCK_N"]
+        # MFMA tile floor.
+        assert bm >= 32 and bn >= 32
+        # Documented BLOCK_N <= BLOCK_M*2 (avoid pathological LDS layouts).
+        assert bn <= bm * 2
+        # Each tile bounded by LDS budget.
+        assert bm * bn <= 256 * 256
+        assert cfg.num_warps in (4, 8, 16)
+        assert cfg.num_stages in (2, 3)

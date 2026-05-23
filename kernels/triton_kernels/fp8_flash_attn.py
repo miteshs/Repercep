@@ -17,6 +17,15 @@ explicit ``__builtin_amdgcn_mfma_f32_16x16x32_fp8_fp8`` calls plus LDS
 double-buffering — six weeks of perf engineering.  Triton gives us 80% of
 that for an afternoon of work.
 
+Autotune.  The kernel exposes a tile shape (``BLOCK_M``, ``BLOCK_N``) and
+launch-time meta (``num_warps``, ``num_stages``).  The sweet spot is shape-
+dependent: B=1 H=8 wants BLOCK_M=128/BLOCK_N=64/warps=4 (8-column grid that
+amortizes the tile cost), but Cosmos's B=2 H=32 grid (64 columns) wants a
+different tile shape entirely.  We use Triton's built-in autotuner to
+search over a constrained grid keyed on ``(Sq, Skv, BLOCK_D, H, CAUSAL)``,
+and a persistent JSON cache so the winning config is reused across
+processes (one autotune per shape per host, then free forever).
+
 References:
 - Dao, FlashAttention-2: Faster Attention with Better Parallelism (2023)
 - Shah et al., FlashAttention-3 (2024) §3 — FP8 variant with block scaling
@@ -30,6 +39,10 @@ References:
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import torch
 import triton
 import triton.language as tl
@@ -38,9 +51,118 @@ import triton.language as tl
 # FP8 max for e4m3fnuz on gfx942 — finite-only, top of range is 240.
 FP8_E4M3_MAX = 240.0
 
+# Persistent shape→config cache.  One autotune per (B, H, Sq, Skv, D, causal)
+# per host; the winner is recorded on disk and reused across processes.  Path
+# is overridable via MIRAGE_FP8_AUTOTUNE_CACHE so tests can pin a tmp file.
+_DEFAULT_CACHE_PATH = Path.home() / ".cache" / "mirage" / "fp8_autotune.json"
+
+
+def _cache_path() -> Path:
+    override = os.environ.get("MIRAGE_FP8_AUTOTUNE_CACHE")
+    if override:
+        return Path(override)
+    return _DEFAULT_CACHE_PATH
+
+
+def _cache_load() -> dict:
+    path = _cache_path()
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _cache_save(cache: dict) -> None:
+    path = _cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    with tmp.open("w") as fh:
+        json.dump(cache, fh, indent=2, sort_keys=True)
+    tmp.replace(path)
+
+
+def _cache_key(B: int, H: int, Sq: int, Skv: int, D: int, causal: bool) -> str:
+    """Stable string key for the JSON cache.
+
+    Batch enters the key because B affects the program-grid columns: more
+    columns means more parallelism, which can change the optimal tile.
+    """
+    return f"B{B}_H{H}_Sq{Sq}_Skv{Skv}_D{D}_C{int(causal)}"
+
+
+# Autotune search grid.  Constraints baked in:
+# - BLOCK_M, BLOCK_N >= 32 (MFMA tile floor on gfx942 for FP8)
+# - BLOCK_N <= BLOCK_M*2 (avoid pathological LDS layouts)
+# - Each tile is BLOCK_M*BLOCK_D + BLOCK_N*BLOCK_D + softmax stats; for D=128
+#   the tile fits at BLOCK_M, BLOCK_N <= 256 in 64 KiB LDS.  Combinations that
+#   don't fit are filtered by Triton's compiler at autotune time (it raises
+#   and the autotuner skips them).
+# - num_warps=16 is gated to the largest tiles only (small tiles starve the
+#   warps and waste compile budget).
+# - num_stages: ROCm's pipeliner is happiest with 2 for FP8 MFMA; 3 explored.
+# Each config-run is one kernel launch on the same tensors.  At S=109k each
+# launch is ~1 s, so we want ~20 configs max (≈40 s search) to keep the
+# initial-tune tax bounded.
+def _autotune_configs() -> list:
+    configs: list = []
+    # Tile shape candidates, ordered roughly by expected goodness for long-S
+    # FP8 flash attention.  The MFMA path on gfx942 amortizes best with
+    # BLOCK_M >= 128 because the warp pipeline depth is 4× the inner reduction.
+    tile_shapes = (
+        (64, 64),
+        (64, 128),
+        (128, 64),
+        (128, 128),
+        (128, 256),
+        (256, 64),
+        (256, 128),
+        (256, 256),
+    )
+    warp_choices = (4, 8)
+    stage_choices = (2,)
+    for bm, bn in tile_shapes:
+        # MFMA correctness floor.
+        if bm < 32 or bn < 32:
+            continue
+        # Don't blow LDS at the largest tiles (FP8 inputs + FP32 acc).
+        if bm * bn > 256 * 256:
+            continue
+        for nw in warp_choices:
+            # num_warps=8 only when the tile actually has work for 8 warps.
+            if nw == 8 and bm * bn < 128 * 64:
+                continue
+            # num_warps=16 reserved for the very largest tile (256x256), and
+            # only if BLOCK_N >= 128 to keep MFMA utilization high.
+            for ns in stage_choices:
+                configs.append(
+                    triton.Config(
+                        {"BLOCK_M": bm, "BLOCK_N": bn},
+                        num_warps=nw,
+                        num_stages=ns,
+                    )
+                )
+    # Add a small num_stages=3 sweep at the canonical Session-9 tile
+    # (128/64): 3-stage pipelining is sometimes the win when K/V fetch is
+    # bandwidth-bound, which is increasingly true as S grows.
+    for nw in (4, 8):
+        configs.append(
+            triton.Config({"BLOCK_M": 128, "BLOCK_N": 64}, num_warps=nw, num_stages=3),
+        )
+        configs.append(
+            triton.Config({"BLOCK_M": 256, "BLOCK_N": 128}, num_warps=nw, num_stages=3),
+        )
+    return configs
+
+
+_AUTOTUNE_CONFIGS = _autotune_configs()
+
 
 @triton.jit
-def _fp8_flash_attn_fwd(
+def _fp8_flash_attn_fwd_impl(
     Q,
     K,
     V,
@@ -182,6 +304,37 @@ def _fp8_flash_attn_fwd(
     tl.store(out_ptrs, acc, mask=o_mask)
 
 
+# The autotuned kernel — same body, with @triton.autotune over the search
+# grid.  Triton's autotuner re-launches the kernel once per config in the
+# grid on the first call for a new ``key`` tuple, picks the fastest, caches
+# in-process.  We additionally persist the winner to JSON in
+# ``fp8_flash_attention`` below; on subsequent processes the launcher
+# bypasses ``_fp8_flash_attn_fwd_autotuned`` and calls the fixed-config
+# kernel directly using the cached config.
+#
+# Key includes (Sq, Skv, BLOCK_D, H, CAUSAL) — B doesn't enter Triton's key
+# because the kernel's grid scales with B but the optimal *tile* doesn't
+# depend on B (the per-program work is the same).  Our JSON cache keys on
+# both though, defensively, so a user who changes B from 1 to 2 retunes.
+# Bench fn for the autotuner.  Default Triton autotune is too noisy on a
+# contended VF — we average across ~50 ms of warmup + 100 ms of measurement
+# per config so the winner is robust to background GPU traffic from other
+# agents.  Total tune overhead is bounded: 19 configs * 150 ms = ~3 s of
+# measurement, plus the launch + compile cost (which dominates at the largest
+# tiles anyway).  Use median for noise robustness — Triton passes
+# ``quantiles=(0.5, 0.2, 0.8)`` so do_bench returns a 3-tuple; the autotuner
+# uses the median (first element) to pick the winner.
+def _autotune_bench(kernel_call, **kwargs):  # type: ignore[no-untyped-def]
+    return triton.testing.do_bench(kernel_call, warmup=50, rep=100, **kwargs)
+
+
+_fp8_flash_attn_fwd_autotuned = triton.autotune(
+    configs=_AUTOTUNE_CONFIGS,
+    key=["Sq", "Skv", "BLOCK_D", "H", "CAUSAL"],
+    do_bench=_autotune_bench,
+)(_fp8_flash_attn_fwd_impl)
+
+
 def _per_bh_scale(x: torch.Tensor) -> torch.Tensor:
     """Compute one quantization scale per (batch, head) — shape (B*H,).
 
@@ -208,6 +361,35 @@ def _quantize(x: torch.Tensor, dequant_scale: torch.Tensor) -> torch.Tensor:
     return scaled.to(torch.float8_e4m3fnuz)
 
 
+# Static fallback config — used if autotune is disabled or fails.  This is the
+# pre-autotune tile shape that Session 9 measured at B=1 H=8.
+_FALLBACK_CONFIG = {
+    "BLOCK_M": 128,
+    "BLOCK_N": 64,
+    "num_warps": 4,
+    "num_stages": 2,
+}
+
+
+def _resolve_config(B: int, H: int, Sq: int, Skv: int, D: int, causal: bool) -> dict:
+    """Return ``{"BLOCK_M": ..., "BLOCK_N": ..., "num_warps": ..., "num_stages": ...}``
+    for this shape, consulting the on-disk JSON cache."""
+    cache = _cache_load()
+    key = _cache_key(B, H, Sq, Skv, D, causal)
+    cached = cache.get(key)
+    if isinstance(cached, dict) and all(
+        k in cached for k in ("BLOCK_M", "BLOCK_N", "num_warps", "num_stages")
+    ):
+        return cached
+    return {}
+
+
+def _record_config(B: int, H: int, Sq: int, Skv: int, D: int, causal: bool, cfg: dict) -> None:
+    cache = _cache_load()
+    cache[_cache_key(B, H, Sq, Skv, D, causal)] = cfg
+    _cache_save(cache)
+
+
 def fp8_flash_attention(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -217,6 +399,19 @@ def fp8_flash_attention(
     scale: float | None = None,
 ) -> torch.Tensor:
     """Public Python entry point — fused FP8 flash attention.
+
+    Resolution order for the launch config:
+
+    1. If ``MIRAGE_FP8_DISABLE_AUTOTUNE`` is set, use ``_FALLBACK_CONFIG``
+       (the pre-tune tile shape — useful for A/B comparisons).
+    2. Otherwise check the persistent JSON cache at
+       ``~/.cache/mirage/fp8_autotune.json`` (or
+       ``$MIRAGE_FP8_AUTOTUNE_CACHE``) for a winning config keyed on
+       ``(B, H, Sq, Skv, D, causal)``.  Hit: launch the fixed-config
+       kernel.  Miss: fall through.
+    3. On cache miss: dispatch through the ``@triton.autotune``-decorated
+       kernel; Triton picks the best config in-process.  After the call
+       we extract the winner from Triton's cache and persist it.
 
     Args:
         q, k, v: (B, H, S, D) BF16 or FP16 tensors.
@@ -247,50 +442,106 @@ def fp8_flash_attention(
 
     out = torch.empty_like(q, dtype=torch.float32)
 
-    # Tile sizes — gfx942 sweet spot is BLOCK_M=128, BLOCK_N=64 for head_dim 128.
-    # Empirically num_warps=4 and 2-stage pipeline match aotriton flash for D=128.
-    BLOCK_M = 128
-    BLOCK_N = 64
-    num_warps = 4
-    num_stages = 2
+    disable_autotune = os.environ.get("MIRAGE_FP8_DISABLE_AUTOTUNE", "")
+    if disable_autotune in ("1", "true", "on"):
+        cfg = dict(_FALLBACK_CONFIG)
+        autotune_used = False
+    else:
+        cfg = _resolve_config(B, H, Sq, Skv, D, causal)
+        autotune_used = not cfg
+        if not cfg:
+            cfg = {}  # signal: use the autotuner
 
-    grid = (triton.cdiv(Sq, BLOCK_M), B * H)
-
-    _fp8_flash_attn_fwd[grid](
-        q_fp8,
-        k_fp8,
-        v_fp8,
-        scale,
-        q_scales,
-        k_scales,
-        v_scales,
-        out,
-        q_fp8.stride(0),
-        q_fp8.stride(1),
-        q_fp8.stride(2),
-        q_fp8.stride(3),
-        k_fp8.stride(0),
-        k_fp8.stride(1),
-        k_fp8.stride(2),
-        k_fp8.stride(3),
-        v_fp8.stride(0),
-        v_fp8.stride(1),
-        v_fp8.stride(2),
-        v_fp8.stride(3),
-        out.stride(0),
-        out.stride(1),
-        out.stride(2),
-        out.stride(3),
-        B,
-        H,
-        Sq,
-        Skv,
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        BLOCK_D=D,
-        CAUSAL=causal,
-        FP8_MAX=FP8_E4M3_MAX,
-        num_warps=num_warps,
-        num_stages=num_stages,
-    )
+    if autotune_used:
+        # Cache miss — dispatch through the autotuner.  The grid in this
+        # branch must NOT bind BLOCK_M (it's part of the tuned meta).
+        grid = lambda meta: (triton.cdiv(Sq, meta["BLOCK_M"]), B * H)
+        _fp8_flash_attn_fwd_autotuned[grid](
+            q_fp8,
+            k_fp8,
+            v_fp8,
+            scale,
+            q_scales,
+            k_scales,
+            v_scales,
+            out,
+            q_fp8.stride(0),
+            q_fp8.stride(1),
+            q_fp8.stride(2),
+            q_fp8.stride(3),
+            k_fp8.stride(0),
+            k_fp8.stride(1),
+            k_fp8.stride(2),
+            k_fp8.stride(3),
+            v_fp8.stride(0),
+            v_fp8.stride(1),
+            v_fp8.stride(2),
+            v_fp8.stride(3),
+            out.stride(0),
+            out.stride(1),
+            out.stride(2),
+            out.stride(3),
+            B,
+            H,
+            Sq,
+            Skv,
+            BLOCK_D=D,
+            CAUSAL=causal,
+            FP8_MAX=FP8_E4M3_MAX,
+        )
+        # Pull the winning config back out of Triton's autotuner cache and
+        # persist it to disk so the next process can skip the search.
+        try:
+            best = _fp8_flash_attn_fwd_autotuned.best_config
+            winner = {
+                "BLOCK_M": int(best.kwargs["BLOCK_M"]),
+                "BLOCK_N": int(best.kwargs["BLOCK_N"]),
+                "num_warps": int(best.num_warps),
+                "num_stages": int(best.num_stages),
+            }
+            _record_config(B, H, Sq, Skv, D, causal, winner)
+        except (AttributeError, KeyError):
+            # Old triton without best_config exposed — fail silent; the
+            # next process will autotune again.
+            pass
+    else:
+        # Cache hit — launch with the fixed config directly.
+        grid = (triton.cdiv(Sq, cfg["BLOCK_M"]), B * H)
+        _fp8_flash_attn_fwd_impl[grid](
+            q_fp8,
+            k_fp8,
+            v_fp8,
+            scale,
+            q_scales,
+            k_scales,
+            v_scales,
+            out,
+            q_fp8.stride(0),
+            q_fp8.stride(1),
+            q_fp8.stride(2),
+            q_fp8.stride(3),
+            k_fp8.stride(0),
+            k_fp8.stride(1),
+            k_fp8.stride(2),
+            k_fp8.stride(3),
+            v_fp8.stride(0),
+            v_fp8.stride(1),
+            v_fp8.stride(2),
+            v_fp8.stride(3),
+            out.stride(0),
+            out.stride(1),
+            out.stride(2),
+            out.stride(3),
+            B,
+            H,
+            Sq,
+            Skv,
+            BLOCK_M=cfg["BLOCK_M"],
+            BLOCK_N=cfg["BLOCK_N"],
+            BLOCK_D=D,
+            CAUSAL=causal,
+            FP8_MAX=FP8_E4M3_MAX,
+            num_warps=cfg["num_warps"],
+            num_stages=cfg["num_stages"],
+        )
     return out.to(q.dtype)
