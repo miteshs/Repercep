@@ -58,6 +58,51 @@ def denoise_cosmos_video(
     """
     import torch
 
+    # Diffusers' own `CosmosTextToWorldPipeline.__call__` is wrapped with
+    # `@torch.no_grad()`; without the same gate here every step's autograd
+    # graph stays alive across the loop and activation memory grows
+    # ~linearly in step count. 17f / 8 steps fits (~28 GiB peak); 121f /
+    # 36 steps OOMs at ~189 GiB on a 192 GiB MI300X. `inference_mode` is a
+    # strict superset of `no_grad` and the right gate since nothing here
+    # is going to be backpropped through.
+    with torch.inference_mode():
+        return _denoise_impl(
+            pipe,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            fps=fps,
+            seed=seed,
+            output_type=output_type,
+            cfg_batched=cfg_batched,
+            cache_skip_every=cache_skip_every,
+            cache_warmup_steps=cache_warmup_steps,
+        )
+
+
+def _denoise_impl(
+    pipe: Any,
+    *,
+    prompt: str,
+    negative_prompt: str | None,
+    height: int,
+    width: int,
+    num_frames: int,
+    num_inference_steps: int,
+    guidance_scale: float,
+    fps: int,
+    seed: int | None,
+    output_type: str,
+    cfg_batched: bool,
+    cache_skip_every: int,
+    cache_warmup_steps: int,
+) -> Any:
+    import torch
+
     device = pipe._execution_device
     transformer_dtype = pipe.transformer.dtype
 
