@@ -509,8 +509,33 @@ effective DiT-loop work reduction at `skip=4` is ~3×.
 Caveats:
 - **Warmup-separated profile (follow-up):** 154.1 s total / 152.5 s DiT / 12
   calls. The single-run 164 s number included ~10 s of one-time autotuning;
-  the clean steady-state is **154 s — 2.47× faster than H100 reference, 3.02×
-  over the MI300X baseline**.
+  the clean steady-state is 154 s.
+
+### F16 — Quality fail: naive uniform step-skipping is not deployable at skip=4
+
+Visual eyeball of the 121-frame cached output: **the cached video is visibly
+worse than the reference** — temporal dynamics are damped, output reads as
+static / smeared. The numerical signal lines up: inter-frame motion drops
+from **6.30 (reference) to 4.69 (cached)** — ~25 % less motion at the same
+prompt + seed. Reusing the previous full step's `noise_pred` on 3 of every 4
+post-warmup steps is too aggressive for Cosmos-7B at 36 steps.
+
+The 154 s / 2.47× speedup is a real upper bound on what *uniform* step-
+skipping can deliver, but it is not deployment-viable. The earlier headline
+framing in `COSMOS_ON_MI300X.md` has been corrected to reflect this.
+
+Remaining caching paths:
+- `cache_skip_every=2` — alternates full/skip; cached preds are at most 1
+  step stale (vs 3 with skip=4). Projected ~260 s at 121 f (1.46× over
+  H100 reference *if* quality holds). Untested.
+- **Adaptive caching (TeaCache-style)** — only skip when the modulated input
+  distance from the last full step is below a learned threshold; skip rate
+  varies per-prompt and per-step. The right long-term shape; needs a small
+  research increment.
+
+The **deployable headline is the 465 s baseline** (82 % of H100 reference)
+plus `torch.compile` (projected ~410 s; 49 f shows 1.13× DiT). Other levers
+in `OPTIMIZATION.md`.
 - **Quality is a dial.** The video stats are in a healthy range (brightness
   108, std 67.2, motion 4.69 — same band as the uncached 121 f reference at
   brightness 106 / std 65.1). Visual verification is the gating test; if

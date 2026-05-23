@@ -46,14 +46,11 @@ Measured so far (49 f / 12 steps, warmup-separated):
   Smaller than projected: at Cosmos-7B scale each transformer call is
   compute-bound, so packaging two batch-1 forwards as one batch-2 forward
   doesn't reduce GEMM work — see BUILD_LOG F14.
-- Native loop + **step-skip caching (`cache_skip_every=4`) — 2.00× loop /
-  1.96× end-to-end at 49 f / 12 steps.** The biggest measured single lever;
-  24 → 6 DiT calls. Quality dial — visual verification of the cached output
-  is still pending.
-- **At the full reference config (121 f / 36 steps), caching scales further:
-  154 s warmup-separated → 3.02× over the MI300X baseline, 2.47× FASTER than
-  NVIDIA's published H100 reference (~380 s).** Same caveat: quality
-  verification pending.
+- Native loop + step-skip caching (`cache_skip_every=4`) — speed is real
+  (1.96× e2e at 49 f, 3.02× at 121 f / 154 s) but **the cached output is
+  visibly degraded** (F16). Uniform skipping at this rate is not
+  deployment-viable on Cosmos-7B / 36 steps. Lighter `skip=2` and adaptive
+  (TeaCache-style) caching are the remaining options.
 
 ## 3. Optimization tiers
 

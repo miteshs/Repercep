@@ -19,15 +19,30 @@ reported Cosmos benchmark on any AMD GPU.**
 | Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton |
 | 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
-| same, native loop + **step-skip cache (`skip=4`)** | — | **154 s** measured, warmup-separated — **2.47× faster than H100 reference** |
+| same, native loop + step-skip cache (`skip=4`) | — | 154 s measured, but ⚠ **visibly degraded output** — see §Caching quality |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
-**Headline:** with step-skip caching, Mirage on MI300X **beats NVIDIA's H100
-reference by 2.47×** on the same workload — *if the quality holds* under the
-cache-skip rate. Without caching, MI300X reaches 82 % of H100 reference wall
-time. Either way, Mirage uses *none* of NVIDIA's CUDA-only tooling (no
-TransformerEngine, Apex, NATTEN, or CUDA flash-attn) and ~30 % less peak HBM.
+**Headline (honest):** the **deployable** number is the **465 s baseline —
+82 % of NVIDIA's H100 reference wall time** — using *none* of NVIDIA's
+CUDA-only tooling (no TransformerEngine, Apex, NATTEN, or CUDA flash-attn)
+and ~30 % less peak HBM. The earlier 154 s / 2.47× claim from `cache_skip=4`
+turned out to be quality-broken — naive uniform step-skipping damps the
+DiT's temporal dynamics visibly. See §Caching quality. Less aggressive
+caching, adaptive (TeaCache-style) caching, and `torch.compile` stacking are
+the remaining levers in `OPTIMIZATION.md`.
+
+## Caching quality
+
+The naive `cache_skip_every=4` measurement (154 s) is **not deployable**.
+Re-using the previous full step's `noise_pred` for 3 of every 4 post-warmup
+steps damps the model's temporal evolution visibly — the cached video has
+~25 % less inter-frame motion than the same-prompt / same-seed reference
+(measured 4.69 vs 6.30 mean) and reads as static / smeared. The number is a
+real upper bound on what *uniform* step-skipping can produce on Cosmos-7B
+at 36 steps; it is not a real-world speedup. Lighter `cache_skip=2` and
+adaptive caching (TeaCache-style — only skip when input similarity to the
+last full step is above threshold) are the remaining options.
 
 ## Why no one has done this before
 
