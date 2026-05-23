@@ -8,9 +8,11 @@ repository   = { workspace = true }
 rust-version = { workspace = true }
 
 [lib]
-# `_native` is the convention across all Mirage Rust crates: the Python wrapper
-# at src/mirage/runtime/<name>.py imports from `mirage_<name>._native`.
-name       = "_native"
+# Cargo lib name must be unique within the workspace (otherwise every crate
+# would build to the same `target/release/lib_native.so` and the last build
+# would win). The Python import path is preserved via `[tool.maturin]
+# module-name = "mirage_cache._native"` in this crate's pyproject.toml.
+name       = "mirage_cache_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -8,7 +8,9 @@ repository   = { workspace = true }
 rust-version = { workspace = true }
 
 [lib]
-name       = "_native"
+# Unique across the workspace to avoid target/release/lib_native.so collision;
+# Python import path stays mirage_router._native via pyproject.toml.
+name       = "mirage_router_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

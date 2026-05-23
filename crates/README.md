@@ -19,10 +19,19 @@ The fork that put this directory on the map is recorded in
 
 ## Shared conventions (every crate follows these)
 
-**Library name.** Each crate's library is named `_native` and produces both
-`cdylib` (the Python extension `.so`) and `rlib` (so other Rust crates can
-depend on it). The Python wrapper at `src/mirage/runtime/<name>.py` imports
-from `mirage_<name>._native` (e.g. `from mirage_cache._native import …`).
+**Library name.** Each crate's Cargo lib name is **unique within the
+workspace** — `mirage_cache_native`, `mirage_router_native`,
+`mirage_scheduler_native` — so the three never collide on the shared
+`target/release/lib<name>.so` output. The Python import path is preserved
+at `mirage_<name>._native` via `[tool.maturin] module-name =
+"mirage_<name>._native"` in each crate's `pyproject.toml`, which renames
+the .so as it's packaged into the wheel. Both `cdylib` (the Python
+extension) and `rlib` (so other Rust crates can depend on this one)
+crate-types are emitted. The Python wrapper at
+`src/mirage/runtime/<name>.py` imports from `mirage_<name>._native`
+(e.g. `from mirage_cache._native import …`) regardless of the Cargo lib
+name — only the maturin module-name and the `#[pymodule] fn _native`
+function matter for the import path.
 
 **Versions.** All shared dep versions live in the root `Cargo.toml`'s
 `[workspace.dependencies]`. Use `{ workspace = true }` to inherit. Never pin
@@ -90,12 +99,18 @@ the wrapper IS the API definition).
 
 ## Building
 
-`maturin develop --release` builds the crate and installs the `.so` into the
-active venv. The Makefile target `rust-install` automates this for the whole
-workspace. The user-facing dev loop is:
+`make rust-install` runs `maturin build --release` for every crate, then
+`uv pip install --reinstall` for all built wheels. We deliberately do NOT
+use `maturin develop`: that command requires `pip` inside the venv, but
+this project's venv is `uv`-managed (no pip), and `--uv` flag in maturin
+1.13 doesn't reliably handle workspace-member crates with separate
+per-crate `pyproject.toml`. Build-then-install is two steps but more
+robust and CI-friendly. Wheels go to `target/wheels/`.
+
+The user-facing dev loop is:
 
 ```bash
-make rust-install      # build every crate's .so into .venv
+make rust-install      # build every crate's wheel, install into .venv
 make check-all         # ruff + mypy + pytest + cargo fmt-check + clippy + cargo test
 ```
 

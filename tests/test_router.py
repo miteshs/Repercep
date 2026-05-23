@@ -14,7 +14,6 @@ import pytest
 
 from mirage.runtime.router import FrameStream, Router, RouterError
 
-
 # ---------------------------------------------------------------------------
 # Mock scheduler (duck-typed; satisfies SchedulerHandle on the Rust side)
 # ---------------------------------------------------------------------------

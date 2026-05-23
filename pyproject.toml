@@ -92,6 +92,12 @@ module = [
   "flash_attn.*",
   "cosmos_guardrail.*",
   "nltk.*",
+  # PyO3-built extensions ship `py.typed` markers but no .pyi stubs, so mypy
+  # treats them as Any. Stubs are a future-Stage-3.5 item; for now treat the
+  # compiled `_native` submodules like other untyped third-party imports.
+  "mirage_cache.*",
+  "mirage_router.*",
+  "mirage_scheduler.*",
 ]
 ignore_missing_imports = true
 

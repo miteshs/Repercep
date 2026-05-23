@@ -1,5 +1,5 @@
 PY := .venv/bin/python
-UV := ~/.local/bin/uv
+UV := $(HOME)/.local/bin/uv
 CARGO := cargo
 
 .PHONY: help install lint format typecheck test check-gpu info \
@@ -106,16 +106,22 @@ else
 	$(CARGO) test --workspace
 endif
 
-# Build each crate's PyO3 extension module and install it into .venv. Iterates
-# explicitly because `maturin develop` is per-package, not workspace-wide.
+# Build each crate's PyO3 extension into a wheel, then install all wheels into
+# .venv via uv. We deliberately do NOT use `maturin develop`: that command
+# requires pip in the venv, but our venv is uv-managed (no pip), and
+# `--uv` in maturin 1.13 doesn't reliably handle workspace-member crates.
+# Build + install is two steps but more robust and CI-friendly.
 rust-install:
 ifeq ($(HAVE_CRATES),)
 	$(call rust-skip-msg,rust-install)
 else
+	@rm -f target/wheels/mirage_*.whl
 	@for crate in $$(find crates -mindepth 2 -maxdepth 2 -name Cargo.toml -printf '%h\n'); do \
-	    echo "==> maturin develop --release in $$crate"; \
-	    $(PY) -m maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	    echo "==> maturin build --release in $$crate"; \
+	    $(PY) -m maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
 	done
+	@echo "==> uv pip install --reinstall <built wheels>"
+	@$(UV) pip install --python .venv --reinstall target/wheels/mirage_*.whl
 endif
 
 lint-all: lint rust-fmt-check rust-clippy

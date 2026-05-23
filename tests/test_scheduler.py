@@ -36,7 +36,7 @@ def test_priority_ordering_high_normal_low() -> None:
     s.submit("n2", "normal", {})
     s.submit("h2", "high", {})
     s.submit("l2", "low", {})
-    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(6)]  # type: ignore[index]
+    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(6)]
     assert order == ["h1", "h2", "n1", "n2", "l1", "l2"]
 
 
@@ -44,7 +44,7 @@ def test_fifo_within_same_priority() -> None:
     s = Scheduler(capacity=8)
     for i in range(5):
         s.submit(f"r{i}", "normal", {"i": i})
-    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(5)]  # type: ignore[index]
+    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(5)]
     assert order == ["r0", "r1", "r2", "r3", "r4"]
 
 
@@ -55,7 +55,7 @@ def test_cancel_skips_item() -> None:
     s.submit("c", "normal", {})
     s.cancel("b")
     assert len(s) == 2
-    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(2)]  # type: ignore[index]
+    order = [s.next_blocking(timeout_ms=500)["id"] for _ in range(2)]
     assert order == ["a", "c"]
     assert len(s) == 0
 
@@ -78,7 +78,10 @@ def test_capacity_enforced() -> None:
 
 def test_unknown_priority_raises() -> None:
     s = Scheduler(capacity=2)
-    with pytest.raises(Exception):
+    # An invalid priority maps to a plain RuntimeError from the FFI boundary,
+    # not to SchedulerError (which is only for the four named scheduler-domain
+    # variants). Pinning the narrower RuntimeError keeps the test honest.
+    with pytest.raises(RuntimeError):
         s.submit("a", "urgent", {})
 
 
