@@ -13,8 +13,17 @@ SDPA.  See ADR-0002.
 
 from __future__ import annotations
 
+from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention
+from mirage.attention.fp8_triton import FP8TritonAttention
 from mirage.attention.protocol import AttentionOp
 from mirage.attention.registry import select_attention_op
 from mirage.attention.types import AttentionKind, AttentionShape
 
-__all__ = ["AttentionKind", "AttentionOp", "AttentionShape", "select_attention_op"]
+__all__ = [
+    "AttentionKind",
+    "AttentionOp",
+    "AttentionShape",
+    "FP8ScaledMMAttention",
+    "FP8TritonAttention",
+    "select_attention_op",
+]

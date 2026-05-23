@@ -57,6 +57,20 @@ Measured so far (49 f / 12 steps, warmup-separated):
     short configs.
 - Adaptive caching (TeaCache-style — input-similarity gated) is the right
   long-term shape; tracked separately.
+- **FP8 attention (CDNA3 MFMA)** — Session 8, 2026-05-23. Two ops shipped:
+  fused `fp8-triton-flash` (FA-2 algorithm + FP8 MFMA tiles) and unfused
+  `fp8-scaled-mm` (`torch._scaled_grouped_mm`). Opt-in via
+  `MIRAGE_FP8_ATTENTION=1`. Attention-only forward time vs SDPA, B=1 H=8
+  D=128, warmup-separated:
+  | seq_len | SDPA | fp8-triton-flash | speedup | rel mean err |
+  |--:|--:|--:|--:|--:|
+  | 4096 | 3.21 ms | 6.07 ms | 0.53× | 3.3% |
+  | **8192** | **5.78 ms** | **3.01 ms** | **1.92×** | 3.3% |
+  | **16384** | **15.97 ms** | **8.34 ms** | **1.92×** | 3.2% |
+  Crossover S≈4-8k; the FP8 path wins above that and matches SDPA at very
+  long S where aotriton is also fully tuned. Cosmos's 121 f reference runs
+  spatial attention at S≈109k — well above the crossover. End-to-end
+  Cosmos verification is the next gate.
 
 ## 3. Optimization tiers
 

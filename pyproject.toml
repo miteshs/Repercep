@@ -89,6 +89,7 @@ module = [
   "transformers.*",
   "diffusers.*",
   "triton.*",
+  "triton_kernels.*",
   "flash_attn.*",
   "cosmos_guardrail.*",
   "nltk.*",
