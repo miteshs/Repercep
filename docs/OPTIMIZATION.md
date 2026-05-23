@@ -67,10 +67,34 @@ Measured so far (49 f / 12 steps, warmup-separated):
   | 4096 | 3.21 ms | 6.07 ms | 0.53× | 3.3% |
   | **8192** | **5.78 ms** | **3.01 ms** | **1.92×** | 3.3% |
   | **16384** | **15.97 ms** | **8.34 ms** | **1.92×** | 3.2% |
-  Crossover S≈4-8k; the FP8 path wins above that and matches SDPA at very
-  long S where aotriton is also fully tuned. Cosmos's 121 f reference runs
-  spatial attention at S≈109k — well above the crossover. End-to-end
-  Cosmos verification is the next gate.
+  Crossover S≈4-8k; the FP8 path wins above that on the bench micro-shape.
+- **FP8 wired into Cosmos's diffusers path** — Session 10, 2026-05-23
+  (Phase 2.5). A ``"mirage_fp8"`` backend is now registered with
+  ``diffusers.models.attention_dispatch._AttentionBackendRegistry`` via
+  ``src/mirage/attention/diffusers_backend.py``;
+  ``MIRAGE_FP8_ATTENTION=1`` switches the active backend at
+  ``CosmosEngine.load()``. End-to-end 121 f / 36 step / adaptive caching:
+  | Config | Wall | Motion stat |
+  |---|--:|--:|
+  | adaptive (native dispatcher) | **150.9 s** | 4.64 |
+  | adaptive + ``MIRAGE_FP8_ATTENTION=1`` | 155.1 s | 4.65 |
+  **No wall-time win at Cosmos's production shape**, despite the 1.92×
+  bench number — the bench was at B=1, H=8; Cosmos runs B=2, H=32. A
+  follow-up bench at the actual production shape (B=2, H=32, D=128,
+  S∈{65k, 109k}) shows fp8-triton-flash at **0.98× SDPA**:
+  | seq_len | SDPA | fp8-triton-flash | best vs SDPA |
+  |--:|--:|--:|--:|
+  | 65536 | 415.75 ms | 425.27 ms | 0.98× |
+  | 109000 | 1147.39 ms | 1176.40 ms | 0.98× |
+  The Triton kernel's BLOCK_M=128/BLOCK_N=64/num_warps=4 tile shape
+  amortizes well when the grid is sparse (8 program columns at B=1, H=8);
+  at Cosmos's 64-column grid (B=2 × H=32) the kernel's per-tile overhead
+  no longer fits and SDPA→aotriton (which is autotuned per shape) wins.
+  Quality is intact — eyeballed output is visually identical to the
+  native run; mean abs pixel diff = 6.81 / 255. The wiring is correct
+  and the env var now actually changes the kernel diffusers calls — the
+  bottleneck moved from "FP8 unreachable" (Session 9 F19) to "FP8 kernel
+  needs autotuning for the production shape" (Session 10 follow-up).
 
 ## 3. Optimization tiers
 

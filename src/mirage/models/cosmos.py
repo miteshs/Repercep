@@ -157,6 +157,18 @@ class CosmosEngine:
         # guardrail itself around generation — see the module docstring.
         _disable_cosmos_guardrail()
 
+        # Bridge ``MIRAGE_FP8_ATTENTION`` to diffusers' attention dispatcher.
+        # Cosmos's ``CosmosAttnProcessor2_0`` calls
+        # ``diffusers.models.attention_dispatch.dispatch_attention_fn``, which
+        # never consults ``mirage.attention.select_attention_op``. The bridge
+        # in ``mirage.attention.diffusers_backend`` registers a ``"mirage_fp8"``
+        # backend with that dispatcher; flipping ``MIRAGE_FP8_ATTENTION`` here
+        # selects it for the rest of the process. See BUILD_LOG F19 and the
+        # Phase 2.5 entry.
+        from mirage.attention.diffusers_backend import maybe_activate_from_env
+
+        maybe_activate_from_env()
+
         dtype = getattr(torch, self._config.dtype)
         device = self._backend.torch_device(self._config.device_index)
         # diffusers ships only partial type info, so `from_pretrained` reads as

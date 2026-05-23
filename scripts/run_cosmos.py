@@ -13,8 +13,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
+
+
+def _setup_imports() -> None:
+    """Add this worktree's ``src/`` and ``kernels/`` to ``sys.path``.
+
+    The shared ``.venv`` carries an editable install of mirage-runtime pointed
+    at whichever worktree ran ``make install`` first; without this hook a
+    parallel worktree's script would import the wrong source tree. Mirror the
+    pattern from ``scripts/bench_fp8.py`` / ``scripts/bench_cosmos_fp8.py``.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    for sub in ("src", "kernels"):
+        path = repo_root / sub
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+
+_setup_imports()
 
 
 def main() -> int:

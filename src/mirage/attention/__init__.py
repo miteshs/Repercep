@@ -13,6 +13,12 @@ SDPA.  See ADR-0002.
 
 from __future__ import annotations
 
+# Importing the diffusers-side bridge here registers the ``"mirage_fp8"``
+# backend with ``diffusers.models.attention_dispatch._AttentionBackendRegistry``
+# at package import time. The dispatcher stays on ``"native"`` unless the user
+# flips it (env var or ``attention_backend(...)`` context manager) so this is
+# zero-cost in the default path. See ``diffusers_backend.py``.
+from mirage.attention import diffusers_backend as _diffusers_backend  # noqa: F401
 from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention
 from mirage.attention.fp8_triton import FP8TritonAttention
 from mirage.attention.protocol import AttentionOp
