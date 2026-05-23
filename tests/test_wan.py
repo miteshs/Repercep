@@ -75,3 +75,75 @@ def test_wan_engine_accepts_custom_config() -> None:
     info = engine.info()
     assert info.dtype == "float16"
     assert info.device == "rocm:1"
+
+
+def test_wan_profile_exports_at_bench_top_level() -> None:
+    # The Wan-specific profiler mirrors profile_cosmos in shape and lives in
+    # the same package. Both should re-export from mirage.bench so external
+    # callers can pick one without touching the submodule path.
+    import mirage.bench as bench
+
+    assert hasattr(bench, "WanProfile")
+    assert hasattr(bench, "profile_wan")
+
+
+def test_wan_profile_schema_includes_moe_split() -> None:
+    # The MoE second-expert handoff is non-trivial for Wan-2.2 (Session 10
+    # noted ~270 s of the 326 s smoke run was non-DiT work). The profiler must
+    # report transformer and transformer_2 timings as separate fields so the
+    # handoff is visible in the breakdown — not collapsed into a single
+    # dit_loop_s.
+    from mirage.bench.profile import WanProfile
+
+    fields = set(WanProfile.model_fields)
+    assert "dit_high_noise_s" in fields
+    assert "dit_low_noise_s" in fields
+    assert "dit_high_noise_calls" in fields
+    assert "dit_low_noise_calls" in fields
+    # And dit_loop_s = high + low, same units as the Cosmos counterpart so
+    # the two reports are directly comparable.
+    assert "dit_loop_s" in fields
+
+
+def test_wan_profile_dit_share_zero_when_total_zero() -> None:
+    from mirage.bench.profile import WanProfile
+
+    prof = WanProfile(
+        total_s=0.0,
+        text_encode_s=0.0,
+        dit_loop_s=0.0,
+        dit_high_noise_s=0.0,
+        dit_low_noise_s=0.0,
+        vae_decode_s=0.0,
+        other_s=0.0,
+        dit_calls=0,
+        dit_high_noise_calls=0,
+        dit_low_noise_calls=0,
+        text_encode_calls=0,
+        vae_decode_calls=0,
+        compiled=False,
+    )
+    assert prof.dit_share == 0.0
+
+
+def test_wan_profile_dit_share_reports_loop_fraction() -> None:
+    from mirage.bench.profile import WanProfile
+
+    # 80% of total in the DiT loop (a typical Wan-shaped breakdown — far more
+    # DiT-bound than the 17f/8-step smoke, where VAE+postprocess dominate).
+    prof = WanProfile(
+        total_s=100.0,
+        text_encode_s=1.0,
+        dit_loop_s=80.0,
+        dit_high_noise_s=40.0,
+        dit_low_noise_s=40.0,
+        vae_decode_s=10.0,
+        other_s=9.0,
+        dit_calls=80,
+        dit_high_noise_calls=40,
+        dit_low_noise_calls=40,
+        text_encode_calls=2,
+        vae_decode_calls=1,
+        compiled=False,
+    )
+    assert prof.dit_share == 0.8

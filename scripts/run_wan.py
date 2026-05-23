@@ -62,11 +62,33 @@ def main() -> int:
         action="store_true",
         help="torch.compile the DiT transformer(s) — slow first run, faster steady-state",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help=(
+            "wrap the primary run in a per-stage probe (text encode / DiT "
+            "high-noise / DiT low-noise / VAE decode / other). Adds forward "
+            "hooks + CUDA-syncs around each stage, all numbers are real device "
+            "time, no second pass — the printed RESULT and PROFILE lines both "
+            "describe the same generation"
+        ),
+    )
+    parser.add_argument(
+        "--profile-second-pass",
+        action="store_true",
+        help=(
+            "additionally run a fully-separate profiled generation AFTER the "
+            "primary one, with one warmup pass absorbed. Doubles the wall "
+            "time of the script. Off by default — the inline --profile is "
+            "sufficient for the steady-state breakdown"
+        ),
+    )
     args = parser.parse_args()
 
     import torch
 
     from mirage.backend.registry import select_backend
+    from mirage.bench.profile import _Probe, profile_wan
     from mirage.models.wan import NATIVE_FPS, SMALL_REPO, WanConfig, WanEngine
     from mirage.runtime.types import GenerationParams, GenerationRequest
 
@@ -112,9 +134,41 @@ def main() -> int:
         flush=True,
     )
     torch.cuda.reset_peak_memory_stats()
+
+    # Inline per-stage probe — forward hooks fire outside any compiled graph,
+    # so the breakdown is valid whether or not the DiT is torch.compile'd.
+    probe: _Probe | None = None
+    if args.profile:
+        probe = _Probe(engine.pipeline)
+        probe.__enter__()
+
     t1 = time.perf_counter()
     frames = list(engine.generate(request))
     gen_s = time.perf_counter() - t1
+
+    prof_payload: dict[str, object] | None = None
+    if probe is not None:
+        probe.__exit__()
+        dit_hi = probe.dit.seconds
+        dit_lo = probe.dit2.seconds
+        prof_payload = {
+            "total_s": round(gen_s, 2),
+            "text_encode_s": round(probe.text.seconds, 3),
+            "dit_loop_s": round(dit_hi + dit_lo, 2),
+            "dit_high_noise_s": round(dit_hi, 2),
+            "dit_low_noise_s": round(dit_lo, 2),
+            "vae_decode_s": round(probe.vae.seconds, 3),
+            "other_s": round(
+                max(0.0, gen_s - probe.text.seconds - dit_hi - dit_lo - probe.vae.seconds),
+                2,
+            ),
+            "dit_calls": probe.dit.calls + probe.dit2.calls,
+            "dit_high_noise_calls": probe.dit.calls,
+            "dit_low_noise_calls": probe.dit2.calls,
+            "text_encode_calls": probe.text.calls,
+            "vae_decode_calls": probe.vae.calls,
+        }
+
     peak_gib = torch.cuda.max_memory_allocated() / 1024**3
 
     out = Path(args.out)
@@ -136,6 +190,46 @@ def main() -> int:
         "output": str(saved),
     }
     print("[mirage] RESULT " + json.dumps(summary), flush=True)
+
+    if prof_payload is not None:
+        print("[mirage] PROFILE " + json.dumps(prof_payload), flush=True)
+        dit_loop = float(prof_payload["dit_loop_s"])
+        dit_share = (dit_loop / gen_s * 100) if gen_s else 0.0
+        print(
+            f"  total {gen_s:7.1f}s | "
+            f"text {prof_payload['text_encode_s']:6.2f}s | "
+            f"DiT {dit_loop:7.1f}s ({dit_share:.0f}%, "
+            f"{prof_payload['dit_calls']} calls — "
+            f"hi {prof_payload['dit_high_noise_s']:.1f}s / "
+            f"{prof_payload['dit_high_noise_calls']} + "
+            f"lo {prof_payload['dit_low_noise_s']:.1f}s / "
+            f"{prof_payload['dit_low_noise_calls']}) | "
+            f"VAE {prof_payload['vae_decode_s']:6.2f}s | "
+            f"other {prof_payload['other_s']:6.1f}s",
+            flush=True,
+        )
+
+    if args.profile_second_pass:
+        # Separate warmup-separated steady-state profile. Doubles the script's
+        # wall time; only useful when the primary run includes ROCm kernel
+        # autotuning cost (cold cache) that we want excluded from the
+        # breakdown. The inline --profile above is sufficient otherwise.
+        print(
+            f"[mirage] second-pass profiling ({args.frames}f / {args.steps} steps) ...",
+            flush=True,
+        )
+        prof = profile_wan(engine, request, warmup=1)
+        print("[mirage] PROFILE2 " + json.dumps(prof.model_dump()), flush=True)
+        print(
+            f"  total {prof.total_s:7.1f}s | "
+            f"text {prof.text_encode_s:6.2f}s | "
+            f"DiT {prof.dit_loop_s:7.1f}s ({prof.dit_share * 100:.0f}%, "
+            f"{prof.dit_calls} calls — "
+            f"hi {prof.dit_high_noise_s:.1f}s / {prof.dit_high_noise_calls} + "
+            f"lo {prof.dit_low_noise_s:.1f}s / {prof.dit_low_noise_calls}) | "
+            f"VAE {prof.vae_decode_s:6.2f}s | other {prof.other_s:6.1f}s",
+            flush=True,
+        )
     return 0
 
 

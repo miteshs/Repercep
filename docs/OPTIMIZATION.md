@@ -204,3 +204,59 @@ Phase 2** (with continuous batching + FP8). Every change is measured by
 - The RL kernel synthesizer — Series A scope.
 - Multi-GPU — only a single MI300X VF is available on this host.
 - Distillation training — needs a training pipeline (Studio scope).
+
+## 7. Wan-2.2 — measured baseline (Session 11, 2026-05-23)
+
+The Cosmos baseline above is the leading workload; Wan-2.2-T2V-A14B is
+the second WM family Mirage serves end-to-end (`docs/WAN_ON_MI300X.md`).
+The MoE topology (two ~14 B-param expert transformers, ~14 B active /
+step, ~27 B total) is structurally heavier than Cosmos's single-DiT
+shape; the diffusers path is identical (no FP8, no compile, no native
+loop today).
+
+**81 f / 40 step / 1280×720 — the canonical Wan reference shape:**
+
+| | Wan team single H100 (FP8 + offload) | Mirage MI300X (BF16, no offload) |
+|---|--:|--:|
+| Wall, one-shot measured | — | **2576 s** (cold; contested) |
+| Per-step steady-state | ~26 s / step (implied: 1041 / 40) | **~41 s / step** (last 11 steps of primary run; first 2 of profile pass — bracketed to 41.14–41.17 s) |
+| Projected DiT loop steady-state (40 × per-step) | ~1041 s | **~1640 s** |
+| Projected total steady-state | 1041.5 s | **~1700 s** |
+| Peak HBM | 79.8 GB | **85.1 GiB** |
+| Quantization | FP8 weights (model_dtype convert) | None (BF16 transformer + FP32 VAE) |
+| Offload | `--offload_model True` (inactive MoE expert → CPU) | None (both experts resident) |
+
+Mirage at the diffusers BF16 path is **~1.6× behind H100's optimized
+single-GPU number**, but **~1.6× ahead of single A100's diffusers BF16
+number** (2735.7 s in the same Wan team table). The H100's advantage
+comes mostly from FP8 weight conversion + inactive-expert CPU offload;
+MI300X's 192 GiB doesn't need either, and the same offload-free path
+on H100 would not fit in 80 GB.
+
+**Wan-2.2 levers, in priority order:**
+- **Wan-shaped native loop with adaptive caching** — biggest expected
+  win, no quality change for typical schedules. The community's H100
+  TeaCache + Sage results land 2.5–3× speedup over a similar baseline
+  ([Morphic](https://morphic.com/blog/boosting-wan2-2-i2v-56-faster),
+  [Voltage Park](https://www.voltagepark.com/blog/accelerating-wan2-2-from-4-67s-to-1-5s-per-denoising-step-through-targeted-optimizations)).
+  Mirage's adaptive cache today is keyed on `CosmosTransformer3DModel`
+  block shapes; the Wan port is a Phase-2 follow-up.
+- **CFG batching for the low-noise expert phase.** CFG is unbatched
+  today (2 transformer forwards / step); the 35 low-noise steps are
+  where batching pays back most.
+- **FP8 attention** — the diffusers `mirage_fp8` backend (Session 10)
+  generalizes to `WanTransformer3DModel` without code changes; needs
+  shape autotuning at Wan's grid (different B / H from Cosmos).
+- **CPU offload of the inactive MoE expert** — would cut peak HBM
+  to ~45 GiB (one expert + activations), freeing the rest of MI300X's
+  192 GiB for batching or co-residency. Headroom for 4×
+  concurrent generations or two model variants resident, vs the H100
+  envelope which can fit at most one resident clip.
+- **Both-expert torch.compile** — Wan's `compile_transformer=True`
+  knob compiles both `transformer` and `transformer_2`. F15-style
+  segfault gating may need extending to Wan shapes; not exercised yet.
+
+**Why no Wan number after Tier-1 levers today:** the
+`denoise_cosmos_video` native loop is Cosmos-block-shape-specific;
+plumbing the equivalent for `WanTransformer3DModel` (MoE boundary +
+two transformers) is a non-trivial port. Tracking as next session.

@@ -8,12 +8,14 @@ stage by stage — so every later speedup is measured against a fixed baseline.
 from __future__ import annotations
 
 from mirage.bench.harness import BenchmarkResult, benchmark_engine, speedup
-from mirage.bench.profile import CosmosProfile, profile_cosmos
+from mirage.bench.profile import CosmosProfile, WanProfile, profile_cosmos, profile_wan
 
 __all__ = [
     "BenchmarkResult",
     "CosmosProfile",
+    "WanProfile",
     "benchmark_engine",
     "profile_cosmos",
+    "profile_wan",
     "speedup",
 ]
