@@ -1,8 +1,10 @@
 # Mirage Runtime — Handoff
 
 **Date:** 2026-05-23 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `e7f66b0` · **Status:** pre-alpha, working on MI300X, results
-publishable, polyglot scaffold landed (Stages 1–3), Phase 2 in progress
+**HEAD:** `61486e1`+ · **Status:** pre-alpha, working on MI300X, results
+publishable, polyglot scaffold landed (Stages 1–3), Phase 2 mostly landed
+(Wan-2.2 loader + adaptive caching + FP8 kernel; FP8 wiring into Cosmos
+deferred to 2.5)
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
@@ -42,9 +44,10 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 | | Wall time | vs NVIDIA H100 reference (~380 s) |
 |---|--:|--:|
 | Mirage baseline (diffusers + SDPA→aotriton) | **465 s** (740 s on 2026-05-23 re-run) | 0.82× / 0.51× |
-| Same + `torch.compile` on the DiT | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
+| Same + `torch.compile` on the DiT (≤64 f) | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
 | Same + native loop + step-skip `cache_skip=2` | **266 s** | **1.43× faster** |
-| Same + native loop + step-skip `cache_skip=4` | **154 s** (164 s re-validated 2026-05-23) | **2.47×** / 2.32× re-val |
+| Same + native loop + step-skip `cache_skip=4` | **154 s** Session 7 / **163.9 s** Session 9 clean | **2.47×** / **2.32×** |
+| Same + native loop + **adaptive cache** (`thr=0.30`) | **151.1 s** Session 9 clean | **2.51× — current headline** |
 | Peak HBM (all configs) | **52.5 GiB** | ~30 % less than H100's 74 GB |
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
@@ -62,18 +65,23 @@ Watchable artifacts (gitignored, local-only):
 
 | Want to read about | File |
 |---|---|
-| Chronological build log, every decision and finding | `docs/BUILD_LOG.md` (D1-D9, F1-F17, 7 sessions) |
+| Chronological build log, every decision and finding | `docs/BUILD_LOG.md` (D1-D9, F1-F19, 9 sessions) |
 | The publish-ready first-public-numbers writeup | `docs/COSMOS_ON_MI300X.md` |
 | Optimization strategy + measured ledger | `docs/OPTIMIZATION.md` |
 | Architecture component map | `docs/architecture.md` |
-| Key decisions with rationale | `docs/adr/0001..0004` |
+| Key decisions with rationale | `docs/adr/0001..0005` |
 | Polyglot build scaffold (Cargo workspace, kernels/, ADR-0004) | `Cargo.toml`, `crates/`, `kernels/` |
 | The seam between Mirage and a GPU vendor | `src/mirage/backend/protocol.py` |
+| The seam between Mirage and an attention kernel | `src/mirage/attention/protocol.py` + `registry.py` |
 | Cosmos engine + Mirage-orchestrated guardrail | `src/mirage/models/cosmos.py` |
-| Mirage-native denoising loop (CFG batching, step caching) | `src/mirage/runtime/denoise.py` |
+| **Wan-2.2 engine** (second WM family) | `src/mirage/models/wan.py` |
+| Mirage-native denoising loop (CFG batching, fixed + adaptive caching) | `src/mirage/runtime/denoise.py` |
+| **FP8 attention kernel** (Triton fused FA-2) | `src/mirage/attention/fp8_triton.py` + `kernels/triton_kernels/fp8_flash_attn.py` |
+| **HIP FP8 GEMM proof-of-life** (compiles, runs, output values TODO) | `kernels/hip/fp8_attn/` |
 | Per-stage profiler | `src/mirage/bench/profile.py` |
 | Frame-streaming HTTP + gRPC contract | `src/mirage/serving/` |
-| End-to-end runner | `scripts/run_cosmos.py` |
+| End-to-end runners | `scripts/run_cosmos.py`, `scripts/run_wan.py` |
+| Benchmark harnesses (head-to-head) | `scripts/bench_caching.py`, `scripts/bench_fp8.py` |
 | Per-stage measurement runner | `scripts/profile_cosmos.py` |
 
 ---
@@ -112,21 +120,41 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 ## 5. What's open
 
-**Phase 2 in flight (parallel agents on 2026-05-23):**
+**Phase 2 landed (Session 9, 2026-05-23):**
 
-- **Wan-2.2 loader** — proves the runtime is WM-native, not Cosmos-specific
-- **Adaptive caching (TeaCache-style)** — skip on input-similarity rather
-  than a fixed cadence; replaces F16/F17's "rule of thumb." Bundled with
-  F15 investigation in the same workstream.
-- **FP8 (CDNA3 native MFMA)** — real ~2× math throughput. Hard-mode: HIP
-  C++ kernel in `kernels/hip/`, behind the `AttentionOp` Protocol seam.
+- ✓ **Wan-2.2 loader** — `WanEngine`, `scripts/run_wan.py`, 9 new tests
+- ✓ **Adaptive caching (TeaCache-style)** — `cache_mode=adaptive` thr=0.30,
+  current headline 151.1 s / 2.51× at 121 f / 36 steps
+- ✓ **F15 safety gate** — `compile_max_frames=64` default; crash and the
+  recompile storm both avoided cleanly. The original SIGSEGV didn't repro
+  in the current torch+ROCm build, but the gate is still correct.
+- ◐ **FP8 attention kernel** — Triton FA-2 ships, **1.92× over SDPA at S≥8 k**;
+  HIP scaffold compiles + loads but output values are wrong (operand
+  layout TODO). **The kernel is NOT wired into the Cosmos diffusers path
+  yet** — see F19 / Phase 2.5 below.
+
+**Phase 2.5 (the deferred-but-important follow-ups):**
+
+1. **Wire FP8 into the Cosmos attention path.** The kernel exists and is
+   measurably fast. The diffusers Cosmos pipeline uses `dispatch_attention_fn`
+   from `diffusers.models.attention_dispatch`, not Mirage's
+   `select_attention_op`. Either monkey-patch the dispatch function or
+   rebuild `CosmosEngine` to use `select_attention_op` directly.
+2. **Wan-2.2 smoke gen on main.** The agent verified the loader
+   structurally; a real Wan 121-frame run on the MI300X (52 GiB download
+   + ~10 min generation) is the final acceptance.
+3. **HIP kernel correctness fix.** The `v_mfma_f32_16x16x32_fp8_fp8` GEMM
+   compiles + loads via `hipcc` + the pybind layer, but the operand-
+   register layout assumption is incomplete. Triton wins on perf today;
+   HIP is the long-term option if we need shapes Triton can't tune well
+   for.
 
 **Other next moves, in order of strategic value:**
 
 1. **Announce / publish.** `docs/COSMOS_ON_MI300X.md` is publish-ready
-   (refreshed 2026-05-23 with the `inference_mode` postscript). The
-   first-public-Cosmos-on-AMD-GPU framing is the OSS-first GTM lever the
-   implementation plan calls for (§2.4).
+   (refreshed 2026-05-23 with the adaptive-cache headline and the
+   `inference_mode` postscript). The first-public-Cosmos-on-AMD-GPU framing
+   is the OSS-first GTM lever the implementation plan calls for (§2.4).
 2. **Wire the Rust core into `src/mirage/serving/app.py`** — the three
    crates (`mirage-cache`, `mirage-scheduler`, `mirage-router`) are
    importable but the FastAPI handlers still call the engine directly.
@@ -139,9 +167,10 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 **Deferred / known issues:**
 
-- **F15** — `torch.compile` (inductor + triton-rocm) segfaults mid-warmup at
-  121 f shapes; 49 f compiles fine. Repro: `profile_cosmos.py --frames 121
-  --steps 36 --compare --warmup 1`.
+- **F15 update** — On this MI300X (torch 2.12.0+rocm7.2) the original
+  SIGSEGV didn't reproduce; instead the compile path enters a recompile
+  storm (~20 s/step vs 12.8 s eager). The `compile_max_frames=64` gate
+  in `CosmosConfig` covers both behaviors. Compile still works at ≤ 64 f.
 - **CK flash-attn for gfx942** not wired (the `ROCmFlashAttention` wrapper
   exists but the package isn't installed; SDPA→aotriton is the working
   path). See ADR-0002.
@@ -202,6 +231,10 @@ Quality gate: `make lint && make typecheck && make test` — all green
 ## 8. Commit history (recent)
 
 ```
+61486e1  caching: adaptive (TeaCache-style) + F15 compile gate at 121f
+d916800  attention: FP8 path on CDNA3 — Triton flash kernel + scaled_mm fallback + HIP scaffold
+ed1ed27  mirage.models.wan: Wan-2.2 T2V-A14B as the second world-model family
+300dc57  docs: refresh for OSS-announce + log Session 8 (polyglot scaffold, OOM fix)
 e7f66b0  denoise: wrap loop body in torch.inference_mode() — fixes 121f/36 OOM
 af9210d  Stage 3 integration: build pipeline, unique lib names, py.typed markers
 8c9bcfe  crates/mirage-router: greenfield request router in Rust+PyO3

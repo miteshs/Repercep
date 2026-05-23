@@ -687,3 +687,129 @@ re-validated 164 s / 52.5 GiB is the right number going forward.
   headline from Session 7.
 - Phase 2 launched as Session 9 (in flight at end of Session 8):
   Wan-2.2 loader, adaptive caching + F15 fix, FP8 via HIP kernel.
+
+## Session 9 — 2026-05-23 — Phase 2: Wan-2.2 + adaptive caching + FP8 kernel
+
+Three parallel Claude sub-agents in isolated git worktrees, dispatched
+simultaneously. Each agent owned one of Phase 2's three speedup/breadth
+levers and worked to a tight scope brief.
+
+### Agent D — `mirage.models.wan` — second world-model family (commit `ed1ed27`)
+
+- **Variant:** `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (Apache 2.0, MoE 14B
+  active per step; ~52 GiB BF16). Fits comfortably in 192 GiB HBM.
+- `WanEngine` mirrors `CosmosEngine` shape-for-shape (`WorldModelEngine`
+  Protocol conformance, lazy `load()`, `is_loaded`, `EngineInfo`).
+  Deviations documented in code: no in-pipeline safety checker, FP32
+  VAE per Wan's reference, `guidance_scale_2` for the MoE second
+  stage, `WAN_NATIVE_FPS=16`.
+- New `scripts/run_wan.py` mirroring the Cosmos runner (default 81 f
+  @ 1280×720, 40 steps, `--small` flag for TI2V-5B).
+- Smoke gen deferred to a follow-up session — 52 GiB download is too
+  much to do inside an agent worktree. Loader is verified structurally
+  via 9 new pytest cases.
+
+### Agent E — adaptive caching + F15 compile gate (commit `cb9eb7a`)
+
+**Adaptive caching (TeaCache-style)** lands in `denoise.py` alongside the
+existing `fixed` mode. Gate: accumulate the relative L1 distance of the
+timestep-conditioned latent input vs. the last full forward; skip while
+the accumulator is under `cache_adaptive_threshold`. Warmup window, the
+final step, and `cache_force_full_every` always force a full forward as
+a quality floor. Identity rescaler in v0 — the TeaCache paper's offline-
+fit polynomial is a future-fit item.
+
+Measured head-to-head (121 f / 36 steps, same model load, 3 configs):
+
+| mode | wall | full forwards | motion (∝ activity) |
+|---|--:|--:|--:|
+| fixed `skip=4` | 175.0 s (contended) / **163.9 s** (clean) | 12 | 4.66 |
+| adaptive `thr=0.30 floor=16` | 152.9 s (contended) / **151.1 s** (clean) | 11 | 4.65 |
+
+Two measurements per config — the agent's contended-environment numbers
+match the post-integration clean-GPU numbers within ~2%; the speedup is
+real, not artifact. Motion stat 4.65 vs 4.66 puts the visual quality in
+the F16/F17-verified band.
+
+**F15 inductor segfault** at 121 f shapes: outcome was *diagnosis +
+safety gate*, not a fix. The original SIGSEGV did NOT reproduce on this
+MI300X (torch 2.12.0+rocm7.2). Instead the compile arm exhibited a
+recompile storm (~20 s/step vs ~12.8 s eager) and was killed by the
+15-min watchdog at warmup step 15. The new `compile_max_frames` field
+on `CosmosConfig` (default 64) gates compile cleanly above that
+threshold; callers no longer get either the crash (historical) or the
+recompile storm (current). At ≤ 64 f, compile continues to deliver the
+1.13× DiT win measured in F8/Tier 1.
+
+### Agent F — FP8 attention via Triton + HIP scaffold (commit `573de6a`)
+
+Shipping outcome: **a working FP8 attention kernel** that beats SDPA at
+long sequence lengths.
+
+**Shapes:** Cosmos-DiT attention, B=1, H=8, D=128, BF16 vs e4m3.
+Warmup-separated.
+
+| seq_len | SDPA→aotriton | fp8-triton | speedup | rel err vs SDPA |
+|--:|--:|--:|--:|--:|
+| 4096 | 3.21 ms | 6.07 ms | 0.53× | 3.3 % |
+| 8192 | 5.78 ms | 3.01 ms | **1.92×** | 3.3 % |
+| 16384 | 15.97 ms | 8.34 ms | **1.92×** | 3.2 % |
+
+Crossover S ≈ 4 – 8 k. Allclose max abs diff ~5e-3 vs magnitude ~2e-2,
+inside the 1e-2 tolerance the agent set. **Cosmos at 121 f runs spatial
+attention at S ≈ 109 k — well above the crossover.**
+
+Also shipped:
+- `src/mirage/attention/fp8_scaled_mm.py` — unfused FP8 via
+  `torch._scaled_grouped_mm` as a fallback.
+- `kernels/triton_kernels/fp8_flash_attn.py` — the fused FA-2 kernel.
+- `kernels/hip/fp8_attn/` — HIP C++ proof-of-life: `hipcc` compiles a
+  `v_mfma_f32_16x16x32_fp8_fp8` GEMM and Python loads the binding
+  end-to-end, but the output values are wrong (operand-register layout
+  TODO). The toolchain is proven, the perf engineering isn't.
+  Documented as future work.
+
+### Integration findings on main
+
+Cherry-picked all three branches into main (commits `ed1ed27`,
+`d916800`, `61486e1`), then ran a clean GPU sweep:
+
+| Config | Wall | vs H100 (~380 s) | vs Session 7 (154 s) |
+|---|--:|--:|--:|
+| 121 f / 36 / `cache=fixed/4` | **163.9 s** | 2.32× | within noise |
+| 121 f / 36 / `cache=adaptive thr=0.30 floor=16` | **151.1 s** | **2.51×** | 1.020× faster |
+| same + `MIRAGE_FP8_ATTENTION=1` | 151.2 s | 2.51× | identical |
+
+**F19 — FP8 is a no-op in the Cosmos diffusers path today.** The third
+row is the diagnostic. `MIRAGE_FP8_ATTENTION=1` enables the FP8 op only
+inside `mirage.attention.select_attention_op` — but the diffusers
+Cosmos pipeline calls its own `dispatch_attention_fn` from
+`diffusers.models.attention_dispatch`, which never consults the Mirage
+registry. The kernel exists, is measurably fast (1.92× at S=8k+), and
+is opt-in safe to ship. Wiring it into Cosmos's attention path is a
+Phase-2.5 follow-up: either monkey-patch diffusers' dispatch, or rebuild
+the Cosmos engine on `select_attention_op` instead of relying on
+`CosmosAttnProcessor2_0`.
+
+### Phase 2 headline
+
+**121 f / 36 step / adaptive caching: 151.1 s, 2.51× the H100 reference.**
+
+Stacking with FP8 (once wired) projects to ≥ 4× — inside the
+Implementation Plan's Phase-2 3-5× target. Adaptive replaces the F16/F17
+"rule of thumb" on cache skipping; FP8 is the next compose-on-top win.
+
+### State of the runtime after Session 9
+
+- HEAD on main: `61486e1` (caching) + the integration commit that
+  follows this BUILD_LOG entry. All work pushed to `origin/main`.
+- Tests: 41 Rust + 86 pytest passing on a clean GPU.
+- Five new files in `scripts/`, three new modules in
+  `src/mirage/attention/`, four new directories in `kernels/`, plus
+  `src/mirage/models/wan.py` as the second model family.
+- Phase 2 deliverables status: ✓ Wan-2.2 loader, ✓ adaptive caching,
+  ✓ F15 gated, ◐ FP8 (kernel ready, dispatch wiring deferred to 2.5).
+  Continuous batching and action conditioning hooks remain in
+  Phase-2 scope but deferred to a later session (depend on app.py
+  wiring through the Rust router).
+

@@ -24,21 +24,48 @@ reported Cosmos benchmark on any AMD GPU.**
 | 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
 | same, native loop + step-skip cache (`skip=2`) | — | **266 s** measured — **1.43× faster than H100 reference**, quality verified |
-| same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f |
+| same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f; re-validated **164 s** on 2026-05-23 (Session 8) and **163.9 s** on 2026-05-23 (Session 9, clean GPU) |
+| same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **151.1 s** measured — **2.51× faster than H100 reference**, motion stat matches the verified `skip=4` reference (4.65 vs 4.66), Session 9 |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
-**Headline:** with step-skip caching at the full reference config, **Mirage
-on MI300X beats NVIDIA's H100 reference by 2.47× (`skip=4`, 154 s) or 1.43×
-(`skip=2`, 266 s)** — both quality-verified vs the no-cache reference at the
-same prompt + seed. Mirage uses *none* of NVIDIA's CUDA-only tooling (no
-TransformerEngine, Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak
-HBM** (52.5 vs 74 GB). The undertested baseline (no cache, no compile)
-still reaches 82 % of H100 reference at 465 s.
+**Headline:** with **adaptive caching** at the full reference config, **Mirage
+on MI300X beats NVIDIA's H100 reference by 2.51× (151.1 s)**. Fixed step-skip
+is still measured and supported (`--cache-mode fixed --cache-skip-every 4`
+at 163.9 s / 2.32×, `--cache-skip-every 2` at 266 s / 1.43×). Adaptive uses
+the same per-step memory profile (52.5 GiB peak) and the same `skip=4`-band
+motion statistic, but takes 1 fewer full DiT forward over 36 steps because
+the input-similarity gate skips a step the fixed schedule wouldn't have.
+
+Mirage uses *none* of NVIDIA's CUDA-only tooling (no TransformerEngine,
+Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak HBM** (52.5 vs 74
+GB). The undertested baseline (no cache, no compile) still reaches 82 %
+of H100 reference at 465 s.
+
+## Caching modes
+
+Mirage ships three caching modes, exposed via `--cache-mode {none|fixed|adaptive}`
+on the runner CLI and the corresponding fields on `CosmosConfig`:
+
+- **`none`** — every step runs a full DiT forward. The baseline (465 s
+  warmup-separated, ~740 s including the ROCm autotuning storm).
+- **`fixed`** (legacy F16/F17 behaviour) — after a warmup window, run a full
+  forward every Nth step and reuse the cached `noise_pred` on the rest.
+  `--cache-skip-every 4` is the deployable speed setting; `--cache-skip-every 2`
+  is the quality-conservative one.
+- **`adaptive`** (Session 9) — TeaCache-style input-similarity gate. Maintains
+  the accumulated relative L1 distance of the timestep-conditioned latent
+  input vs. the last full forward; a step is skipped while that accumulator
+  stays under `--cache-adaptive-threshold` (default 0.10; the bench landed
+  at `0.30` for the 121 f / 36 step config). The warmup window, the final
+  step, and every `--cache-force-full-every` steps (default 8) always run a
+  full forward as a quality floor. This is the right shape going forward —
+  the gate adapts to the schedule's actual derivative rather than committing
+  to a fixed cadence.
 
 ## Caching quality
 
-Quality of naive step-skip caching is **config-size-dependent**:
+Quality of fixed step-skip caching is **config-size-dependent**:
 
 - **121 frames / 36 steps (reference config):** both `skip=2` and `skip=4`
   produce visually acceptable output (verified vs the no-cache reference at
