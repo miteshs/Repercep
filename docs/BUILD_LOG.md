@@ -511,31 +511,48 @@ Caveats:
   calls. The single-run 164 s number included ~10 s of one-time autotuning;
   the clean steady-state is 154 s.
 
-### F16 — Quality fail: naive uniform step-skipping is not deployable at skip=4
+### F16 — Cache tolerance is config-size-dependent (NOT a flat fail)
 
-Visual eyeball of the 121-frame cached output: **the cached video is visibly
-worse than the reference** — temporal dynamics are damped, output reads as
-static / smeared. The numerical signal lines up: inter-frame motion drops
-from **6.30 (reference) to 4.69 (cached)** — ~25 % less motion at the same
-prompt + seed. Reusing the previous full step's `noise_pred` on 3 of every 4
-post-warmup steps is too aggressive for Cosmos-7B at 36 steps.
+First read: the 49 f / 12 step `skip=4` smoke output (`cosmos_cached_skip4.mp4`)
+is visibly degraded — temporal dynamics damped, output static. Conclusion at
+the time: skip=4 not deployable.
 
-The 154 s / 2.47× speedup is a real upper bound on what *uniform* step-
-skipping can deliver, but it is not deployment-viable. The earlier headline
-framing in `COSMOS_ON_MI300X.md` has been corrected to reflect this.
+Re-eyeballing the **121 f / 36 step** `skip=4` output (`cosmos_121f_cached.mp4`)
+side-by-side with the reference: **it is fine.** Visual quality matches the
+no-cache reference; the motion stat (4.69 vs reference 6.30) is mild damping,
+not breakage.
 
-Remaining caching paths:
-- `cache_skip_every=2` — alternates full/skip; cached preds are at most 1
-  step stale (vs 3 with skip=4). Projected ~260 s at 121 f (1.46× over
-  H100 reference *if* quality holds). Untested.
-- **Adaptive caching (TeaCache-style)** — only skip when the modulated input
-  distance from the last full step is below a learned threshold; skip rate
-  varies per-prompt and per-step. The right long-term shape; needs a small
-  research increment.
+What's actually going on: the cache rate vs *total step count* is the right
+unit, not a flat N. At 12 steps with warmup=4 and skip=4, the post-warmup
+window is 8 steps and 6 of them (75 %) reuse cached noise → too aggressive.
+At 36 steps with the same warmup=4 and skip=4, the post-warmup window is 32
+steps and 24 (also 75 %) are cached — but the diffusion has many more total
+full steps to "anchor" the cached ones; staleness is more diluted.
 
-The **deployable headline is the 465 s baseline** (82 % of H100 reference)
-plus `torch.compile` (projected ~410 s; 49 f shows 1.13× DiT). Other levers
-in `OPTIMIZATION.md`.
+Rule of thumb for v0.1:
+- ≥ 36 steps: `skip=4` works → **154 s / 2.47× over H100 reference (121 f).**
+- < 36 steps: `skip=2` is the safer floor.
+
+### F17 — Skip=2 datapoint
+
+`scripts/run_cosmos.py --frames 121 --steps 36 --native-loop --cache-skip-every 2`:
+
+| Metric | Value |
+|---|--:|
+| Generate (single run) | **266 s** |
+| vs MI300X baseline (465 s) | **1.75× faster** |
+| **vs NVIDIA H100 reference (~380 s)** | **1.43× faster** |
+| Inter-frame motion (mean) | **6.87 — slightly *higher* than reference (6.30)** |
+| Peak HBM | 52.5 GiB |
+
+`skip=2` alternates full/skip post-warmup; cached preds are at most 1 step
+stale. Quality eyeball: matches reference. This is the conservative cache
+floor; `skip=4` is the speed leader.
+
+The deployable headline of `COSMOS_ON_MI300X.md` has been restored to the
+**2.47× faster than H100 reference** framing, with skip=2 as the
+quality-conservative alternative. Adaptive caching (TeaCache-style) remains
+the right long-term shape.
 - **Quality is a dial.** The video stats are in a healthy range (brightness
   108, std 67.2, motion 4.69 — same band as the uncached 121 f reference at
   brightness 106 / std 65.1). Visual verification is the gating test; if

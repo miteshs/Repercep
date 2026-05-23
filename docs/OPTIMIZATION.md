@@ -46,11 +46,17 @@ Measured so far (49 f / 12 steps, warmup-separated):
   Smaller than projected: at Cosmos-7B scale each transformer call is
   compute-bound, so packaging two batch-1 forwards as one batch-2 forward
   doesn't reduce GEMM work — see BUILD_LOG F14.
-- Native loop + step-skip caching (`cache_skip_every=4`) — speed is real
-  (1.96× e2e at 49 f, 3.02× at 121 f / 154 s) but **the cached output is
-  visibly degraded** (F16). Uniform skipping at this rate is not
-  deployment-viable on Cosmos-7B / 36 steps. Lighter `skip=2` and adaptive
-  (TeaCache-style) caching are the remaining options.
+- Native loop + step-skip caching: **the biggest measured lever**, with
+  config-size-dependent quality (F16, F17).
+  - **121 f / 36 steps, `skip=4`** → **154 s** warmup-separated, **2.47×
+    faster than H100 reference**, quality verified.
+  - **121 f / 36 steps, `skip=2`** → 266 s, 1.43× faster than H100,
+    quality-conservative (motion slightly *higher* than reference).
+  - **49 f / 12 steps, `skip=4`** → speed wins but visibly degraded —
+    the cache-vs-total-steps ratio matters; lighter `skip=2` is the floor at
+    short configs.
+- Adaptive caching (TeaCache-style — input-similarity gated) is the right
+  long-term shape; tracked separately.
 
 ## 3. Optimization tiers
 

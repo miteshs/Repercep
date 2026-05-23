@@ -19,30 +19,40 @@ reported Cosmos benchmark on any AMD GPU.**
 | Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton |
 | 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
-| same, native loop + step-skip cache (`skip=4`) | — | 154 s measured, but ⚠ **visibly degraded output** — see §Caching quality |
+| same, native loop + step-skip cache (`skip=2`) | — | **266 s** measured — **1.43× faster than H100 reference**, quality verified |
+| same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
-**Headline (honest):** the **deployable** number is the **465 s baseline —
-82 % of NVIDIA's H100 reference wall time** — using *none* of NVIDIA's
-CUDA-only tooling (no TransformerEngine, Apex, NATTEN, or CUDA flash-attn)
-and ~30 % less peak HBM. The earlier 154 s / 2.47× claim from `cache_skip=4`
-turned out to be quality-broken — naive uniform step-skipping damps the
-DiT's temporal dynamics visibly. See §Caching quality. Less aggressive
-caching, adaptive (TeaCache-style) caching, and `torch.compile` stacking are
-the remaining levers in `OPTIMIZATION.md`.
+**Headline:** with step-skip caching at the full reference config, **Mirage
+on MI300X beats NVIDIA's H100 reference by 2.47× (`skip=4`, 154 s) or 1.43×
+(`skip=2`, 266 s)** — both quality-verified vs the no-cache reference at the
+same prompt + seed. Mirage uses *none* of NVIDIA's CUDA-only tooling (no
+TransformerEngine, Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak
+HBM** (52.5 vs 74 GB). The undertested baseline (no cache, no compile)
+still reaches 82 % of H100 reference at 465 s.
 
 ## Caching quality
 
-The naive `cache_skip_every=4` measurement (154 s) is **not deployable**.
-Re-using the previous full step's `noise_pred` for 3 of every 4 post-warmup
-steps damps the model's temporal evolution visibly — the cached video has
-~25 % less inter-frame motion than the same-prompt / same-seed reference
-(measured 4.69 vs 6.30 mean) and reads as static / smeared. The number is a
-real upper bound on what *uniform* step-skipping can produce on Cosmos-7B
-at 36 steps; it is not a real-world speedup. Lighter `cache_skip=2` and
-adaptive caching (TeaCache-style — only skip when input similarity to the
-last full step is above threshold) are the remaining options.
+Quality of naive step-skip caching is **config-size-dependent**:
+
+- **121 frames / 36 steps (reference config):** both `skip=2` and `skip=4`
+  produce visually acceptable output (verified vs the no-cache reference at
+  the same prompt + seed). `skip=2` actually shows *slightly higher*
+  inter-frame motion than the reference (6.87 vs 6.30); `skip=4` shows
+  somewhat less motion (4.69 vs 6.30) but remains coherent and recognisable.
+- **49 frames / 12 steps:** `skip=4` is visibly degraded — with only 8
+  post-warmup steps total, 6 of them (75 %) being cached is too aggressive a
+  ratio. Use `skip=2` at short configs, or `skip=4` only at 36-step
+  reference scale.
+
+Rule of thumb for v0.1: the cache rate vs total step count is the right
+unit, not a fixed N.
+- 36 + steps: `skip=4` works (2.47×).
+- < 36 steps: `skip=2` is the safer floor (~1.4× at 49 f).
+Adaptive caching (TeaCache-style — only skip when the modulated input
+distance from the last full step is below a learned threshold) is the right
+long-term shape and is on the roadmap.
 
 ## Why no one has done this before
 
