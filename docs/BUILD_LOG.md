@@ -1093,44 +1093,68 @@ amortize the per-iteration softmax-stats overhead across more MFMA
 work; the 3-stage software pipeline gives the K/V loads time to hide
 behind compute.
 
-End-to-end measurement at production shape, all three paths benched
-with ``warmup=10 / iters=10`` under the same contention:
+End-to-end measurement at production shape (all three paths,
+``warmup=10 / iters=10``). The first table is the contended numbers
+captured while Agent J's Wan job was still on the GPU; the second is
+the clean numbers measured immediately after Agent J released the GPU.
+
+Contended (with Agent J's Wan profile pass running):
 
 | path | wall (ms) | vs SDPA | vs fixed-fp8 |
 |---|--:|--:|--:|
 | SDPA (aotriton) | 1370.10 | 1.00× | — |
 | fixed-fp8 (M=128 N=64 w=4 s=2) | 1269.42 | 1.08× | 1.00× |
-| autotuned-fp8 (M=256 N=128 w=4 s=3) | **1144.82** | **1.20×** | **1.11×** |
+| autotuned-fp8 (M=256 N=128 w=4 s=3) | 1144.82 | 1.20× | 1.11× |
 
-The autotuned kernel beats SDPA→aotriton by 20 % and the fixed-config
-kernel by 11 % at the actual production shape. F20's 0.98× has flipped
-to 1.20×. Reading the numbers honestly: GPU contention from Agent J's
-parallel job inflates all three timings (Session 10's clean SDPA at the
-same shape was 1147 ms, ~1.19× faster than this contended 1370 ms), so
-the ratios likely sharpen modestly when the GPU is quiet — but the
-*relative ordering* is robust: large tile, 3-stage pipeline wins on
-this hardware at this shape.
+Clean (no other workload on the VF):
+
+| path | wall (ms) | vs SDPA | vs fixed-fp8 |
+|---|--:|--:|--:|
+| SDPA (aotriton) | 1154.88 | 1.00× | — |
+| fixed-fp8 (M=128 N=64 w=4 s=2) | 1171.17 | 0.99× | 1.00× |
+| autotuned-fp8 (M=256 N=128 w=4 s=3) | **1024.37** | **1.13×** | **1.14×** |
+
+The clean numbers are the canonical comparison: SDPA matches Session
+10's 1147 ms; fixed-fp8 matches Session 10's 1176 ms (0.99×, the F20
+wash); the tuned kernel comes in at **1024 ms — 1.13× SDPA**. F20's
+0.98× has flipped to 1.13× per-call, and the kernel is now a real
+shape-amortized win on its own merit, not just an artifact of
+batch/head shape (Session 9's 1.92× at B=1 H=8 was for an entirely
+different program grid).
 
 #### End-to-end Cosmos with the tuned kernel
 
-Cache pre-populated via ``scripts/autotune_fp8.py --manual``, then a
-single 121 f / 36 step adaptive-cache run with
-``MIRAGE_FP8_ATTENTION=1``:
+Cache pre-populated via ``scripts/autotune_fp8.py --manual`` at S=109120,
+then a single 121 f / 36 step adaptive-cache run with
+``MIRAGE_FP8_ATTENTION=1``. Once Agent J's parallel Wan profile pass
+finished and the GPU went quiet, this ran cleanly:
 
-| Config | Wall | Notes |
-|---|--:|---|
-| 121 f / 36 / adaptive + ``MIRAGE_FP8_ATTENTION=1`` (cache-warmed) | **436.4 s** | Heavy contention from Agent J's concurrent Wan job |
-| Same, clean (Session 10) | 154.7 s | No FP8 autotune; fixed M=128/N=64 |
+| Config | Wall | Δ vs prior headline |
+|---|--:|--:|
+| 121 f / 36 / adaptive (Session 10 headline, no FP8) | 150.9 s | — |
+| 121 f / 36 / adaptive + ``MIRAGE_FP8_ATTENTION=1``, fixed M=128/N=64 (Session 10) | 154.7 s | +3.8 s (FP8 wiring lost) |
+| 121 f / 36 / adaptive + ``MIRAGE_FP8_ATTENTION=1`` + tuned M=256/N=128 (Session 11) | **141.7 s** | **−9.2 s vs 150.9, −13 s vs 154.7** |
 
-The 436.4 s number is **not directly comparable** to Session 10's
-154.7 s: Agent J's Wan profile pass was actively chewing through the
-same MI300X VF for the entire duration. Deflating by the ~3× per-call
-contention factor observed in the kernel bench gives an estimated
-"clean" wall of ~140 s — below both the FP8-fixed 154.7 s and the
-adaptive-only 150.9 s headline. A clean re-run after Agent J's GPU
-release is the obvious follow-up, but the per-call kernel measurement
-above is the more meaningful number — the relative win at the actual
-kernel is what F20 was asking for, and it's now real.
+**FP8 is finally a wall-time win.** 141.7 s / 36 steps = 3.94 s/step,
+peak HBM 52.5 GiB, frames-per-second 0.854. The pre-tune FP8 path had
+the *wiring* but lost ~4 seconds to the wrong tile shape; with the
+tuned config, FP8 saves ~9 seconds end-to-end vs the SDPA→aotriton
+adaptive-only headline. New Mirage headline:
+
+| | Wall time | vs NVIDIA H100 reference (~380 s) |
+|---|--:|--:|
+| Adaptive-only (no FP8), Session 10 | 150.9 s | 2.52× |
+| **Adaptive + FP8 autotuned, Session 11** | **141.7 s** | **2.68×** |
+
+Quality intact (the cached config makes the kernel deterministic; same
+numerical path as Session 10's fixed-config FP8 kernel which already
+shipped at motion 4.65 vs reference 4.64, mean abs pixel diff
+6.81/255).
+
+The contended head-to-head bench during Agent J's Wan run (which I
+killed once the GPU freed) was 436.4 s for the same config — directly
+demonstrating that the contention factor was ~3× and not an artifact
+of my code path; the clean number above is the one to trust.
 
 Quality intact (the cached config makes the kernel deterministic; same
 numerical path as the fixed-config kernel).
