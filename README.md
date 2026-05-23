@@ -30,10 +30,14 @@ Landed: the vendor-neutral backend layer, attention abstraction, Runtime types +
 frame-streaming serving API, the Cosmos-Predict-7B engine, a per-stage profiler
 and benchmark harness, and the first optimization (`torch.compile` on the DiT).
 
-See [`docs/architecture.md`](docs/architecture.md) for the component map,
-[`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) for the optimization strategy, and
-[`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) for the chronological log of work,
-decisions, and findings (kept current for handoff).
+**👉 Picking up the project? Start with [`docs/HANDOFF.md`](docs/HANDOFF.md).**
+
+Other docs:
+- [`docs/architecture.md`](docs/architecture.md) — the component map
+- [`docs/COSMOS_ON_MI300X.md`](docs/COSMOS_ON_MI300X.md) — publish-ready writeup with measured numbers
+- [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) — strategy + measured ledger
+- [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) — chronological log of work, decisions, findings
+- [`docs/adr/`](docs/adr/) — architecture decision records
 
 ## Requirements
 
