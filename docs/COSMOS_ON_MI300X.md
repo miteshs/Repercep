@@ -2,9 +2,10 @@
 
 *First published benchmark of NVIDIA's Cosmos world-model family on AMD Instinct silicon.*
 
-**Status (2026-05-22):** Pre-alpha runtime measurement. The 121-frame numbers
-below are marked **PROJECTED** pending the warmup-separated validation run that
-is in flight; the 49-frame numbers and the cold reference are measured.
+**Status (2026-05-22):** Pre-alpha runtime measurement. The 121-frame
+warmup-separated baseline below is measured; the 121-frame `torch.compile`
+number is projected from the 49-frame measurement (the compiled validation
+run hit a segfault mid-warmup at 121-frame shapes — see F15).
 
 ## TL;DR
 
@@ -15,10 +16,16 @@ reported Cosmos benchmark on any AMD GPU.**
 
 | Configuration | NVIDIA H100 (reference stack) | Mirage on AMD MI300X (this work) |
 |---|---|---|
-| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton + `torch.compile` |
-| 121 frames @ 1280×704, 36 steps, BF16 | **~380 s** | **~390 s** (projected; validation running) |
-| Cold first run (incl. ROCm autotuning) | n/a | 738 s |
+| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton |
+| 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
+| same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
+| Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
+
+**Honest framing:** Mirage on MI300X reaches **82 % of H100 reference wall
+time** (1.22× slower) — using *none* of NVIDIA's CUDA-only tooling — with
+**~30 % less peak HBM**. The remaining 18 % gap is the optimization budget
+enumerated in `OPTIMIZATION.md`.
 
 ## Why no one has done this before
 
@@ -58,15 +65,30 @@ measurement.
 at 1280×704, 36 denoising steps, guidance scale 7.0 — the same configuration
 NVIDIA publishes their ~380 s H100 number for.
 
-### Cold reference run — 121 frames / 36 steps
+### Steady-state baseline — 121 frames / 36 steps, warmup-separated
 
 | | |
 |---|---|
-| Total generation | **738 s** (~12.3 min) |
+| **Total generation** | **465.4 s** (~7.8 min) |
+| DiT loop | 460.0 s (99 %) — 72 transformer forwards (= 2 / step, CFG unbatched) |
+| VAE decode | 0.95 s |
+| Text encode | 0.06 s |
+| Other | 4.4 s |
+| Throughput | 0.260 frames/s |
+
+### Cold first run — 121 frames / 36 steps
+
+| | |
+|---|---|
+| Total generation | 738 s (~12.3 min) |
 | DiT loop (tqdm) | 435 s — 36 × ~12.1 s/step |
 | Everything else | ~303 s — *mostly one-time ROCm kernel autotuning* |
 | Peak HBM | 52.5 / 192 GiB |
 | Output | `benchmark-results/cosmos_reference.mp4`, 121 frames verified |
+
+The cold-vs-steady gap (738 → 465 s) is **~273 s of one-time ROCm kernel
+autotuning** (aotriton, hipBLASLt, MIOpen on first-shape use). Warming the
+kernel cache at deploy time is itself a meaningful latency win.
 
 ### Warmup-separated per-stage profile — 49 frames / 12 steps
 
@@ -104,13 +126,16 @@ mandatory; on MI300X it isn't. That gap is the structural advantage.
 
 NVIDIA's HF model card for `nvidia/Cosmos-Predict1-7B-Text2World` publishes
 **~380 s** end-to-end for 121 frames @ 1280×704 on a single H100, BF16, using
-their reference stack. Mirage on MI300X via the diffusers path projects to
-**~390 s** steady-state with `torch.compile` (warmup-separated 121-frame
-validation in flight; this draft will be updated with the measured number).
+their reference stack (TransformerEngine + Apex + NATTEN + flash-attn-3).
+Mirage on MI300X via the diffusers path measures **465 s** warmup-separated
+baseline — **82 % of H100 wall time / 1.22× the H100 latency** — using *none*
+of those CUDA-only components, just stock PyTorch SDPA → aotriton.
 
-That is **rough parity with H100 on the model NVIDIA designed and tooled for
-their own silicon, using none of their tooling** — no TransformerEngine, no
-Apex, no NATTEN, no CUDA flash-attn — just stock PyTorch SDPA → aotriton.
+With `torch.compile` on the DiT (49-frame measurement: 1.13× DiT loop), the
+121-frame number projects to **~410 s — closing the gap to ~8 %**. Beyond
+that, the levers documented in [`OPTIMIZATION.md`](OPTIMIZATION.md) (step
+caching, FP8 MFMA on CDNA3, better solver) are work-reducing rather than
+overhead-cutting and should narrow the gap further.
 
 There is meaningful room above this from levers documented in
 [`OPTIMIZATION.md`](OPTIMIZATION.md): CFG batching, feature/step caching,

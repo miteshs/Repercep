@@ -34,6 +34,8 @@ def denoise_cosmos_video(
     seed: int | None = None,
     output_type: str = "pt",
     cfg_batched: bool = True,
+    cache_skip_every: int = 0,
+    cache_warmup_steps: int = 4,
 ) -> Any:
     """Run the Cosmos denoising loop end-to-end and return a video tensor.
 
@@ -43,6 +45,12 @@ def denoise_cosmos_video(
             unconditional transformer forwards are folded into one batch-2
             call. If ``False``, the function uses the diffusers reference
             behaviour (two sequential forwards) as a correctness reference.
+        cache_skip_every: if ``>= 2``, after the warmup window, run a full DiT
+            forward only on every Nth step and reuse the cached output on the
+            remaining N-1 steps. ``0`` (default) disables caching — every step
+            runs the full forward. Aggressive values trade quality for speed.
+        cache_warmup_steps: number of leading steps that always run a full
+            forward, before caching kicks in. Defaults to 4.
 
     Returns:
         With ``output_type='pt'`` (default): a tensor shaped ``(B, T, C, H, W)``
@@ -92,12 +100,22 @@ def denoise_cosmos_video(
     if cfg_batched:
         encoder_pair = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
 
-    # 5. Denoising loop.
-    for t in timesteps:
+    # 5. Denoising loop, optionally with step-skip caching after a warmup window.
+    cached_noise_pred: Any = None
+    for step_idx, t in enumerate(timesteps):
         latent_model_input = pipe.scheduler.scale_model_input(latents, t).to(transformer_dtype)
         timestep = t.expand(latents.shape[0]).to(transformer_dtype)
 
-        if cfg_batched:
+        should_skip = (
+            cache_skip_every >= 2
+            and step_idx >= cache_warmup_steps
+            and cached_noise_pred is not None
+            and (step_idx - cache_warmup_steps) % cache_skip_every != 0
+        )
+
+        if should_skip:
+            noise_pred = cached_noise_pred
+        elif cfg_batched:
             batched_input = latent_model_input.repeat(2, 1, 1, 1, 1)
             batched_timestep = timestep.repeat(2)
             noise_pred = pipe.transformer(
@@ -108,6 +126,7 @@ def denoise_cosmos_video(
                 padding_mask=padding_mask,
                 return_dict=False,
             )[0]
+            cached_noise_pred = noise_pred
         else:
             noise_pred_cond = pipe.transformer(
                 hidden_states=latent_model_input,
@@ -126,6 +145,7 @@ def denoise_cosmos_video(
                 return_dict=False,
             )[0]
             noise_pred = torch.cat([noise_pred_uncond, noise_pred_cond], dim=0)
+            cached_noise_pred = noise_pred
 
         sample = torch.cat([latents, latents], dim=0)
 

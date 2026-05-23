@@ -419,3 +419,46 @@ total GEMM work unchanged.
 - **Stack measurement** — re-profile with `--native-loop --compile` to confirm
   the wins compose (1.13 × 1.05 → ~1.18×, projected).
 
+---
+
+## Session 6 — 2026-05-22 — Full-config baseline measured + step-skip cache landed
+
+### Result — apples-to-apples vs NVIDIA H100
+
+Warmup-separated 121-frame / 36-step baseline on MI300X — **the** publishable
+headline number:
+
+| | MI300X (Mirage, diffusers + SDPA→aotriton) | H100 (NVIDIA reference) |
+|---|--:|--:|
+| Total | **465.4 s** | ~380 s |
+| DiT loop / calls | 460.0 s / 72 | (not separately reported) |
+| Peak HBM | **52.5 GiB / 192** | 74 GB / 80 |
+
+**MI300X reaches 82 % of H100 wall time using none of NVIDIA's specialized
+tooling** (no TransformerEngine, no Apex, no NATTEN, no CUDA flash-attn), with
+**~30 % less peak HBM**. The cold/steady gap (738 → 465 s = ~273 s) is
+exclusively one-time ROCm kernel autotuning — warming the kernel cache at
+deploy is itself a real latency win.
+
+### Finding
+
+- **F15 — `torch.compile` segfaults at 121-frame shapes (inductor/triton-rocm).**
+  The compiled arm of the validation completed the baseline (the 465 s number
+  above), then crashed mid-warmup of the compiled gen at step 21/36 with
+  SIGSEGV. The 49 f compile (1.13× DiT) worked fine; the failure mode is
+  shape- or memory-pressure-specific to 121 f. The 121-frame compile number
+  stays projected (~410 s) until either inductor/triton-rocm is updated or we
+  work around it. Tracked separately; not blocking.
+
+### Work — step-skip caching (Task #14)
+
+- New params on `denoise_cosmos_video`: `cache_skip_every` (0 = disabled;
+  ≥ 2 = run a full DiT forward only every Nth step after warmup) and
+  `cache_warmup_steps` (default 4). Cached `noise_pred` from each full step
+  is reused on the N-1 skipped steps that follow.
+- `CosmosConfig.cache_skip_every` / `cache_warmup_steps` thread through.
+- `--cache-skip-every N` flag on both `run_cosmos.py` and `profile_cosmos.py`.
+- This is a *work-reducing* lever (per F14): at `--cache-skip-every 4` post-
+  warmup, 8 of 32 full forwards run instead of 32 → projected ~3× DiT
+  speedup, modulo quality.
+

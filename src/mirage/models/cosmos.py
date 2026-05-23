@@ -62,6 +62,11 @@ class CosmosConfig:
     # transformer forward per step instead of two batch-1 forwards).
     # See `mirage.runtime.denoise` and docs/OPTIMIZATION.md.
     use_native_loop: bool = False
+    # Step-skip caching in the native loop: after `cache_warmup_steps`, run a
+    # full DiT forward only every Nth step and reuse the cached output for the
+    # rest. 0 disables. Real work reduction; quality dial.
+    cache_skip_every: int = 0
+    cache_warmup_steps: int = 4
 
 
 class CosmosEngine:
@@ -160,6 +165,8 @@ class CosmosEngine:
                 fps=params.fps,
                 seed=params.seed,
                 output_type="pt",
+                cache_skip_every=self._config.cache_skip_every,
+                cache_warmup_steps=self._config.cache_warmup_steps,
             )
             video = _as_frame_tensor(video_raw[0])
         else:

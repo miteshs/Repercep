@@ -29,6 +29,12 @@ def main() -> int:
         action="store_true",
         help="Mirage-native denoising loop (CFG batching)",
     )
+    parser.add_argument(
+        "--cache-skip-every",
+        type=int,
+        default=0,
+        help="skip the DiT forward N-1 of every N steps (native loop only)",
+    )
     parser.add_argument("--prompt", default="A drone shot flying over a coastal highway at sunset.")
     args = parser.parse_args()
 
@@ -55,7 +61,13 @@ def main() -> int:
 
     if args.compare:
         base = profile_cosmos(
-            CosmosEngine(backend, CosmosConfig(use_native_loop=args.native_loop)),
+            CosmosEngine(
+                backend,
+                CosmosConfig(
+                    use_native_loop=args.native_loop,
+                    cache_skip_every=args.cache_skip_every,
+                ),
+            ),
             request,
             warmup=args.warmup,
         )
@@ -63,7 +75,11 @@ def main() -> int:
         comp = profile_cosmos(
             CosmosEngine(
                 backend,
-                CosmosConfig(compile_transformer=True, use_native_loop=args.native_loop),
+                CosmosConfig(
+                    compile_transformer=True,
+                    use_native_loop=args.native_loop,
+                    cache_skip_every=args.cache_skip_every,
+                ),
             ),
             request,
             warmup=args.warmup,
@@ -76,7 +92,11 @@ def main() -> int:
     else:
         engine = CosmosEngine(
             backend,
-            CosmosConfig(compile_transformer=args.compile, use_native_loop=args.native_loop),
+            CosmosConfig(
+                compile_transformer=args.compile,
+                use_native_loop=args.native_loop,
+                cache_skip_every=args.cache_skip_every,
+            ),
         )
         label_parts = []
         if args.native_loop:

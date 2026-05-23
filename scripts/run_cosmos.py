@@ -42,6 +42,12 @@ def main() -> int:
         action="store_true",
         help="use Mirage's native denoising loop (CFG batching)",
     )
+    parser.add_argument(
+        "--cache-skip-every",
+        type=int,
+        default=0,
+        help="step-skip caching: full DiT forward only every Nth step (native loop only)",
+    )
     args = parser.parse_args()
 
     import torch
@@ -60,7 +66,11 @@ def main() -> int:
 
     engine = CosmosEngine(
         backend,
-        CosmosConfig(enable_guardrail=args.guardrail, use_native_loop=args.native_loop),
+        CosmosConfig(
+            enable_guardrail=args.guardrail,
+            use_native_loop=args.native_loop,
+            cache_skip_every=args.cache_skip_every,
+        ),
     )
     print(
         f"[mirage] loading Cosmos-Predict-7B (~38 GB), guardrail={args.guardrail} ...",
