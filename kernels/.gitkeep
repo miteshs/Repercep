@@ -1,0 +1,6 @@
+# Triton + CUDA / HIP kernels live here when we move off SDPA→aotriton.
+#
+# Deliberately a separate top-level directory, not under src/. The handoff doc
+# is explicit: "Mixing clean-architecture and perf code produces clean-but-slow
+# or fast-but-unmaintainable." This layer has different review standards: no
+# mypy strict, no Protocol abstractions, perf-first.

@@ -66,7 +66,8 @@ Watchable artifacts (gitignored, local-only):
 | The publish-ready first-public-numbers writeup | `docs/COSMOS_ON_MI300X.md` |
 | Optimization strategy + measured ledger | `docs/OPTIMIZATION.md` |
 | Architecture component map | `docs/architecture.md` |
-| Key decisions with rationale | `docs/adr/0001..0003` |
+| Key decisions with rationale | `docs/adr/0001..0004` |
+| Polyglot build scaffold (Cargo workspace, kernels/, ADR-0004) | `Cargo.toml`, `crates/`, `kernels/` |
 | The seam between Mirage and a GPU vendor | `src/mirage/backend/protocol.py` |
 | Cosmos engine + Mirage-orchestrated guardrail | `src/mirage/models/cosmos.py` |
 | Mirage-native denoising loop (CFG batching, step caching) | `src/mirage/runtime/denoise.py` |

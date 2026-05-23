@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# Rust workspace artifacts
+target/
+**/*.rs.bk
 # model weights / large artifacts — never commit
 weights/
 *.safetensors
