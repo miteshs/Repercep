@@ -561,3 +561,129 @@ the right long-term shape.
 This is the strongest measured Mirage win to date and the first MI300X number
 that beats NVIDIA's published H100 reference wall time on the same workload.
 
+## Session 8 — 2026-05-23 — Polyglot scaffold + Rust core + OOM fix
+
+Fresh restart on a new MI300X VF host. Goals: bring up the polyglot build
+discipline that the Cowork Handoff calls for, resolve the Rust-core fork,
+and (incidentally) discover a latent OOM bug on the 121 f path.
+
+### Stage 1 — Polyglot tooling scaffold (commit `e012293`)
+
+- Cargo virtual workspace at the repo root (edition 2024, resolver 3).
+- `rust-toolchain.toml` pins stable + rustfmt + clippy.
+- `crates/` and `kernels/` directories created with placeholder
+  `.gitkeep`s. Kernels deliberately at the repo root, NOT under `src/`, so
+  it inherits a different review standard per the handoff: no mypy strict,
+  no clippy `-D warnings`, perf-first.
+- `Makefile` gains `rust-build|check|fmt|fmt-check|clippy|test` targets
+  that skip cleanly while `crates/` is empty.
+- ADR-0004 records the choice + the deferred fork.
+
+### Stage 2 — Resolve fork, populate workspace (commit `92e91b5`)
+
+ADR-0005 commits the Rust-core fork resolution ahead of design-partner
+mix landing. Three crates scoped:
+
+- `crates/mirage-cache` — port of `src/mirage/runtime/latent_cache.py`
+- `crates/mirage-scheduler` — greenfield priority queue, FIFO within
+  priority
+- `crates/mirage-router` — greenfield per-request state machine + frame
+  ordering
+
+Workspace deps pinned: pyo3 0.25 (abi3-py311), tokio 1, serde 1, thiserror
+2, tracing 0.1, parking_lot 0.12. `anyhow` deliberately NOT in the
+workspace — libraries use `thiserror`, binaries can pull `anyhow`
+separately. `cargo check --workspace` passes after this stage with three
+placeholder crates emitting `pub fn _placeholder() {}`.
+
+### Stage 3 — Three parallel agents fill in the crates (commits `6e61c0e`, `f280ada`, `8c9bcfe`)
+
+Three Claude sub-agents in isolated git worktrees, dispatched in parallel.
+Each agent: their own crate body + PyO3 bindings + Python wrapper +
+pytest. Hard scope discipline ensured no cross-crate edits. ~2,166 lines
+of Rust + 41 Rust tests + 30 new pytest cases, all green in worktrees.
+
+- **Agent A — `mirage-cache`** (515 LoC). Port of `latent_cache.py`. 11
+  Rust unit tests + 9 cross-language pytest (existing `tests/test_runtime.py`
+  passes unchanged against the Rust-backed wrapper).
+- **Agent B — `mirage-scheduler`** (686 LoC). Three priority buckets,
+  FIFO within bucket, cancellation via skip-set, tokio runtime owned by
+  the scheduler. Blocking PyO3 surface (`next_blocking(timeout_ms)` +
+  `py.allow_threads`) — avoids the `pyo3-async-runtimes` dep.
+- **Agent C — `mirage-router`** (965 LoC). State machine (Received →
+  Scheduled → Generating → Streaming → Complete, with Cancelled/Failed
+  off-ramps). True-async PyO3 via `pyo3-async-runtimes 0.25`.
+  `SchedulerHandle` trait is the integration seam — NOT a Cargo dep on
+  `mirage-scheduler`.
+
+### Stage 3 integration polish (commit `af9210d`)
+
+Three issues caught while integrating in main:
+
+1. **Cargo lib-name collision.** All three crates defined
+   `[lib].name = "_native"`, producing identical
+   `target/release/lib_native.so`. The last crate's binary wins and ends
+   up in every wheel (cache + router `.so` files were byte-identical by
+   MD5). Fix: unique Rust lib names (`mirage_<name>_native`) per crate;
+   Python import path stays `mirage_<name>._native` via
+   `[tool.maturin] module-name`.
+2. **`maturin develop --uv` is unreliable** in 1.13 for workspace-member
+   crates with separate per-crate `pyproject.toml`. Fix: `make rust-install`
+   switches to `maturin build --release` + `uv pip install --reinstall`.
+3. **mypy strict + PyO3 extensions** — `py.typed` alone isn't enough
+   without `.pyi` stubs. Added both `py.typed` markers AND
+   `ignore_missing_imports` overrides in `pyproject.toml`.
+
+### F18 — Native loop missing `torch.inference_mode()` (commit `e7f66b0`)
+
+`scripts/run_cosmos.py --frames 121 --steps 36 --native-loop` began
+OOMing on the fresh-environment 2026-05-23 re-run at ~189.30 GiB allocated
+on a 192 GiB MI300X, in `apply_rotary_emb`. 17 f / 8 steps fit at ~28.4
+GiB peak. Diffusers default path (no `--native-loop`) fit at 52.5 GiB at
+the same 121 f / 36 config.
+
+**Diagnosis trail:**
+
+| Test | Result | Signal |
+|---|---|---|
+| `--native-loop --cache-skip-every 4` @ 121f/36, latest stack | OOM 189 GiB | initial |
+| Allocator `expandable_segments:True` | OOM identical | rules out fragmentation |
+| Downgrade `diffusers 0.34` + `transformers 4.57` | OOM identical | rules out version drift |
+| Diffusers default (no `--native-loop`) @ 121f/36 | OK — 52.5 GiB / 740 s | isolates to our native loop |
+| `--native-loop` alone (no caching) | OOM identical | rules out caching as cause |
+| Read `pipeline_cosmos_text2world.py` | `@torch.no_grad()` at line 393 | diffusers gates inference; we didn't |
+| Patch: `with torch.inference_mode():` wrap | OK — 164 s / 52.5 GiB on both stacks | fix verified |
+
+**Root cause:** `denoise_cosmos_video` was missing `torch.no_grad()` /
+`torch.inference_mode()` since its initial commit. Diffusers' own
+`CosmosTextToWorldPipeline.__call__` is decorated with `@torch.no_grad()`;
+the native loop wasn't. Without the gate, every step's autograd graph
+stayed alive across the loop. Activations × 36 steps ≈ ~180 GiB. The
+arithmetic matches the OOM (189 GiB) within a few percent. At 17 f / 8
+steps the smaller graph fit in HBM, so the bug never showed up in the
+smaller smoke configs Sessions 1–7 had run.
+
+**Fix:** wrap the body in `torch.inference_mode()` via a thin
+`_denoise_impl` helper. `inference_mode` is a strict superset of
+`no_grad` and the right gate since nothing here is going to be
+backpropped through. `tests/test_denoise.py` added with a structural
+regression guard (`inspect.getsource()` check) — no GPU or model needed.
+
+**Why this didn't show up in Sessions 1–7:** the original 154 s / 52.5
+GiB number was either measured on the diffusers default path (and the
+HANDOFF table conflated it with the native loop's "peak HBM all
+configs"), or measured under some runtime state we can't reconstruct.
+Either way the fix is correct, matches diffusers' own design, and the
+re-validated 164 s / 52.5 GiB is the right number going forward.
+
+### State of the runtime after Session 8
+
+- HEAD: `e7f66b0`. All work pushed to `origin/main`.
+- Three Rust crates compile + install via `make rust-install` (built
+  wheels in `target/wheels/`, installed into `.venv` via uv).
+- Tests: 41 Rust + 67 pytest, all green.
+- Cosmos 121 f / 36 / `cache_skip=4`: re-validated **164 s, 52.5 GiB
+  peak** — 2.32× over the H100 reference. Within noise of the 154 s
+  headline from Session 7.
+- Phase 2 launched as Session 9 (in flight at end of Session 8):
+  Wan-2.2 loader, adaptive caching + F15 fix, FP8 via HIP kernel.

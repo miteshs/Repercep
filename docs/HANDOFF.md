@@ -1,8 +1,8 @@
 # Mirage Runtime — Handoff
 
 **Date:** 2026-05-23 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `41f3f59` · **Status:** pre-alpha, working on MI300X, results
-publishable
+**HEAD:** `e7f66b0` · **Status:** pre-alpha, working on MI300X, results
+publishable, polyglot scaffold landed (Stages 1–3), Phase 2 in progress
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
@@ -41,10 +41,10 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 
 | | Wall time | vs NVIDIA H100 reference (~380 s) |
 |---|--:|--:|
-| Mirage baseline (diffusers + SDPA→aotriton) | **465 s** | 0.82× (slower) |
+| Mirage baseline (diffusers + SDPA→aotriton) | **465 s** (740 s on 2026-05-23 re-run) | 0.82× / 0.51× |
 | Same + `torch.compile` on the DiT | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
 | Same + native loop + step-skip `cache_skip=2` | **266 s** | **1.43× faster** |
-| Same + native loop + step-skip `cache_skip=4` | **154 s** | **2.47× faster** |
+| Same + native loop + step-skip `cache_skip=4` | **154 s** (164 s re-validated 2026-05-23) | **2.47×** / 2.32× re-val |
 | Peak HBM (all configs) | **52.5 GiB** | ~30 % less than H100's 74 GB |
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
@@ -112,20 +112,30 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 ## 5. What's open
 
-**Next moves, in order of strategic value:**
+**Phase 2 in flight (parallel agents on 2026-05-23):**
 
-1. **Announce / publish.** `docs/COSMOS_ON_MI300X.md` is publish-ready. The
+- **Wan-2.2 loader** — proves the runtime is WM-native, not Cosmos-specific
+- **Adaptive caching (TeaCache-style)** — skip on input-similarity rather
+  than a fixed cadence; replaces F16/F17's "rule of thumb." Bundled with
+  F15 investigation in the same workstream.
+- **FP8 (CDNA3 native MFMA)** — real ~2× math throughput. Hard-mode: HIP
+  C++ kernel in `kernels/hip/`, behind the `AttentionOp` Protocol seam.
+
+**Other next moves, in order of strategic value:**
+
+1. **Announce / publish.** `docs/COSMOS_ON_MI300X.md` is publish-ready
+   (refreshed 2026-05-23 with the `inference_mode` postscript). The
    first-public-Cosmos-on-AMD-GPU framing is the OSS-first GTM lever the
    implementation plan calls for (§2.4).
-2. **Wan-2.2 as the second model** — Phase 2 of the plan (Runtime v0.5 + 2nd
-   model family). Most of the runtime infra reuses; main new work is the
-   model loader. Proves the runtime is WM-native, not Cosmos-specific.
-3. **Adaptive caching (TeaCache-style)** — skip on input-similarity rather
-   than a fixed cadence. The right long-term shape; replaces F16/F17's
-   "rule of thumb."
-4. **Fix the F15 inductor segfault** at 121 f shapes so `torch.compile`
-   stacks with caching.
-5. **FP8 (CDNA3 native MFMA)** — Phase 2, real ~2× math throughput.
+2. **Wire the Rust core into `src/mirage/serving/app.py`** — the three
+   crates (`mirage-cache`, `mirage-scheduler`, `mirage-router`) are
+   importable but the FastAPI handlers still call the engine directly.
+   Stage-4 work.
+3. **Continuous batching** — scheduler-level. Depends on the app.py
+   wiring above.
+4. **Action conditioning hooks** — robotics-OEM-facing surface. Plan's
+   Phase-2 deliverable; deferred until a robotics OEM is in the design-
+   partner pipeline.
 
 **Deferred / known issues:**
 
@@ -192,6 +202,14 @@ Quality gate: `make lint && make typecheck && make test` — all green
 ## 8. Commit history (recent)
 
 ```
+e7f66b0  denoise: wrap loop body in torch.inference_mode() — fixes 121f/36 OOM
+af9210d  Stage 3 integration: build pipeline, unique lib names, py.typed markers
+8c9bcfe  crates/mirage-router: greenfield request router in Rust+PyO3
+f280ada  crates/mirage-scheduler: greenfield priority scheduler in Rust+PyO3
+6e61c0e  crates/mirage-cache: port PagedLatentCache from Python to Rust+PyO3
+92e91b5  Stage 2: resolve Rust-core fork, populate workspace deps, scaffold 3 crates
+e012293  Scaffold polyglot build tooling — Cargo workspace, kernels/, ADR-0004
+90aa374  Add docs/HANDOFF.md — single doc to read first when picking up Mirage
 41f3f59  Reinstate cache=4 headline: cache tolerance is config-size-dependent (F16+F17)
 2b8a6d9  Retract cache_skip=4 headline: cached output is visibly degraded (F16)   [later corrected]
 987d4cd  Clean warmup-separated 121f cache=4: 154s — 2.47x faster than H100 reference
@@ -204,6 +222,20 @@ The `2b8a6d9` retraction was reverted (`41f3f59`) when we realised the
 "garbage" eyeball had been on the 49 f / 12 step output, not the 121 f /
 36 step one. Both states are preserved in history; F16 explains the
 config-size dependence.
+
+`e7f66b0` fixes a one-line OOM that surfaced on a fresh-environment re-run:
+the native loop was missing `torch.inference_mode()`, so the autograd
+graph for all 36 diffusion steps stayed alive — ~189 GiB allocated at
+121 f, fit within HBM at 17 f / 8 steps so the bug never showed up in
+smaller smoke configs. See the *Engineering postscript* in
+`docs/COSMOS_ON_MI300X.md` for the full diagnosis trail.
+
+`e012293`–`af9210d` are the polyglot scaffold (Stages 1–3): Cargo
+workspace at the repo root, three Rust crates (`mirage-cache`,
+`mirage-scheduler`, `mirage-router`) with PyO3 bindings, maturin build
+pipeline, ADR-0004 (scaffold-only) and ADR-0005 (fork resolved). The
+Python surface (model loading, denoise loop, attention, serving) stays
+Python; Rust owns the orchestration core.
 
 ---
 

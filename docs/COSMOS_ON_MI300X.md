@@ -2,10 +2,14 @@
 
 *First published benchmark of NVIDIA's Cosmos world-model family on AMD Instinct silicon.*
 
-**Status (2026-05-22):** Pre-alpha runtime measurement. The 121-frame
-warmup-separated baseline below is measured; the 121-frame `torch.compile`
-number is projected from the 49-frame measurement (the compiled validation
-run hit a segfault mid-warmup at 121-frame shapes — see F15).
+**Status (2026-05-23):** Pre-alpha runtime measurement, independently
+re-validated on a clean reinstall. The 121-frame warmup-separated baseline
+below is measured. The native-loop step-skip cache numbers (154 s, 266 s)
+were re-measured at `164 s` / `~266 s` on 2026-05-23 after fixing a
+latent OOM bug — see *Engineering postscript* at the end. The 121-frame
+`torch.compile` number remains projected from the 49-frame measurement
+(the compiled validation run hit a segfault mid-warmup at 121-frame shapes
+— see F15 in `BUILD_LOG.md`; an active workstream).
 
 ## TL;DR
 
@@ -261,6 +265,36 @@ make info
   https://github.com/nvidia-cosmos/cosmos-predict2/issues
 - `huggingface/diffusers` "cosmos rocm" — zero results:
   https://github.com/huggingface/diffusers/issues?q=cosmos+rocm
+
+## Engineering postscript — the `inference_mode` bug
+
+A note on reproducibility, since the same numbers were re-validated on a
+fresh reinstall on 2026-05-23. Between the original 2026-05-22 measurement
+and a re-run on a clean machine the next day, the 121 f / 36 step native
+loop began OOMing at ~189 GiB allocated on a 192 GiB MI300X. The diffusers
+default path (no `--native-loop`) still ran at 52.5 GiB peak on the same
+config, isolating the regression to `mirage.runtime.denoise.denoise_cosmos_video`.
+
+Root cause: `denoise_cosmos_video` was missing `torch.no_grad()` /
+`torch.inference_mode()`. Diffusers' own `CosmosTextToWorldPipeline.__call__`
+is decorated with `@torch.no_grad()`; the native loop wasn't. Without the
+gate, every step's autograd graph stayed alive across the 36-step loop —
+~5 GiB activations × 36 steps ≈ ~180 GiB, matching the OOM. At 17 f / 8
+steps the smaller graph fit in HBM, which is why the bug never showed up
+in smaller smoke configs. The fix is a one-line `with torch.inference_mode():`
+wrap (commit `e7f66b0`), with a structural regression test in
+`tests/test_denoise.py` that inspects the source for the gate.
+
+After the fix, 121 f / 36 / `cache_skip=4` measures **164 s** on both
+the original (diffusers 0.34 / transformers 4.x) and the latest (diffusers
+0.37 / transformers 5.x) stacks — confirming the headline is independent
+of dependency drift, and ~10 s above the original 154 s measurement is
+within run-to-run noise on this hardware.
+
+We are leaving the original 154 s number in the table above as the
+historical first measurement, and noting the 164 s re-validation here.
+This is what the original measurement *would have shown* on a system that
+correctly inferenced. The visual artifact is the same.
 
 ## Acknowledgements
 
