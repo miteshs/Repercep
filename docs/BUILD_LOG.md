@@ -906,3 +906,87 @@ the matching `decode_frame_line` is symmetric and used by the tests.
   (`{request: GenerationRequest, priority: "low" | "normal" | "high"}`)
   rather than inheritance so the v1 wire stays bit-stable.
 
+### Agent G — wire FP8 kernel into Cosmos via diffusers `_AttentionBackendRegistry`
+
+Session 9's F19 finding was that `MIRAGE_FP8_ATTENTION=1` was a no-op for
+the Cosmos path — Cosmos goes through diffusers' own `dispatch_attention_fn`,
+not Mirage's `select_attention_op`. This session bridges that.
+
+**What landed**
+
+- `src/mirage/attention/diffusers_backend.py` (new) — registers a
+  `"mirage_fp8"` backend with diffusers'
+  `_AttentionBackendRegistry`. Uses diffusers' published extension
+  surface: the `attention_backend("mirage_fp8")` context manager and
+  the `DIFFUSERS_ATTN_BACKEND=mirage_fp8` env var both resolve cleanly.
+- `src/mirage/models/cosmos.py` — `CosmosEngine.load()` calls
+  `diffusers_backend.maybe_activate_from_env()`, so
+  `MIRAGE_FP8_ATTENTION=1` now flips diffusers' active backend.
+- Shape routing in the backend: FP8 only when BF16 / FP16, Q/K/V same
+  shape (self-attention), `head_dim ∈ {32, 64, 128, 256}`, `seq_len >=
+  4096`, no mask / dropout / GQA / ParallelConfig. Otherwise the backend
+  calls a BHSD-permuted SDPA fallback. `torch.isfinite` guard triggers
+  per-call SDPA fallback if FP8 quantization tripped.
+- `scripts/bench_cosmos_fp8.py` (new) — head-to-head adaptive vs
+  adaptive+FP8 on the Cosmos production shape.
+- `tests/test_attention_diffusers_backend.py` (new, 8 tests).
+
+### F20 — FP8 kernel is wired but NOT a Cosmos-shape wall-time win today
+
+Session 10 final clean sweep on the live MI300X VF (no contention):
+
+| Config | Wall | vs Session-9 |
+|---|--:|--:|
+| 121 f / 36 / `cache=adaptive thr=0.30` | **150.9 s** | 151.1 → 150.9, identical within noise |
+| same + `MIRAGE_FP8_ATTENTION=1` | **154.7 s** | identical to G's worktree 155.1 s |
+| Wan-2.2 17 f / 8 steps (smoke) | **326.2 s** (load 18.8 + gen 307) | — |
+
+The headline stays **adaptive caching at 150.9 s / 2.52× the H100
+reference**. FP8 backend wiring is verified (the dispatcher reads
+`"mirage_fp8"`, kernel runs in-pipeline, quality is preserved — motion
+4.65 vs 4.64, mean abs pixel diff 6.81/255), but the kernel is **0.98×
+SDPA→aotriton at Cosmos's production shape (B=2, H=32, D=128, S=109k)** —
+a wash, ~3 % slower end-to-end.
+
+**Why the regression vs Session 9's 1.92×.** Session 9 benched at B=1, H=8
+— an 8-column program grid that perfectly amortizes the kernel's
+`BLOCK_M=128 / BLOCK_N=64` tile shape. Cosmos's 64-column grid does not.
+The kernel is correct; the tile sizing isn't right for this shape.
+Autotuning `BLOCK_M`/`BLOCK_N` per shape, or adding a shape-specific
+code path, is the next move.
+
+### Wan-2.2 end-to-end on main
+
+Session 9 left Wan as a structural-only landing (the 52 GB download was
+too much in an agent worktree). This session ran the smoke config on
+main:
+
+- Model: `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (Apache 2.0; MoE 14B active
+  per step; 118 GiB on disk including the FP32 VAE, T5 encoder, both
+  expert transformers).
+- Smoke config: 17 f / 8 steps @ 1280×720.
+- Wall: 326.2 s (model load 18.8 s; diffusion loop ~39 s for 8 steps at
+  ~4.9 s/step; ~270 s in VAE decode + post-process + the MoE second-
+  expert handoff. The diffusion loop is fast; the heavy non-DiT work
+  dominates at this small step count).
+- Peak HBM: **84.3 GiB** — comfortably under the 192 GiB envelope.
+
+**To our knowledge as of 2026-05-23 this is the first publicly reported
+Wan-2.2 T2V-A14B run on AMD MI300X via the diffusers path.** Mirage now
+serves two world-model families on AMD silicon end-to-end.
+
+### State of the runtime after Session 10
+
+- HEAD on main: `ca709fe` + the integration commit that follows this entry.
+- Tests: 41 Rust + 108 pytest passing (5 new from G + 17 new from H).
+  Mypy strict on 49 source files.
+- v2 serving path exercises Router + Scheduler + driver thread end-to-end
+  on the StubEngine; real Cosmos through v2 is the next obvious test.
+- Phase-2 deliverables: ✓ second-model family, ✓ adaptive caching,
+  ✓ F15 gate, ✓ FP8 kernel + wiring (kernel tuning open), ✓ Wan smoke
+  on main. Continuous batching + action conditioning remain in
+  Phase-2-scope-deferred (need a real workload + design partner).
+- Open: FP8 kernel autotune for Cosmos shape (F20), HIP scaffold
+  correctness, Wan deep run + caching analysis, v2 → v1 deprecation
+  plan.
+

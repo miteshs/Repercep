@@ -1,10 +1,10 @@
 # Mirage Runtime — Handoff
 
 **Date:** 2026-05-23 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `61486e1`+ · **Status:** pre-alpha, working on MI300X, results
-publishable, polyglot scaffold landed (Stages 1–3), Phase 2 mostly landed
-(Wan-2.2 loader + adaptive caching + FP8 kernel; FP8 wiring into Cosmos
-deferred to 2.5)
+**HEAD:** `ca709fe`+ · **Status:** pre-alpha, working on MI300X, results
+publishable, polyglot scaffold + Rust core + Stage-4 v2 serving + Phase 2
+(adaptive caching headline) + Phase 2.5 FP8 wiring all landed; FP8 kernel
+not yet a Cosmos-shape win (kernel tuning is future work)
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
@@ -47,8 +47,10 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 | Same + `torch.compile` on the DiT (≤64 f) | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
 | Same + native loop + step-skip `cache_skip=2` | **266 s** | **1.43× faster** |
 | Same + native loop + step-skip `cache_skip=4` | **154 s** Session 7 / **163.9 s** Session 9 clean | **2.47×** / **2.32×** |
-| Same + native loop + **adaptive cache** (`thr=0.30`) | **151.1 s** Session 9 clean | **2.51× — current headline** |
-| Peak HBM (all configs) | **52.5 GiB** | ~30 % less than H100's 74 GB |
+| Same + native loop + **adaptive cache** (`thr=0.30`) | **150.9 s** Session 10 clean (151.1 Session 9) | **2.52× — current headline** |
+| Same + native loop + adaptive + `MIRAGE_FP8_ATTENTION=1` | **154.7 s** Session 10 clean | 2.46× — FP8 backend wired, kernel not yet a Cosmos-shape win |
+| Peak HBM (Cosmos, all configs) | **52.5 GiB** | ~30 % less than H100's 74 GB |
+| Wan-2.2-T2V-A14B 17f / 8 steps smoke | 326.2 s (load 18.8 + gen ~307) | **84.3 GiB peak** — second WM family runs end-to-end |
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
 Cosmos benchmark on any AMD GPU.** Visual quality at `skip=4` is verified
@@ -120,34 +122,42 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 ## 5. What's open
 
-**Phase 2 landed (Session 9, 2026-05-23):**
+**Phase 2 + 2.5 + Stage 4 landed (Sessions 9–10, 2026-05-23):**
 
-- ✓ **Wan-2.2 loader** — `WanEngine`, `scripts/run_wan.py`, 9 new tests
+- ✓ **Wan-2.2 loader** — `WanEngine`, `scripts/run_wan.py`, 9 structural tests.
+  **Smoke gen on main:** 17 f / 8 steps in 326 s, peak 84.3 GiB (Session 10).
 - ✓ **Adaptive caching (TeaCache-style)** — `cache_mode=adaptive` thr=0.30,
-  current headline 151.1 s / 2.51× at 121 f / 36 steps
-- ✓ **F15 safety gate** — `compile_max_frames=64` default; crash and the
-  recompile storm both avoided cleanly. The original SIGSEGV didn't repro
-  in the current torch+ROCm build, but the gate is still correct.
-- ◐ **FP8 attention kernel** — Triton FA-2 ships, **1.92× over SDPA at S≥8 k**;
-  HIP scaffold compiles + loads but output values are wrong (operand
-  layout TODO). **The kernel is NOT wired into the Cosmos diffusers path
-  yet** — see F19 / Phase 2.5 below.
+  current headline **150.9 s / 2.52×** at 121 f / 36 steps (Session 10).
+- ✓ **F15 safety gate** — `compile_max_frames=64`; original SIGSEGV didn't
+  repro on current torch+ROCm; recompile storm gated instead.
+- ✓ **FP8 attention kernel + diffusers backend wiring (Phase 2.5).**
+  Triton FA-2 kernel + Mirage `mirage_fp8` backend registered with
+  diffusers' `_AttentionBackendRegistry`. `MIRAGE_FP8_ATTENTION=1` flips
+  the active backend on `CosmosEngine.load`. Quality preserved at
+  Cosmos production shape (motion 4.65 vs 4.64).
+  **NOT a wall-time win at Cosmos production shape today:** adaptive+FP8
+  = 154.7 s vs adaptive 150.9 s. Session 9's 1.92× was at B=1 H=8 (8-col
+  program grid that amortizes BLOCK_M=128/BLOCK_N=64); Cosmos's 64-col
+  grid doesn't. F20 / future kernel tuning.
+- ✓ **Stage 4 v2 serving path** (Session 10). `POST /v2/generate/stream`
+  routes through `Router.accept → Scheduler.submit → engine driver →
+  Router.push_frame → NDJSON stream`. v1 endpoints unchanged. 17 new
+  pytest cases; cargo workspace tests unchanged (no Rust crate changes).
 
-**Phase 2.5 (the deferred-but-important follow-ups):**
+**Currently open:**
 
-1. **Wire FP8 into the Cosmos attention path.** The kernel exists and is
-   measurably fast. The diffusers Cosmos pipeline uses `dispatch_attention_fn`
-   from `diffusers.models.attention_dispatch`, not Mirage's
-   `select_attention_op`. Either monkey-patch the dispatch function or
-   rebuild `CosmosEngine` to use `select_attention_op` directly.
-2. **Wan-2.2 smoke gen on main.** The agent verified the loader
-   structurally; a real Wan 121-frame run on the MI300X (52 GiB download
-   + ~10 min generation) is the final acceptance.
-3. **HIP kernel correctness fix.** The `v_mfma_f32_16x16x32_fp8_fp8` GEMM
-   compiles + loads via `hipcc` + the pybind layer, but the operand-
-   register layout assumption is incomplete. Triton wins on perf today;
-   HIP is the long-term option if we need shapes Triton can't tune well
-   for.
+1. **FP8 kernel tuning** for Cosmos's production shape — autotune
+   `BLOCK_M` / `BLOCK_N` per shape, or add a shape-specific code path.
+   `scripts/bench_cosmos_fp8.py` is the harness.
+2. **HIP kernel correctness fix.** The `v_mfma_f32_16x16x32_fp8_fp8` GEMM
+   compiles + loads via `hipcc` + pybind, but the operand-register layout
+   is incomplete. Triton wins on perf today; HIP is the long-term option
+   for shapes Triton can't tune well.
+3. **Wan-2.2 deeper exploration.** Smoke gen works; a real 81-frame
+   quality run + per-stage profile + caching analysis are open.
+   `scripts/run_wan.py --frames 81 --steps 40` is the target.
+4. **v2 → v1 deprecation plan.** v2 is the future; once it's exercised
+   on real workloads we can deprecate the v1 sync path.
 
 **Other next moves, in order of strategic value:**
 
@@ -231,6 +241,9 @@ Quality gate: `make lint && make typecheck && make test` — all green
 ## 8. Commit history (recent)
 
 ```
+ca709fe  attention: wire FP8 kernel into Cosmos via a diffusers-side backend
+576ca56  serving: Stage-4 v2 path through router + scheduler
+10c7b9a  Phase 2 integration: docs + numbers from the clean-GPU benchmark sweep
 61486e1  caching: adaptive (TeaCache-style) + F15 compile gate at 121f
 d916800  attention: FP8 path on CDNA3 — Triton flash kernel + scaled_mm fallback + HIP scaffold
 ed1ed27  mirage.models.wan: Wan-2.2 T2V-A14B as the second world-model family

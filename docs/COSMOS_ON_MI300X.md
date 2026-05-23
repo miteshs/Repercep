@@ -25,7 +25,8 @@ reported Cosmos benchmark on any AMD GPU.**
 | same, with `torch.compile` on the DiT | — | **~410 s** projected (49 f profile shows 1.13× DiT) |
 | same, native loop + step-skip cache (`skip=2`) | — | **266 s** measured — **1.43× faster than H100 reference**, quality verified |
 | same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f; re-validated **164 s** on 2026-05-23 (Session 8) and **163.9 s** on 2026-05-23 (Session 9, clean GPU) |
-| same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **151.1 s** measured — **2.51× faster than H100 reference**, motion stat matches the verified `skip=4` reference (4.65 vs 4.66), Session 9 |
+| same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **150.9 s** measured Session 10 (151.1 s Session 9) — **2.52× faster than H100 reference**, motion stat matches the verified `skip=4` reference (4.65 vs 4.66) |
+| same + `MIRAGE_FP8_ATTENTION=1` (FP8 backend wired into diffusers dispatch) | — | 154.7 s — FP8 kernel runs in-pipeline at Cosmos's production shape but isn't a wall-time win there yet (Session 10). Quality preserved (motion 4.65 vs 4.64). |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
