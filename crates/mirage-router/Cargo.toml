@@ -1,0 +1,22 @@
+[package]
+name         = "mirage-router"
+description  = "Per-request orchestration and frame ordering for the Mirage serving layer."
+version      = { workspace = true }
+edition      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+name       = "_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3      = { workspace = true }
+tokio     = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }

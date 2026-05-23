@@ -1,0 +1,23 @@
+[package]
+name         = "mirage-cache"
+description  = "Paged latent cache for world-model serving — Rust core with PyO3 bindings."
+version      = { workspace = true }
+edition      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+# `_native` is the convention across all Mirage Rust crates: the Python wrapper
+# at src/mirage/runtime/<name>.py imports from `mirage_<name>._native`.
+name       = "_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3        = { workspace = true }
+thiserror   = { workspace = true }
+parking_lot = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }

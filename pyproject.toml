@@ -54,6 +54,9 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "httpx>=0.27",  # required by fastapi.testclient.TestClient
+  # Rust ↔ Python build tool. `make rust-install` runs `maturin develop` over
+  # each crate in the workspace. See docs/adr/0005-rust-core-fork-resolved.md.
+  "maturin>=1.7",
 ]
 
 [project.scripts]

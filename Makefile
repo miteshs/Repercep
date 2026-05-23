@@ -4,7 +4,7 @@ CARGO := cargo
 
 .PHONY: help install lint format typecheck test check-gpu info \
         rust-build rust-check rust-fmt rust-fmt-check rust-clippy rust-test \
-        lint-all check-all
+        rust-install lint-all check-all
 
 help:
 	@echo "Mirage Runtime — make targets:"
@@ -25,6 +25,7 @@ help:
 	@echo "    rust-fmt-check  cargo fmt --all -- --check"
 	@echo "    rust-clippy     cargo clippy --workspace --all-targets -- -D warnings"
 	@echo "    rust-test       cargo test --workspace"
+	@echo "    rust-install    maturin develop --release for every crate (into .venv)"
 	@echo ""
 	@echo "  Combined:"
 	@echo "    lint-all        ruff + rust-fmt-check + rust-clippy"
@@ -103,6 +104,18 @@ ifeq ($(HAVE_CRATES),)
 	$(call rust-skip-msg,rust-test)
 else
 	$(CARGO) test --workspace
+endif
+
+# Build each crate's PyO3 extension module and install it into .venv. Iterates
+# explicitly because `maturin develop` is per-package, not workspace-wide.
+rust-install:
+ifeq ($(HAVE_CRATES),)
+	$(call rust-skip-msg,rust-install)
+else
+	@for crate in $$(find crates -mindepth 2 -maxdepth 2 -name Cargo.toml -printf '%h\n'); do \
+	    echo "==> maturin develop --release in $$crate"; \
+	    $(PY) -m maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
 endif
 
 lint-all: lint rust-fmt-check rust-clippy
