@@ -35,6 +35,27 @@ def main() -> int:
         default=0,
         help="skip the DiT forward N-1 of every N steps (native loop only)",
     )
+    parser.add_argument(
+        "--cache-mode",
+        choices=("none", "fixed", "adaptive"),
+        default="none",
+        help=(
+            "caching strategy: 'fixed' uses --cache-skip-every; "
+            "'adaptive' uses input-similarity gating"
+        ),
+    )
+    parser.add_argument(
+        "--cache-adaptive-threshold",
+        type=float,
+        default=0.3,
+        help="adaptive cache: accumulated rel-L1 threshold for triggering a full forward",
+    )
+    parser.add_argument(
+        "--cache-force-full-every",
+        type=int,
+        default=16,
+        help="adaptive cache: force a full forward at least every N steps (0=disabled)",
+    )
     parser.add_argument("--prompt", default="A drone shot flying over a coastal highway at sunset.")
     args = parser.parse_args()
 
@@ -66,6 +87,9 @@ def main() -> int:
                 CosmosConfig(
                     use_native_loop=args.native_loop,
                     cache_skip_every=args.cache_skip_every,
+                    cache_mode=args.cache_mode,
+                    cache_adaptive_threshold=args.cache_adaptive_threshold,
+                    cache_force_full_every=args.cache_force_full_every,
                 ),
             ),
             request,
@@ -79,6 +103,9 @@ def main() -> int:
                     compile_transformer=True,
                     use_native_loop=args.native_loop,
                     cache_skip_every=args.cache_skip_every,
+                    cache_mode=args.cache_mode,
+                    cache_adaptive_threshold=args.cache_adaptive_threshold,
+                    cache_force_full_every=args.cache_force_full_every,
                 ),
             ),
             request,
@@ -96,6 +123,9 @@ def main() -> int:
                 compile_transformer=args.compile,
                 use_native_loop=args.native_loop,
                 cache_skip_every=args.cache_skip_every,
+                cache_mode=args.cache_mode,
+                cache_adaptive_threshold=args.cache_adaptive_threshold,
+                cache_force_full_every=args.cache_force_full_every,
             ),
         )
         label_parts = []

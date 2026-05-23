@@ -48,6 +48,27 @@ def main() -> int:
         default=0,
         help="step-skip caching: full DiT forward only every Nth step (native loop only)",
     )
+    parser.add_argument(
+        "--cache-mode",
+        choices=("none", "fixed", "adaptive"),
+        default="none",
+        help=(
+            "caching strategy: 'fixed' uses --cache-skip-every; "
+            "'adaptive' uses input-similarity gating (TeaCache-style)"
+        ),
+    )
+    parser.add_argument(
+        "--cache-adaptive-threshold",
+        type=float,
+        default=0.3,
+        help="adaptive cache: accumulated rel-L1 threshold for triggering a full forward",
+    )
+    parser.add_argument(
+        "--cache-force-full-every",
+        type=int,
+        default=16,
+        help="adaptive cache: force a full forward at least every N steps (0=disabled)",
+    )
     args = parser.parse_args()
 
     import torch
@@ -70,6 +91,9 @@ def main() -> int:
             enable_guardrail=args.guardrail,
             use_native_loop=args.native_loop,
             cache_skip_every=args.cache_skip_every,
+            cache_mode=args.cache_mode,
+            cache_adaptive_threshold=args.cache_adaptive_threshold,
+            cache_force_full_every=args.cache_force_full_every,
         ),
     )
     print(

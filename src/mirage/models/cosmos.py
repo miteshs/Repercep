@@ -57,6 +57,25 @@ class CosmosConfig:
     # torch.compile the DiT transformer (inductor + triton-rocm). First-run
     # compilation is slow; steady-state is faster. See docs/OPTIMIZATION.md.
     compile_transformer: bool = False
+    # torch.compile mode passed to ``torch.compile`` when ``compile_transformer``
+    # is True. ``None`` is the inductor default; ``"reduce-overhead"`` cuts
+    # Python overhead with CUDA graphs; ``"max-autotune"`` is the slowest
+    # compile but fastest steady-state. Surfaced as a knob mainly because the
+    # inductor + triton-rocm stack has been seen to segfault at 121f shapes
+    # in default mode (BUILD_LOG F15 / F18) — alternative modes are the
+    # in-tree workaround until upstream lands a fix.
+    compile_mode: str | None = None
+    # If True, pass ``dynamic=True`` to ``torch.compile`` so a single compiled
+    # graph handles multiple input shapes. Slightly slower per call than a
+    # static-shape compile, but avoids per-shape recompiles and (per F18)
+    # sidesteps the 121-f inductor-rocm segfault path. Default False.
+    compile_dynamic: bool = False
+    # Safety gate: if the request's ``num_frames`` exceeds this threshold and
+    # ``compile_transformer`` is True, ``CosmosEngine`` falls back to the
+    # uncompiled DiT and emits a clear message. 49 is the empirical floor —
+    # 49f compiles cleanly today, 121f segfaults mid-warmup (F15). Set to 0
+    # to disable the gate.
+    compile_max_frames: int = 64
     # Use Mirage's native denoising loop in place of the diffusers
     # `CosmosTextToWorldPipeline.__call__`. Enables CFG batching (one batch-2
     # transformer forward per step instead of two batch-1 forwards).
@@ -67,6 +86,27 @@ class CosmosConfig:
     # rest. 0 disables. Real work reduction; quality dial.
     cache_skip_every: int = 0
     cache_warmup_steps: int = 4
+    # Caching strategy. ``"none"`` disables caching entirely (the default).
+    # ``"fixed"`` preserves the legacy ``cache_skip_every`` cadence behaviour.
+    # ``"adaptive"`` selects the TeaCache-style input-similarity gate — a step
+    # is skipped only when the relative L1 change of the model input vs. the
+    # last full forward is below ``cache_adaptive_threshold``.
+    cache_mode: str = "none"
+    # Adaptive-cache (``cache_mode="adaptive"``) threshold on the *accumulated*
+    # relative L1 distance of the timestep-conditioned latent input. Lower is
+    # more conservative (fewer skips, higher quality). v0 uses an identity
+    # rescaler — accumulating raw `rel_l1` until it crosses this threshold.
+    # 0.3 was tuned on 121f/36 step: it beats the fixed `skip=4` headline
+    # (152.9 s vs 175 s here, 11 vs 12 full forwards), with motion stat
+    # matching fixed within noise. See ``scripts/bench_caching.py``.
+    cache_adaptive_threshold: float = 0.3
+    # Adaptive cache only: force a full forward at least every N steps even if
+    # the gate would skip. Acts as a quality floor against pathologically
+    # static prefixes. ``0`` disables the periodic full-forward floor.
+    # 16 matches the cadence that the tuned ``threshold=0.3`` actually hits
+    # at 121f/36 step — bigger and the floor never kicks in; smaller and it
+    # overrides the gate.
+    cache_force_full_every: int = 16
 
 
 class CosmosEngine:
@@ -84,6 +124,12 @@ class CosmosEngine:
         self._config = config if config is not None else CosmosConfig()
         self._pipe: Any | None = None
         self._guardrail: Any | None = None
+        # When ``compile_transformer`` is set and the frame-size gate may need
+        # to fall back to the uncompiled DiT (F15 / F18), we keep a handle on
+        # the original transformer module so ``generate()`` can swap it in.
+        self._uncompiled_transformer: Any | None = None
+        # Set to True if the compile gate has been tripped at least once.
+        self._compile_gated: bool = False
 
     @property
     def is_loaded(self) -> bool:
@@ -120,7 +166,20 @@ class CosmosEngine:
         )
         pipe.to(device)
         if self._config.compile_transformer:
-            pipe.transformer = torch.compile(pipe.transformer)
+            # F15 / F18: at 121-frame shapes the inductor + triton-rocm path
+            # has been observed to segfault mid-warmup. ``compile_mode`` and
+            # ``compile_dynamic`` are the two in-tree knobs to try
+            # (``mode="reduce-overhead"`` and ``dynamic=True`` are the two
+            # workarounds most commonly cited for shape-specific Triton-rocm
+            # bugs). The frame-size gate at ``generate()`` is the belt-and-
+            # braces fallback that just disables compile above the safe floor.
+            self._uncompiled_transformer = pipe.transformer
+            compile_kwargs: dict[str, Any] = {}
+            if self._config.compile_mode is not None:
+                compile_kwargs["mode"] = self._config.compile_mode
+            if self._config.compile_dynamic:
+                compile_kwargs["dynamic"] = True
+            pipe.transformer = torch.compile(pipe.transformer, **compile_kwargs)
         self._pipe = pipe
 
         if self._config.enable_guardrail:
@@ -135,6 +194,36 @@ class CosmosEngine:
             ready=self.is_loaded,
         )
 
+    def _gate_compile_if_needed(self, num_frames: int) -> None:
+        """Fall back to the uncompiled DiT if ``num_frames`` exceeds the
+        F15-known-safe ceiling and a fallback module is available.
+
+        F15 / F18: ``torch.compile`` (inductor + triton-rocm 7.2) segfaults
+        mid-warmup at 121-frame shapes; 49 frames compiles cleanly. The
+        ``compile_max_frames`` config exposes the threshold; ``0`` disables
+        the gate (caller opts out — useful once upstream lands a fix).
+        """
+        if self._pipe is None or self._uncompiled_transformer is None:
+            return
+        ceiling = self._config.compile_max_frames
+        if ceiling <= 0:
+            return
+        if num_frames <= ceiling:
+            return
+        # First-time fallback for this engine: log it once.
+        if not self._compile_gated:
+            print(
+                f"[mirage] compile gate tripped: num_frames={num_frames} > "
+                f"compile_max_frames={ceiling}; falling back to the uncompiled "
+                "DiT for this and subsequent calls (BUILD_LOG F15/F18).",
+                flush=True,
+            )
+            self._compile_gated = True
+        # Swap in the original (uncompiled) transformer for this request.
+        # Idempotent: if already swapped, this is a no-op.
+        if self._pipe.transformer is not self._uncompiled_transformer:
+            self._pipe.transformer = self._uncompiled_transformer
+
     def generate(self, request: GenerationRequest) -> Iterator[Frame]:
         import torch
 
@@ -144,6 +233,13 @@ class CosmosEngine:
 
         if self._guardrail is not None and not self._guardrail.check_text_safety(request.prompt):
             raise GuardrailError("prompt rejected by the Cosmos safety guardrail")
+
+        # F15 / F18 safety gate. If the request exceeds the frame ceiling for
+        # which inductor + triton-rocm is known to compile cleanly, swap the
+        # compiled DiT for the original uncompiled module for this request.
+        # The compile cost has already been paid (in load()) but is not used —
+        # better that than a SIGSEGV mid-warmup of the 121-f reference config.
+        self._gate_compile_if_needed(params.num_frames)
 
         generator: torch.Generator | None = None
         if params.seed is not None:
@@ -167,6 +263,9 @@ class CosmosEngine:
                 output_type="pt",
                 cache_skip_every=self._config.cache_skip_every,
                 cache_warmup_steps=self._config.cache_warmup_steps,
+                cache_mode=self._config.cache_mode,
+                cache_adaptive_threshold=self._config.cache_adaptive_threshold,
+                cache_force_full_every=self._config.cache_force_full_every,
             )
             video = _as_frame_tensor(video_raw[0])
         else:
