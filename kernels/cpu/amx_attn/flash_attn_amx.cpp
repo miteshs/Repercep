@@ -209,6 +209,12 @@ inline float reduce_add_ps(__m512 v) {
 // We use the AVX-512 sequence: x in [-inf, 0]; compute 2^(x * log2(e)) via
 // a degree-5 polynomial on the fractional part.  This is the standard
 // FlashAttention-2 trick.
+//
+// The causal mask uses -inf in masked lanes; the polynomial path would
+// produce NaN on -inf (round(-inf*c) -> indeterminate, sub(-inf, NaN) -> NaN),
+// poisoning the row sum.  We therefore clamp x to a safe minimum below which
+// expf already underflows to 0.  -87.336544 is just shy of expf's lower
+// normal-range bound; everything below produces a true zero result.
 inline __m512 exp_ps(__m512 x) {
     const __m512 LOG2E   = _mm512_set1_ps(1.44269504088896341f);
     const __m512 C0      = _mm512_set1_ps(1.0f);
@@ -217,6 +223,9 @@ inline __m512 exp_ps(__m512 x) {
     const __m512 C3      = _mm512_set1_ps(0.05550410866f);
     const __m512 C4      = _mm512_set1_ps(0.00961812910f);
     const __m512 C5      = _mm512_set1_ps(0.00133335581f);
+    const __m512 X_MIN   = _mm512_set1_ps(-87.336544f);
+
+    x = _mm512_max_ps(x, X_MIN);
 
     // y = x * log2(e); split into integer (n) and fractional (f) parts.
     __m512 y  = _mm512_mul_ps(x, LOG2E);
