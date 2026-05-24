@@ -22,8 +22,10 @@ def test_rocm_backend_satisfies_protocol() -> None:
 
 
 def test_select_unknown_backend_raises() -> None:
+    # "tpu" is not a backend Mirage knows about today; CUDA was added in ADR-0006
+    # so it no longer makes a good "unknown" example.
     with pytest.raises(ValueError, match="unknown backend"):
-        select_backend(prefer="cuda")
+        select_backend(prefer="tpu")
 
 
 @pytest.mark.skipif(not ROCmBackend().is_available(), reason="no ROCm GPU on host")

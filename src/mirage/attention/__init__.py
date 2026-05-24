@@ -19,6 +19,7 @@ from __future__ import annotations
 # flips it (env var or ``attention_backend(...)`` context manager) so this is
 # zero-cost in the default path. See ``diffusers_backend.py``.
 from mirage.attention import diffusers_backend as _diffusers_backend  # noqa: F401
+from mirage.attention.fp8_hopper_triton import FP8HopperTritonAttention
 from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention
 from mirage.attention.fp8_triton import FP8TritonAttention
 from mirage.attention.protocol import AttentionOp
@@ -29,6 +30,7 @@ __all__ = [
     "AttentionKind",
     "AttentionOp",
     "AttentionShape",
+    "FP8HopperTritonAttention",
     "FP8ScaledMMAttention",
     "FP8TritonAttention",
     "select_attention_op",

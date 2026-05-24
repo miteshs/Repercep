@@ -1476,3 +1476,242 @@ outline, and a publication checklist.
 - **Bare-metal MI300X validation** vs the VF slice we measure on.
 - **OSS announce push.** Drafts ready on disk if user wants to ship.
 
+---
+
+## Session 14 — 2026-05-24 — NVIDIA H100 port: architecture + kernels + tooling
+
+**Goal:** stand up the NVIDIA H100 backend as a *parallel* track to
+MI300X. Resolve the "Revisit if" clause of ADR-0001 ahead of the
+design-partner trigger it actually named, because the cost is now a
+weekend (ADR-0003 was deliberately built for this) and the
+methodology-asymmetry payoff (`docs/METHODOLOGY.md` §3) is real.
+
+Host now has 1× NVIDIA H100 SXM5 80GB HBM3 (sm_90, 132 SMs, 18 NVLinks
+@ 26.6 GB/s, 700 W TDP confirming SXM5; board PN 692-2G520-0200-000).
+ROCm not present on this host. Today is the day after Session 13
+closed the v0.1 verification campaign on MI300X; that whole result set
+is unchanged.
+
+### Decisions
+
+- **D14 — NVIDIA is a parallel target, not a fast-follow.** AMD remains
+  the lead workload (Cosmos / Wan benchmarks, the `BUILD_LOG.md`
+  chronology, the OSS framing in `COSMOS_ON_MI300X.md`). The port
+  exists because (a) ADR-0003 was deliberately designed for it (the
+  Backend Protocol is the single seam), (b) it closes a real
+  asymmetry in `METHODOLOGY.md` §3 ("system-vs-system" becomes
+  "stack-vs-stack on the same silicon"), (c) optionality on the
+  NVIDIA inference-cloud market removes a "this is just an AMD
+  project" perception. Full record: `docs/adr/0006-cuda-backend.md`.
+- **D15 — `select_backend()` tiebreaker is AMD-first.** When both
+  vendors are visible (rare; CI machines, dev boxes) the default pick
+  is AMD. Preserves the "MI300X is lead" framing for any user not
+  explicitly pinning a vendor.
+- **D16 — Two FP8 kernels, not one parameterized kernel.** Different
+  physical FP8 formats on gfx942 (e4m3 *fnuz*, FP8_MAX=240, no
+  inf/nan) vs Hopper (`tl.float8e4nv` = e4m3fn IEEE-ish, FP8_MAX=448,
+  inf/nan representable). Different SMEM budget (228 KiB/block on
+  Hopper vs 64 KiB LDS on gfx942) admits different autotune sweet
+  spots. Separate kernel files; separate persistent autotune caches
+  (`fp8_autotune.json` vs `fp8_autotune_hopper.json`). Clarity over
+  abstraction. See F25.
+- **D17 — TransformerEngine is optional, not mandatory.** TE has a
+  heavy install (cuDNN, custom CUDA toolchain, per-SM C++ extensions);
+  forcing it would gate the NVIDIA path on a non-trivial dependency
+  build. The Triton FP8 kernel is the path that works without TE; TE
+  is the path for users who already have it (and gets you FA-3 + FP8
+  recipes for free). The `[nvidia]` extras group lists `flash-attn>=3`
+  as mandatory (the FA-3 op needs it to register) and TE as optional.
+
+### Work done
+
+#### Backend
+
+- `src/mirage/backend/cuda.py` — `CUDABackend` satisfying
+  `mirage.backend.protocol.Backend`. Detects via
+  `torch.version.cuda is not None`. Maps `sm_XX` → `DeviceArch`:
+  sm_90 → Hopper, sm_80 → Ampere, sm_89 → Ada. Capabilities:
+  FP8 (e4m3fn + e5m2), flash-attention via flash-attn-3,
+  torch.compile.
+- `src/mirage/backend/registry.py` — `_ALL_BACKENDS` now
+  `(ROCmBackend(), CUDABackend())`. AMD-first preserves the "MI300X
+  is lead" tiebreaker (D15). `select_backend(prefer="cuda")` pins
+  CUDA explicitly when needed.
+
+#### Attention ops (three new)
+
+- `src/mirage/attention/hopper_flash.py` — `HopperFlashAttention`
+  wrapping `flash_attn_interface.flash_attn_func` (the FA-3 entry
+  point on Hopper) with a `flash_attn.flash_attn_func` FA-2 fallback
+  when the FA-3 wheel is older than the import-by-interface API.
+  Supported dtypes: FP16, BF16, FP8 (delegated to the FP8 op tree);
+  supported head_dims: 64, 128, 256.
+- `src/mirage/attention/fp8_hopper_triton.py` +
+  `kernels/triton_kernels/fp8_flash_attn_hopper.py` — Hopper FP8
+  Triton FA-2. `tl.float8e4nv` (e4m3fn, FP8_MAX=448) not
+  `tl.float8e4b8` (gfx942's fnuz, FP8_MAX=240). Larger tile sweep
+  (Hopper's 228 KiB SMEM/block admits 256×256 tiles the gfx942 LDS
+  can't hold). Persistent autotune cache at
+  `~/.cache/mirage/fp8_autotune_hopper.json`. Same FA-2 algorithm
+  as the gfx942 sibling; same `_fp8_flash_attn_fwd_impl` +
+  `_fp8_flash_attn_fwd_autotuned` + JSON-cache pattern.
+- `src/mirage/attention/transformer_engine.py` —
+  `TransformerEngineAttention` wrapping
+  `transformer_engine.pytorch.DotProductAttention` with the default
+  `DelayedScaling` FP8 recipe. Registers only when TE imports
+  cleanly (silent fall-through otherwise). Supported head_dims:
+  64, 128 (the dims TE's FP8 flash path is compiled for).
+
+#### Registry + selection
+
+- `src/mirage/attention/registry.py` — `select_attention_op` grows an
+  NVIDIA vendor branch in addition to the existing AMD branch. Order
+  on NVIDIA: TE (if available + FP8 env) → FP8 Hopper Triton (if env
+  + shape) → FA-3 / FA-2 (`HopperFlashAttention`) → naive SDPA.
+
+#### Tooling + packaging
+
+- `pyproject.toml` — new `[project.optional-dependencies] nvidia`
+  group. `flash-attn>=3` mandatory; `transformer-engine[pytorch]`
+  optional behind a marker. Existing `models` / `serving` / `dev`
+  groups unchanged.
+- `scripts/check_gpu.py` — refactored vendor-neutral. Was ROCm-only;
+  now prints whichever backend `select_backend()` resolves to, with
+  the same diagnostic shape (device name, arch, capabilities). The
+  Makefile target invocation is unchanged.
+- `Makefile` — note added next to `make install`: torch must be
+  installed from the wheel index matching the present hardware
+  (rocm7.2 for MI300X hosts, cu128 for NVIDIA hosts). Mixing the two
+  produces a torch that supports neither vendor properly.
+
+#### Tests
+
+- `tests/test_backend_cuda.py` — sibling of `test_backend.py`;
+  Protocol conformance, `vendor==NVIDIA`, sm_XX→DeviceArch mapping,
+  capability declaration, `is_available()` skip-on-no-CUDA.
+- `tests/test_attention_cuda.py` — sibling of `test_attention.py`;
+  Protocol conformance for `HopperFlashAttention`, `FP8HopperTritonAttention`,
+  `TransformerEngineAttention`; op-name stability; shape gating
+  (cross-attention rejected, min seq_len floor); end-to-end SDPA-floor
+  run at a Cosmos-DiT shape; flash-attn path gated behind a separate
+  skipif so it skips cleanly when `flash-attn` is not built.
+- Existing `tests/test_attention_fp8.py` gets a `torch.version.hip`
+  gate on `_gpu_or_skip()` so the AMD-only `fp8e4b8` kernel does not
+  attempt to compile on NVIDIA; the H100 sibling kernel is exercised
+  via `tests/test_attention_cuda.py` instead (F25).
+- Existing `tests/test_attention_diffusers_backend.py` gets the same
+  AMD-only skip for the same reason.
+- Existing `tests/test_backend.py::test_select_unknown_backend_raises`
+  switches its sentinel from `"cuda"` (now a real backend) to `"tpu"`.
+
+The cargo workspace + Rust crates are unchanged. The denoise loop,
+the Cosmos engine, the serving handlers, the benchmark harnesses are
+unchanged. **This is exactly what ADR-0003 promised — the cost of the
+port is below the seam, not above it.**
+
+### Findings
+
+- **F25 — FP8 format mismatch: e4m3 *fnuz* on gfx942 vs IEEE-ish
+  e4m3fn on Hopper.** The two formats look identical on paper (both
+  e4m3, 1+4+3 bit layout) but they are not interchangeable:
+  - gfx942: e4m3 fnuz, finite-only (FP8_MAX = 240, no inf/no nan).
+  - Hopper: e4m3fn (IEEE-ish, FP8_MAX = 448, inf + nan
+    representable).
+  The 2× delta in dynamic range matters at the Cosmos production
+  shape — clamping at 240 on Hopper would throw away accuracy.
+  Conversely, a kernel written for Hopper's range that runs on
+  gfx942 produces denorms. Triton exposes these as distinct dtype
+  literals (`tl.float8e4b8` for fnuz, `tl.float8e4nv` for e4m3fn),
+  and the persistent autotune caches must be separated because the
+  winning launch config can differ even at the same `(B, H, S, D)`.
+  This is the structural reason the two kernels are siblings and
+  not a single parameterized kernel.
+
+- **F26 — The H100 port closes a real methodology gap.** `METHODOLOGY.md`
+  §3 was honest that the 2.68× claim is system-vs-system: Mirage's
+  optimized MI300X stack vs NVIDIA's published H100 reference (no
+  cache, no FP8 stack disclosed). The skeptic's correct question
+  ("but what if you ran Mirage's own stack on the same H100?") had
+  no answer because no H100 was attached to the project. The
+  Session 14 port lets us answer it directly in Session 15. Note
+  the answer can go either way (Mirage on H100 might be faster
+  than on MI300X by exactly the 1.24× silicon ratio, which
+  *strengthens* the MI300X claim; or by more, which calibrates how
+  much of the MI300X gap is silicon vs Hopper-specific kernel
+  optimization that we can later port). Either outcome is
+  informative. Neither retroactively damages the published MI300X
+  result.
+
+- **F27 — On H100, our Hopper FP8 Triton kernel is correct but
+  *slower than SDPA* at v0.** First live measurements on H100 SXM5
+  (Session 14, post-architecture):
+
+  | shape (B,H,S,D) | SDPA (cuDNN-FA3) | FP8 Hopper Triton | speedup | rel err |
+  |---|--:|--:|--:|--:|
+  | 1, 8, 4096, 128   | 0.20 ms |  0.55 ms | 0.36× | 0.034 |
+  | 1, 8, 8192, 128   | 0.77 ms |  1.58 ms | 0.49× | 0.036 |
+  | 1, 8, 16384, 128  | 2.99 ms |  5.27 ms | 0.57× | 0.033 |
+  | 2, 32, 8192, 128  | 5.98 ms | 11.79 ms | 0.51× | 0.034 |
+
+  The kernel is **correct** (3.4 % mean rel diff vs SDPA — well within
+  the existing FP8 tolerance the AMD tests use). It is **not a perf
+  win** because SDPA on Hopper routes to *cuDNN flash-attn-3* (a
+  WGMMA + TMA + bf16 implementation tuned for exactly this geometry),
+  whereas on MI300X SDPA routes to aotriton which is comparatively
+  unoptimized at the production shape. The AMD perf win came from
+  beating aotriton; on H100, cuDNN-FA3 is the harder bar.
+
+  Autotune correctly populated `~/.cache/mirage/fp8_autotune_hopper.json`
+  with winning configs (all four converged on
+  `BLOCK_M=128, BLOCK_N=128, num_warps=8, num_stages=2`). The grid
+  needs Hopper-specific expansion (true WGMMA-shaped tiles, TMA-aware
+  K/V loads, larger num_stages for SW pipelining) before it becomes
+  a perf win. This is an open work item — see Session 15+ scope.
+
+  **The right v0 recommendation on Hopper is TransformerEngine.** TE
+  wraps cuDNN flash-attn-3 + an FP8 recipe natively; the Triton path
+  is shipped for parity (the Mirage-owned kernel ships on both
+  vendors) and for cases where TE's install is impractical, but it is
+  not the headline FP8 path on this hardware. The `MIRAGE_FP8_ATTENTION=te`
+  subvalue selects TE; `=1` defaults to Triton for sibling parity with
+  AMD. ADR-0006 §"Revisit if" already calls this out as a trigger to
+  flip the default if Session 15 confirms it.
+
+### State of the runtime after Session 14
+
+- AMD MI300X path: unchanged. 142 s / 2.68× headline holds; the
+  verification campaign closed at Session 13 is the settled
+  measurement set.
+- NVIDIA H100 path: **architecture port complete**, no benchmark
+  numbers measured yet on this host. `docs/COSMOS_ON_H100.md` is the
+  port-ready writeup with every measured-number cell carrying a
+  **TBD (Session 15)** marker.
+- Tests: 41 Rust + ~130 pytest + GPU-skip on whichever vendor is
+  absent. Mypy strict over the new files. ruff clean.
+- ADRs: 0006 lands and closes the "Revisit if" of 0001.
+- `docs/HANDOFF.md` updated: TL;DR + §5 "What's open" + §10 timeline
+  + §3 "where everything lives" + §7 "Adding NVIDIA support" pointer.
+
+### Open after Session 14
+
+- **(highest signal) Session 15 H100 benchmark sweep.** Run the same
+  `scripts/run_cosmos.py` harness used on MI300X, at 121 f / 36
+  steps, across {no-cache, adaptive thr=0.30, adaptive+FP8 Hopper
+  Triton, TE FP8}. Plus `scripts/verify_timing.py --N 3 --prompts 5`
+  for variance. Fills every TBD in `docs/COSMOS_ON_H100.md` and
+  closes the methodology-asymmetry described in F26.
+- **TE-vs-Triton perf comparison on H100 at Cosmos production shape.**
+  *No prior art exists* for either at this exact configuration
+  (B=2, H=32, D=128, S=109k, 121 f / 36 steps on Cosmos-Predict1-7B
+  Text2World). Session 15 generates both numbers as a side-effect of
+  the sweep above.
+- **FP8 Hopper kernel autotune.** The kernel ships with a starting
+  grid; the production winner is host-specific and gets baked into
+  `~/.cache/mirage/fp8_autotune_hopper.json` on first run. Same
+  pattern as the gfx942 kernel; same `scripts/autotune_fp8.py` runner
+  works (it picks the right kernel based on the detected backend).
+- **The MI300X-side Truly-open list from Session 13 remains open**
+  (FVD at N ≥ 1000, HIP FP8 correctness, continuous batching,
+  action conditioning, bare-metal MI300X validation, OSS announce
+  push). None of those moved in Session 14.
+

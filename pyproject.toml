@@ -48,6 +48,21 @@ serving = [
 guardrail = [
   "cosmos-guardrail>=0.3",
 ]
+# NVIDIA H100/H200 (Hopper) extras — TransformerEngine is the NVIDIA-canonical
+# FP8 attention path (FA-3 + DelayedScaling recipe via cuDNN). flash-attn is
+# the Dao-AILab build that ships FA-3 alongside FA-2 from `>=2.7`. Both are
+# OPTIONAL — Mirage falls back to the Triton FP8 kernel and the SDPA floor
+# without either. See ADR-0006 and docs/COSMOS_ON_H100.md.
+#
+# `flash-attn` is left COMMENTED OUT here because installing it requires
+# `--no-build-isolation` (the package can't see torch under PEP 517 build
+# isolation) and a matching CUDA toolchain at build time. We document the
+# install command in docs/COSMOS_ON_H100.md §Reproduce instead, so a plain
+# `pip install -e ".[nvidia]"` does not silently fail.
+nvidia = [
+  # "flash-attn>=2.7",                  # install separately, see COSMOS_ON_H100.md
+  "transformer-engine[pytorch]>=1.12",
+]
 dev = [
   "mypy>=1.11",
   "ruff>=0.6",
@@ -69,6 +84,14 @@ mirage = "mirage.cli:main"
 packages = ["src/mirage"]
 
 # torch resolves from the ROCm wheel index that matches the system ROCm (7.2).
+# This is the default because MI300X is the lead workload (ADR-0001).
+# For NVIDIA H100/H200 hosts: install torch FIRST from the cu128 wheel index
+# BEFORE running `pip install -e ".[models,serving,nvidia,dev]"`, e.g.
+#   uv pip install --python .venv torch torchvision \
+#       --index-url https://download.pytorch.org/whl/cu128
+# Then run the make install line, which will respect the already-installed
+# CUDA torch wheel and skip the ROCm one. See docs/COSMOS_ON_H100.md §Reproduce
+# for the full sequence.
 [tool.uv.sources]
 torch = { index = "rocm" }
 torchvision = { index = "rocm" }
@@ -76,6 +99,14 @@ torchvision = { index = "rocm" }
 [[tool.uv.index]]
 name = "rocm"
 url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+# Marker index for the cu128 wheels. Not bound to `torch` above (which would
+# force a single channel); left here so users can `uv pip install ... --index=cu128`
+# from a single source of truth.
+[[tool.uv.index]]
+name = "cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.mypy]
@@ -94,6 +125,8 @@ module = [
   "triton.*",
   "triton_kernels.*",
   "flash_attn.*",
+  "flash_attn_interface.*",
+  "transformer_engine.*",
   "cosmos_guardrail.*",
   "nltk.*",
   "pytorchvideo.*",
