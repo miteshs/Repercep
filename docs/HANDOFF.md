@@ -14,6 +14,11 @@ distills `docs/BUILD_LOG.md` (the full chronological log) into the
 
 ## TL;DR for a new session
 
+**If you're picking up from Session 13 close (2026-05-24):** read
+`docs/SESSION_13_CLOSE.md` first — it's the focused "what happened
+today, what to do next" cut and supersedes the open-work ranking
+below. The rest of this section is the general orientation.
+
 Pick up here:
 
 1. **Read `docs/METHODOLOGY.md` next** — covers what we measured, how, and
