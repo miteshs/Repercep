@@ -12,7 +12,7 @@ import pytest
 
 from mirage.attention.amx_sdpa import AMXSDPAAttention
 from mirage.attention.types import AttentionKind, AttentionShape
-from mirage.hardware import DType, SAPPHIRE_RAPIDS, Vendor
+from mirage.hardware import SAPPHIRE_RAPIDS, DType, Vendor
 
 linux_only = pytest.mark.skipif(
     platform.system() != "Linux",
@@ -33,8 +33,12 @@ def test_amx_sdpa_available() -> None:
 def test_amx_sdpa_supports_expected_dtypes() -> None:
     """BF16 / FP16 / FP32 / INT8 all supported on the full kind set."""
     op = AMXSDPAAttention()
-    full = AttentionShape(batch=1, heads=4, seq=128, head_dim=64, kind=AttentionKind.FULL)
-    causal = AttentionShape(batch=1, heads=4, seq=128, head_dim=64, kind=AttentionKind.CAUSAL)
+    full = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
+    causal = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.CAUSAL
+    )
     for dtype in (DType.FP32, DType.FP16, DType.BF16, DType.INT8):
         assert op.supports(full, dtype) is True
         assert op.supports(causal, dtype) is True
@@ -43,7 +47,9 @@ def test_amx_sdpa_supports_expected_dtypes() -> None:
 def test_amx_sdpa_rejects_unsupported_dtype() -> None:
     """FP8 has no CPU ISA today, so the op disqualifies itself."""
     op = AMXSDPAAttention()
-    shape = AttentionShape(batch=1, heads=4, seq=128, head_dim=64, kind=AttentionKind.FULL)
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
     assert op.supports(shape, DType.FP8_E4M3) is False
     assert op.supports(shape, DType.FP8_E5M2) is False
 
@@ -102,7 +108,7 @@ def test_amx_flash_unavailable_without_kernel_module() -> None:
     # If the kernel _native module isn't built (the common case in CI),
     # the op must declare itself unavailable rather than throwing on import.
     if not op.available:
-        assert op._import_error is not None  # noqa: SLF001
+        assert op._import_error is not None
     # If the kernel IS built (only on a dev host that ran `make kernels-cpu`),
     # the op is callable and produces correct output for a small shape.
     else:
@@ -141,7 +147,9 @@ def test_registry_intel_branch_returns_supported_op(monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("MIRAGE_AMX_ATTENTION", raising=False)
     from mirage.attention.registry import select_attention_op
 
-    shape = AttentionShape(batch=1, heads=4, seq=128, head_dim=64, kind=AttentionKind.FULL)
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
     op = select_attention_op(SAPPHIRE_RAPIDS, shape, DType.BF16)
     # When the AMX flash kernel isn't built, the floor wins.  We accept
     # either "amx-sdpa" or the custom kernel name — both are valid INTEL
@@ -156,6 +164,8 @@ def test_registry_unknown_intel_arch_still_routes(monkeypatch: pytest.MonkeyPatc
     from mirage.hardware import DeviceArch
 
     skylake_avx512 = DeviceArch(Vendor.INTEL, "avx512", "Generic AVX-512")
-    shape = AttentionShape(batch=1, heads=4, seq=64, head_dim=64, kind=AttentionKind.FULL)
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=64, seq_len_kv=64, head_dim=64, kind=AttentionKind.FULL
+    )
     op = select_attention_op(skylake_avx512, shape, DType.BF16)
     assert op.name in ("amx-sdpa", "naive-sdpa")

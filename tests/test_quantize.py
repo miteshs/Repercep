@@ -25,7 +25,8 @@ def test_quantize_linear_basic() -> None:
     err = (reconstructed - weight).abs()
     per_row_scale = q.scale.unsqueeze(1).expand_as(err)
     # INT8 symmetric rounding guarantees max error <= scale/2 per element.
-    assert (err <= per_row_scale).all(), f"max err / scale = {(err / per_row_scale).max().item():.3f}"
+    max_ratio = (err / per_row_scale).max().item()
+    assert (err <= per_row_scale).all(), f"max err / scale = {max_ratio:.3f}"
 
 
 def test_quantize_linear_preserves_bias() -> None:

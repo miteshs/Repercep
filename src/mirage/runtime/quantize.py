@@ -51,7 +51,9 @@ class QuantizedLinear:
     bias: torch.Tensor | None  # (out,) original dtype or None
 
 
-def quantize_linear_symmetric(weight: torch.Tensor, bias: torch.Tensor | None = None) -> QuantizedLinear:
+def quantize_linear_symmetric(
+    weight: torch.Tensor, bias: torch.Tensor | None = None
+) -> QuantizedLinear:
     """Per-output-channel symmetric INT8 quantization of a 2-D weight.
 
     ``weight`` is expected ``(out_features, in_features)``, any float dtype.

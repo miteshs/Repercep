@@ -72,7 +72,7 @@ class AMXFlashAttention:
             # via ``python setup.py build_ext --inplace`` in
             # ``kernels/cpu/amx_attn/`` (mirrors the HIP scaffold in
             # ``kernels/hip/``).
-            from kernels.cpu.amx_attn._native import flash_attn_bf16  # type: ignore[import-not-found]
+            from kernels.cpu.amx_attn._native import flash_attn_bf16
 
             self._fn = flash_attn_bf16
         except ImportError as exc:
