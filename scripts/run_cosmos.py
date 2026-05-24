@@ -88,15 +88,25 @@ def main() -> int:
         default=16,
         help="adaptive cache: force a full forward at least every N steps (0=disabled)",
     )
+    parser.add_argument(
+        "--backend",
+        choices=("rocm", "cuda", "cpu", "auto"),
+        default="auto",
+        help=(
+            "compute backend.  'auto' picks the first available "
+            "(GPU wins over CPU on a GPU host)."
+        ),
+    )
     args = parser.parse_args()
 
     import torch
 
     from mirage.backend.registry import select_backend
+    from mirage.hardware import Vendor
     from mirage.models.cosmos import CosmosConfig, CosmosEngine, GuardrailError
     from mirage.runtime.types import GenerationParams, GenerationRequest
 
-    backend = select_backend()
+    backend = select_backend(prefer=None if args.backend == "auto" else args.backend)
     device = backend.devices()[0]
     print(
         f"[mirage] backend={backend.name}  device={device.name}  "
@@ -140,7 +150,18 @@ def main() -> int:
         f"{args.steps} steps, seed {args.seed} ...",
         flush=True,
     )
-    torch.cuda.reset_peak_memory_stats()
+    # Peak-memory probe — ``torch.cuda.*`` covers ROCm via HIP namespace but
+    # not the CPU backend (where there is no per-device pinned allocator).
+    # Branch on backend.vendor so the CPU path doesn't crash and so the
+    # reported peak is the right notion ("GiB pinned" on GPU, "GiB RSS
+    # delta" on CPU).
+    cpu_run = backend.vendor is Vendor.INTEL
+    rss_before = 0
+    if cpu_run:
+        import resource
+        rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    else:
+        torch.cuda.reset_peak_memory_stats()
     t1 = time.perf_counter()
     try:
         frames = list(engine.generate(request))
@@ -148,7 +169,12 @@ def main() -> int:
         print(f"[mirage] GUARDRAIL BLOCKED: {exc}", flush=True)
         return 0
     gen_s = time.perf_counter() - t1
-    peak_gib = torch.cuda.max_memory_allocated() / 1024**3
+    if cpu_run:
+        import resource
+        rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        peak_gib = (rss_after - rss_before) / 1024**3
+    else:
+        peak_gib = torch.cuda.max_memory_allocated() / 1024**3
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

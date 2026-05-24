@@ -1806,3 +1806,153 @@ silicon-for-silicon when both run Mirage's path.
   action conditioning, bare-metal MI300X validation, OSS announce
   push). None of those moved in Session 14.
 
+
+
+## Session 15 — 2026-05-24 — CPU AMX substrate + H100 follow-ups
+
+**Mission.** Two parallel streams: (a) close out the open H100 work
+from the Session 14 close doc — multi-prompt variance, F28 TE install
+fix, F29 FP8 Hopper autotune, FA-3 from source (H5); (b) land the
+**Intel CPU AMX substrate** end-to-end so the Backend Protocol's
+"one class per vendor" promise holds for the third silicon vendor.
+Wan-A14B explicitly paused per user direction after F30 tripped the
+storage backend hard.
+
+**What landed in this commit.**
+
+* **F29 FP8 Hopper autotune grid expansion** (`kernels/triton_kernels/
+  fp8_flash_attn_hopper.py`): adds `BLOCK_M=192` row tile (the missing
+  middle bucket between 128 and 256 that the autotuner kept skipping),
+  `num_stages=5` on tiles with SMEM headroom (the Cosmos shape was
+  under-filling the K/V prefetch pipeline at 4 stages), and
+  `num_warps=12` on the 256×256 tile only.  Net: ~40-config grid grows
+  to ~60 configs (search tax ~9 s, still well under the 15 s target).
+* **`scripts/run_cosmos.py` `--backend {auto,rocm,cuda,cpu}` flag**.
+  Lets the CPU substrate (Session 15 sibling commit on `cpu-amx-port`)
+  run end-to-end Cosmos generation with the right peak-memory probe
+  (RSS delta on CPU, ``torch.cuda.max_memory_allocated`` on GPU).  Lands
+  on this branch so the GPU paths get the same -enabled flag.
+* **HANDOFF.md** §0 header refreshed (HEAD pointer was stale at the
+  Session 12 commit), §10 timeline gains Session 15 row, findings
+  tally updated to F1–F32, ADRs 0001–0007.
+
+**H5 — FA-3 from source on Hopper.**  Wheel built, tested, kept out
+of the repo (it's a 2 MiB binary; install via
+``uv pip install /tmp/wheels/flash_attn_3-3.0.0-*.whl`` once produced).
+Per-Hopper instantiations trimmed via
+``FLASH_ATTENTION_DISABLE_{HDIM64,HDIM96,HDIM192,HDIM256,FP8,
+PAGEDKV,SOFTCAP,SPLIT,PACKGQA,VARLEN,HDIMDIFF*}=TRUE`` and
+``TORCH_CUDA_ARCH_LIST="9.0"`` — drops 451 .cu files to ~20, builds
+in ~10 min vs the full 60+ min.  At-import flash_attn_func runs
+cleanly on H100 SXM5; output shape and BF16 dtype preserved.
+
+**H1 — multi-prompt variance on H100.**  PARTIAL.  5 successful
+adaptive runs (A0 + B0–B3) across 5 distinct (prompt, seed) pairs;
+2 of Phase A's 3 reps were lost to subprocess env contamination
+during the TE install + FA-3 install windows (F31 fallout — see
+below).  Phase B p4 lost similarly.  Phase C (no-cache references)
+killed at p0 mid-run to save ~40 min of GPU; the Session 14 close
+doc's 446.3 s baseline number remains the canonical no-cache headline.
+Per-run timing capture lost because `scripts/verify_timing.py`
+captures subprocess stdout via `capture_output=True` and doesn't
+flush its own per-run print line until the script exits — a defect
+to fix in Session 16 (`PYTHONUNBUFFERED=1` env + explicit
+`flush=True`).  Mean adaptive wall observed for the 5 successful
+runs (file timestamps): consistent with the 138.4 s headline modulo
+the ~50 s cold-load per subprocess.
+
+**H2 — TE FP8 install (F28) attempt.**  PARTIALLY UNBLOCKED.  The
+recommended `uv pip install --no-build-isolation
+"transformer_engine[pytorch,core_cu12]==2.15.0"` succeeds; the build
+extension compiles cleanly via the venv's torch 2.8.0+cu128; the
+`transformer_engine.pytorch.DotProductAttention` module imports.
+BUT — at import time the bundled `libtransformer_engine.so` does
+`dlopen()` and hits `OSError: undefined symbol:
+cublasLtGroupedMatrixLayoutInit_internal, version libcublasLt.so.13`
+because the resolver pulled in BOTH `transformer_engine_cu12` AND
+`transformer_engine_cu13` wheels (the cu13 binary won the install).
+**Real fix:** install only the cu12 wheel directly via
+`uv pip install --no-deps transformer-engine-cu12==2.15.0
+transformer-engine-torch==2.15.0 transformer-engine==2.15.0` and
+verify no `transformer_engine_cu13-*.dist-info` lands.  Documented
+here; full Phase 4 (adaptive + TE) bench deferred to Session 16.
+
+### F31 — MooseFS server-side write-rate quota tripped under parallel-download load
+
+The RunPod `mfs#us-mo-1.runpod.net` storage at `/workspace`
+enforces a *write-rate* quota that's independent of disk-space
+quota (`df` shows 138 TiB free, every new `close()` / `fsync()` to
+`/workspace` returns `EDQUOT` "Disk quota exceeded").  Tripped
+~3 min after starting the Wan-A14B parallel download (~25 GiB
+partial) alongside the editable Mirage install (~3 000 file creates
+from `uv pip install -e`).  Symptom: file open + write succeed,
+`close()` discards data, the inode persists at 0 bytes.
+
+Mitigation in-session (everything moved off `/workspace`):
+- `HF_HOME=/tmp/hf_cache` for the second Cosmos download (66 GiB);
+- Rust crate wheels built with `CARGO_TARGET_DIR=/tmp/cargo-target`
+  and installed via `uv pip install --target /tmp/extra-site-packages`,
+  added to the run-time `PYTHONPATH`;
+- All session-15 CPU AMX source written to `/tmp/staging/cpu-amx`
+  (mirroring the on-disk layout of the worktree);
+- `benchmark-results/` redirected via symlink to `/tmp/h100/results`
+  (symlink creation succeeds; subsequent writes through the link
+  land in `/tmp`);
+- FA-3 source build done entirely in `/tmp/flash-attention` so no
+  hopper/build artefacts touch `/workspace`;
+- `mirage-snapshot` git clone in `/tmp` for the snapshot commits that
+  this BUILD_LOG entry is part of.
+
+The Session-15 throttle lasted >55 min, much longer than any
+hourly-window pattern.  Likely a hard daily quota or stuck server-side
+soft state requiring RunPod-side reset.  Permanent mitigation (Session
+16+): split the dev environment so hot-path writes (HF cache, venv
+site-packages, build dirs) live on the local overlay, with only the
+source tree + large model snapshots on MooseFS.
+
+### F32 — `HF_HUB_OFFLINE=1` still touches `refs/main` metadata
+
+`huggingface_hub.file_download
+._cache_commit_hash_for_specific_revision` writes a `refs/main` file
+on every `hf_hub_download`, independent of any network access.  On a
+FUSE-throttled `/workspace`, this turns every
+`diffusers.from_pretrained` into a hard fail with `OSError: [Errno
+122] Disk quota exceeded`.  Workaround: relocate `HF_HOME` and
+`HF_HUB_CACHE` to a writable filesystem and pre-stage the snapshot
+there.  Upstream issue worth filing — the offline path should
+short-circuit refs writes when the file already exists.
+
+### F31a — Cosmos engine `DEFAULT_REPO` vs README naming mismatch
+
+`mirage.models.cosmos.DEFAULT_REPO ==
+"nvidia/Cosmos-1.0-Diffusion-7B-Text2World"` (the diffusers-format
+mirror) but the project README + COSMOS_ON_MI300X.md use the
+marketing name `Cosmos-Predict-7B` (which on HF is
+`nvidia/Cosmos-Predict1-7B-Text2World` — a *different* repo with
+different file layout that does not ship the `model_index.json`
+diffusers needs).  A first-time setup that follows the README and
+downloads `Cosmos-Predict1-7B-Text2World` will fail to load via the
+diffusers `CosmosTextToWorldPipeline`.  Cosmos-Predict1 is the raw
+NeMo checkpoint; Cosmos-1.0-Diffusion is the diffusers conversion of
+the same weights.  README "Reproduce" sections should be updated to
+name the exact diffusers repo.  No code change needed.
+
+## Session 15 — what's open after this commit
+
+- **CPU AMX substrate** lives on a sibling branch `cpu-amx-port`
+  (off this branch).  See that branch's commit + `docs/COSMOS_ON_CPU.md`
+  + `docs/adr/0007-cpu-backend.md`.
+- **H1 variance per-run timings** missing for the 5 successful adaptive
+  runs.  Fix: re-run with `PYTHONUNBUFFERED=1` after FUSE recovers, or
+  patch `scripts/verify_timing.py` to flush each print + write a
+  per-run JSON sidecar.
+- **H2 TE Phase 4** needs the cu12-only `--no-deps` install pattern
+  applied + re-run.  Expected ~115-130 s (cuDNN-FA3 with FP8 recipe
+  beats the BF16 cuDNN-FA3 floor).
+- **H4 FP8 Hopper autotune bench** — apply this commit's grid and
+  re-run `scripts/bench_fp8.py` + a full Cosmos 121f/36 sweep to
+  measure whether the expanded grid closes the 4.2 s/call deficit
+  vs cuDNN-FA3.
+- **F31 root-cause** — RunPod / MooseFS support; document the
+  long-running pattern in the project's operating notes.
+

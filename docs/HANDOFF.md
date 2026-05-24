@@ -1,12 +1,16 @@
 # Mirage Runtime — Handoff
 
 **Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `231ee3e` · **Status:** pre-alpha, working on MI300X, results
-publishable + **independently verified on a clean GPU**. Polyglot scaffold
-+ Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) + Phase 2.5
-FP8 wiring **+ autotuned FP8 kernel** all landed. Headline: **142 s / 2.68×
-H100 reference** at the Cosmos 121 f / 36 step config; Wan-2.2 second model
-family runs end-to-end.
+**HEAD:** *(post-Session-15: see branches `session-14-cuda-port` and
+`cpu-amx-port`)* · **Status:** pre-alpha, working on MI300X **and** H100,
+results publishable + **independently verified on a clean GPU**. Polyglot
+scaffold + Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) +
+Phase 2.5 FP8 wiring + autotuned FP8 kernel + **NVIDIA H100 port (Session
+14)** + **F29 FP8 autotune grid expansion + Intel CPU AMX substrate
+(Session 15)** all landed. Headlines: **142 s / 2.68× H100 reference** on
+MI300X at Cosmos 121 f / 36 steps; **138.4 s / 2.75× NVIDIA's published
+H100 reference** with Mirage's adaptive cache on H100 itself; CPU AMX
+substrate per ADR-0007 (perf TBD, see `docs/COSMOS_ON_CPU.md`).
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
@@ -419,11 +423,12 @@ strategy-driven rather than tactical.
 | 12 (2026-05-24) | **Verification campaign — rigorous** | All timings reproduced ±0.5 s; cache is trajectory-divergent (F23) |
 | 13 (2026-05-24) | Threshold sweep + multi-prompt variance + 5-pair FVD | Adaptive 154.48 ± 5.96 s across 5 prompts; FVD 166.3 (small-N preliminary); F24 (FVD harness) |
 | 14 (2026-05-24) | **NVIDIA H100 port — architecture + kernels** | CUDABackend lands; Hopper FA-3 + FP8 Triton + TE optional; ADR-0006 closes the "Revisit if" of ADR-0001; F25 + F26 |
+| 15 (2026-05-24) | **CPU AMX substrate + H100 follow-ups** | CPUBackend (Vendor.INTEL) + AMX BF16 flash kernel + ADR-0007; F29 FP8 Hopper autotune grid expansion (BLOCK_M=192, num_stages=5, num_warps=12 on 256x256); FA-3 wheel built from source on Hopper; F31 (MooseFS write-quota incident) + F32 (HF Hub offline-mode metadata writes) recorded |
 
-Findings (F1–F26) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
-0001–0006 cover the structural decisions (MI300X-first, attention
+Findings (F1–F32) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
+0001–0007 cover the structural decisions (MI300X-first, attention
 primitive, vendor-neutral Backend, polyglot tooling scaffold, Rust-core
-fork resolved, NVIDIA H100 parallel target).
+fork resolved, NVIDIA H100 parallel target, Intel CPU AMX substrate).
 
 ---
 

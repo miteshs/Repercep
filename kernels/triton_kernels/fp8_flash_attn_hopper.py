@@ -125,27 +125,40 @@ def _cache_key(B: int, H: int, Sq: int, Skv: int, D: int, causal: bool) -> str:
 # - num_stages: Hopper's pipeliner reaches further than CDNA3 — we sweep
 #   (2, 3, 4) instead of a single value.  Deep pipelining hides global-to-
 #   shared latency on the K/V fetch loop.
-# Each config-run is one kernel launch on the same tensors.  At S=109k each
-# launch is ~1 s, so we keep the grid to ~30 configs (≈45 s search) to
-# bound the initial-tune tax.
+# Each config-run is one kernel launch on the same tensors.  At S=83k each
+# launch is ~150 ms; the post-F29 ~60-config grid is ~9 s of search — well
+# under the 15 s tune tax target.  Triton's compiler filters anything that
+# overflows SMEM at autotune time, so the worst-case is "configs gets
+# trimmed and the best surviving one wins."
 def _autotune_configs() -> list:
     configs: list = []
     # Tile shape candidates, ordered roughly by expected goodness for long-S
     # FP8 flash attention on Hopper.  The wgmma path on sm_90a amortizes
     # best with BLOCK_M >= 128 because the warpgroup pipeline depth is 4×
     # the inner reduction.  256x256 is achievable here (it is not on CDNA3).
+    # F29 (Session 15): BLOCK_M=192 added because the 128/256 gap was
+    # under-utilising the warpgroup MMA on long-S Cosmos shapes — the
+    # autotuner kept converging on 128 even though the SMs had headroom.
     tile_shapes = (
         (64, 64),
         (64, 128),
         (128, 64),
         (128, 128),
         (128, 256),
+        (192, 64),
+        (192, 128),
+        (192, 256),
         (256, 64),
         (256, 128),
         (256, 256),
     )
-    warp_choices = (4, 8)
-    stage_choices = (2, 3, 4)
+    # F29: num_warps=12 added for the very largest tile only — on Hopper
+    # the SM is wide enough to drive WGMMA at 256x256 when 8 warps under-
+    # fills.  num_stages=5 added on tiles with enough SMEM headroom — the
+    # Cosmos production shape (S=83k, D=128) under-fills the K/V prefetch
+    # pipeline at 4 stages.
+    warp_choices = (4, 8, 12)
+    stage_choices = (2, 3, 4, 5)
     for bm, bn in tile_shapes:
         # wgmma correctness floor.
         if bm < 32 or bn < 32:
@@ -163,7 +176,16 @@ def _autotune_configs() -> list:
             # num_warps=8 needs enough work to amortize across the warps.
             if nw == 8 and bm * bn < 64 * 128:
                 continue
+            # num_warps=12 (F29) only on the very largest tile; anything
+            # smaller and 12 warps starves vs 8.
+            if nw == 12 and (bm, bn) != (256, 256):
+                continue
             for ns in stage_choices:
+                # num_stages=5 (F29) requires SMEM headroom for the extra
+                # K-pipeline stage.  At 256x256 the FP8 inputs + FP32 acc
+                # already consume ~200 KiB of the 228 KiB budget.
+                if ns == 5 and bm * bn > 192 * 256:
+                    continue
                 configs.append(
                     triton.Config(
                         {"BLOCK_M": bm, "BLOCK_N": bn},
