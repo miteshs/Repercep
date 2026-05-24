@@ -1319,3 +1319,63 @@ reflected, not just performant.
 4. **N=3 repeats of same prompt+seed.** Run-to-run std/mean — would
    tighten the headline to ±X s confidence interval.
 
+### F24 — FVD harness landed (Agent K, 2026-05-24)
+
+Closes the §"Reproducibility envelope" open item: the right "is cache
+quality-preserved" metric for diffusion outputs is FVD against a
+held-out reference set, not pixel LPIPS. `scripts/compute_fvd.py` ships
+the standard Heusel-style Fréchet distance over I3D feature vectors.
+
+**I3D backbone.** `torch.hub.load("facebookresearch/pytorchvideo",
+"i3d_r50", pretrained=True)` — the canonical FVD feature extractor.
+Weights are `I3D_8x8_R50.pyth` from
+`dl.fbaipublicfiles.com/pytorchvideo/model_zoo/kinetics/` (Kinetics-400
+73.27 % top-1). Native input shape `(B, 3, T=8, 224, 224)`; feature tap
+is the pre-classification 2048-D pooled vector. `pytorchvideo>=0.1.5`
+added as a `dev` dep in `pyproject.toml`; `pytorchvideo.*` added to the
+mypy missing-import allow-list.
+
+**Frame sampling.** `_video_to_clips` samples `num_clips * 8`
+evenly-spaced frames across the full video (default `num_clips=1` → 8
+frames across all 121 frames of a Cosmos mp4), center-crops each frame
+to a square, resizes to 224x224 via PIL bilinear, scales to [0, 1] and
+applies Kinetics-400 normalization (mean 0.45 / std 0.225 per channel,
+matching `pytorchvideo.transforms.transforms_factory` defaults).
+
+**Math.** Standard `||mu_A - mu_B||^2 + tr(S_A + S_B - 2 sqrt(S_A S_B))`
+with everything cast to float64 before `scipy.linalg.sqrtm`. Tiny
+diagonal jitter (`1e-6 * I`) added before sqrtm to stabilise the
+rank-deficient small-N case. Complex output from sqrtm is .real'd with
+a max-imaginary sanity check (logs WARN if non-trivial).
+
+**Small-N caveats are load-bearing.** FVD literature uses N >= 1000;
+our typical comparison has N = 1. Two guards:
+- `min(N_ref, N_cand) < 2` → covariance undefined; falls back to per-clip
+  feature L2 distance with a clear "too small for FVD" note.
+- `2 <= min(N_ref, N_cand) < --n-warn` (default 50) → prints a LOUD
+  WARNING that the result is preliminary only.
+
+**Live run on existing artifacts (CPU):**
+```
+.venv/bin/python scripts/compute_fvd.py \
+    --reference benchmark-results/cosmos_no_cache_clean.mp4 \
+    --candidates benchmark-results/cosmos_adaptive_clean.mp4 \
+    --device cpu
+# -> mode=feature_l2, n_ref=1, n_cand=1, feature_l2=11.53
+# -> "min(N_ref, N_cand) = 1 is too small for FVD..."
+```
+Same pair at `--num-clips 4` (still N=4 << 50) exercises the FVD path:
+preliminary FVD = 207.09 with the loud-warning banner. Useful as a
+relative-ordering instrument once a held-out reference set is generated;
+not comparable to published literature values at this N.
+
+**Tests.** `tests/test_fvd.py` covers identity (FVD(A,A) ~ 0), positive
+on distribution shift, L2 fallback, clip-shape sanity, short-video
+rejection, empty-input rejection, N-warn firing on stderr, and the
+N=1 -> L2 fallback path. End-to-end tests skip when the I3D cache is
+absent, so unit tests remain offline-friendly.
+
+**Status:** `make lint typecheck test` all green (124 passed +
+11 skipped). The harness is ready for the held-out reference set step
+described in the open-work block above.
+

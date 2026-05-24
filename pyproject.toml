@@ -57,6 +57,9 @@ dev = [
   # Rust ↔ Python build tool. `make rust-install` runs `maturin develop` over
   # each crate in the workspace. See docs/adr/0005-rust-core-fork-resolved.md.
   "maturin>=1.7",
+  # FVD I3D feature extractor — scripts/compute_fvd.py uses the canonical
+  # `i3d_r50` backbone (Kinetics-400 pretrained) from pytorchvideo.
+  "pytorchvideo>=0.1.5",
 ]
 
 [project.scripts]
@@ -93,6 +96,7 @@ module = [
   "flash_attn.*",
   "cosmos_guardrail.*",
   "nltk.*",
+  "pytorchvideo.*",
   # PyO3-built extensions ship `py.typed` markers but no .pyi stubs, so mypy
   # treats them as Any. Stubs are a future-Stage-3.5 item; for now treat the
   # compiled `_native` submodules like other untyped third-party imports.

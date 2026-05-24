@@ -260,3 +260,33 @@ on H100 would not fit in 80 GB.
 `denoise_cosmos_video` native loop is Cosmos-block-shape-specific;
 plumbing the equivalent for `WanTransformer3DModel` (MoE boundary +
 two transformers) is a non-trivial port. Tracking as next session.
+
+---
+
+## FVD harness (Agent K, 2026-05-24)
+
+`scripts/compute_fvd.py` lands the standard Fréchet Video Distance over
+I3D features (`i3d_r50` from pytorchvideo, Kinetics-400 pretrained,
+2048-D pre-classification feature tap). Pairs with
+`scripts/verify_quality.py` as the distribution-level cache-quality
+metric — the right arbiter for trajectory-divergent diffusion outputs
+where pixel LPIPS over-penalises trajectory variance (see F23 / F24 in
+`BUILD_LOG.md`).
+
+**Math.** `||mu_A - mu_B||^2 + tr(S_A + S_B - 2 sqrt(S_A S_B))` on
+float64 features via `scipy.linalg.sqrtm`. Small-diagonal jitter
+(`1e-6 * I`) before sqrtm to stabilise the rank-deficient small-N case;
+.real'd output with an imaginary-component sanity check.
+
+**Small-N path.** FVD literature uses N >= 1000. Our cache vs no-cache
+comparisons today have N = 1: the harness detects this and falls back
+to a per-clip feature L2 distance with an explicit "too small for FVD"
+note. Between N=2 and N=--n-warn (default 50) it returns a real FVD
+with a loud preliminary-only warning. Treat at-small-N FVDs as
+relative-ordering instruments, not absolute literature-comparable values.
+
+**To use it for a real cache-quality verdict:** generate ~50 no-cache
+Cosmos references across distinct prompts (~6 GPU-hours at 470 s each),
+then 50 adaptive-cache candidates with the matching prompts and call
+the script with N=50 per side. The harness is the missing piece, not
+the references.
