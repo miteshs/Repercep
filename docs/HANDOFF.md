@@ -1,14 +1,50 @@
 # Mirage Runtime — Handoff
 
-**Date:** 2026-05-23 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `ca709fe`+ · **Status:** pre-alpha, working on MI300X, results
-publishable, polyglot scaffold + Rust core + Stage-4 v2 serving + Phase 2
-(adaptive caching headline) + Phase 2.5 FP8 wiring all landed; FP8 kernel
-not yet a Cosmos-shape win (kernel tuning is future work)
+**Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
+**HEAD:** `231ee3e` · **Status:** pre-alpha, working on MI300X, results
+publishable + **independently verified on a clean GPU**. Polyglot scaffold
++ Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) + Phase 2.5
+FP8 wiring **+ autotuned FP8 kernel** all landed. Headline: **142 s / 2.68×
+H100 reference** at the Cosmos 121 f / 36 step config; Wan-2.2 second model
+family runs end-to-end.
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
 "what is this, what does it do, and where do I go next" cut.
+
+## TL;DR for a new session
+
+Pick up here:
+
+1. **Read `docs/METHODOLOGY.md` next** — covers what we measured, how, and
+   the honest apples-to-apples accounting. Especially §"Reproducibility
+   envelope": the timing claims (142 / 151 / 470 s) are independently
+   verified, and the cache-quality claim ("preserved") has been
+   **explicitly retracted** in favor of "trajectory-divergent valid Cosmos
+   output, ~28 % less inter-frame motion than no-cache." Don't
+   over-claim.
+2. **The open work, ranked.** All four items in §5 below are tractable
+   in a single session; none are blocked on external dependencies:
+   - (highest signal) Threshold-quality sweep
+     (`--cache-adaptive-threshold` in {0.05, 0.10, 0.20, 0.30, 0.50},
+     LPIPS each vs the **no-cache reference** that already exists at
+     `benchmark-results/cosmos_no_cache_clean.mp4`). Lets a serving user
+     pick the threshold knowingly.
+   - (highest reproducibility value) Multi-prompt / multi-seed sweep
+     via the ready-to-run `scripts/verify_timing.py --N 3 --prompts 5`.
+     ~25 min GPU. Reports mean ± std across 5 prompts; tightens the
+     headline to a confidence interval.
+   - (highest rigor) FVD against a held-out reference set — the right
+     "is cache quality-preserved" arbiter. Needs an eval set of ~50
+     reference Cosmos generations across different prompts; doesn't
+     exist yet.
+   - (publish-ready) OSS announcement. `docs/COSMOS_ON_MI300X.md` +
+     `docs/WAN_ON_MI300X.md` are publish-ready with honest framing; the
+     remaining work is the social/distribution step (X thread, GitHub
+     release notes, blog post draft).
+
+Everything in §3–§9 is reference material. §10 (new this session) is the
+12-session timeline if you need it.
 
 ---
 
@@ -254,6 +290,12 @@ Quality gate: `make lint && make typecheck && make test` — all green
 ## 8. Commit history (recent)
 
 ```
+231ee3e  verification (Session 12): timings reproduce ±0.5s; cache is trajectory-divergent
+c673e3e  wan: 81f/40-step quality reference + WAN_ON_MI300X.md + inline profiler
+83479e1  docs: clean numbers — autotuned FP8 = 141.7s e2e / 1.13x kernel
+8984c84  attention: autotune the FP8 Triton kernel per shape signature
+2cbf88d  verification: scripts/verify_quality.py — LPIPS + MSE + PSNR for two mp4s
+a24a2dc  verification: methodology doc + multi-seed timing harness
 ca709fe  attention: wire FP8 kernel into Cosmos via a diffusers-side backend
 576ca56  serving: Stage-4 v2 path through router + scheduler
 10c7b9a  Phase 2 integration: docs + numbers from the clean-GPU benchmark sweep
@@ -308,3 +350,57 @@ wedge in 2026, see the source strategy docs:
 These are not in the repo (they're personal strategy docs), but the
 ADRs and `docs/BUILD_LOG.md` reference them whenever a decision was
 strategy-driven rather than tactical.
+
+---
+
+## 10. Session arc — what landed in each session
+
+| Session | Theme | Headline at session end |
+|---|---|---|
+| 1 (2026-05-22) | Foundation + first Cosmos run | 17 f / 8 step smoke |
+| 2 (2026-05-22) | Optimization Tier 1 | `torch.compile` 1.13× DiT |
+| 3 (2026-05-22) | Cosmos guardrail | Safety integrated |
+| 4 (2026-05-22) | Competitive scan + validation | Apples-to-apples baseline |
+| 5 (2026-05-22) | Mirage-native loop + CFG batching | F9 / F14 measured |
+| 6 (2026-05-22) | Full-config baseline + step-skip | 465 s baseline, 154 s w/ `skip=4` |
+| 7 (2026-05-23) | 121 f / 36 step caching | **2.47× H100, headline** |
+| 8 (2026-05-23) | Polyglot scaffold + Rust core + OOM fix | Stage 1–3, F18 `inference_mode` |
+| 9 (2026-05-23) | Phase 2: Wan, adaptive cache, FP8 kernel | adaptive 151 s = **2.51× H100** |
+| 10 (2026-05-23) | Phase 2.5 (FP8 wiring) + Stage 4 (v2 serving) | Wan smoke 326 s; FP8 wired but a wash (F20) |
+| 11 (2026-05-23) | FP8 autotune (Agent I) + Wan 81f (Agent J) | FP8 142 s = **2.68× H100**; Wan ~1700 s projected |
+| 12 (2026-05-24) | **Verification campaign — rigorous** | All timings reproduced ±0.5 s; cache is trajectory-divergent (F23) |
+
+Findings (F1–F23) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
+0001–0005 cover the structural decisions (MI300X-first, attention
+primitive, vendor-neutral Backend, polyglot tooling scaffold, Rust-core
+fork resolved).
+
+---
+
+## 11. Quick commands (for resuming)
+
+```bash
+# Verify the environment is good
+make lint typecheck test
+sg render -c "sg video -c 'make check-gpu'"
+
+# Headline reproducer (~3 min, single GPU)
+sg render -c "sg video -c '\
+    MIRAGE_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
+        --frames 121 --steps 36 --native-loop \
+        --cache-mode adaptive --cache-adaptive-threshold 0.30 \
+        --cache-force-full-every 16'"
+# Expect: generate_seconds ≈ 142 s, peak_hbm_gib = 52.5
+
+# Quality vs no-cache reference (the load-bearing comparison)
+.venv/bin/python scripts/verify_quality.py \
+    benchmark-results/cosmos_no_cache_clean.mp4 \
+    benchmark-results/cosmos_adaptive_fp8_tuned_clean.mp4 \
+    --device cpu
+# Expect: LPIPS ≈ 0.64 ("substantially different" — trajectory-divergent,
+# not garbage; see Session 12 / F23 notes)
+
+# Multi-seed campaign (if pushing further)
+sg render -c "sg video -c '.venv/bin/python scripts/verify_timing.py --N 3 --prompts 5'"
+# ~25 min GPU; writes benchmark-results/verify_timing_<ts>.json
+```
