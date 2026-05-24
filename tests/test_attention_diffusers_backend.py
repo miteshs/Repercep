@@ -179,6 +179,11 @@ def test_backend_matches_native_on_cosmos_dit_shape() -> None:
 
     if not torch.cuda.is_available():
         pytest.skip("no GPU on host")
+    # FP8TritonAttention is the AMD fp8e4b8 (fnuz) kernel; it does not
+    # compile on NVIDIA Triton.  See F25 / ADR-0006; the H100 sibling
+    # is exercised in tests/test_attention_cuda.py.
+    if not torch.version.hip:
+        pytest.skip("AMD-only FP8 kernel; H100 path lives in test_attention_cuda.py")
 
     from mirage.attention.diffusers_backend import (
         _FP8_MIN_SEQ_LEN,

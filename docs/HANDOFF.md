@@ -1,18 +1,38 @@
 # Mirage Runtime — Handoff
 
 **Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** `231ee3e` · **Status:** pre-alpha, working on MI300X, results
-publishable + **independently verified on a clean GPU**. Polyglot scaffold
-+ Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) + Phase 2.5
-FP8 wiring **+ autotuned FP8 kernel** all landed. Headline: **142 s / 2.68×
-H100 reference** at the Cosmos 121 f / 36 step config; Wan-2.2 second model
-family runs end-to-end.
+**HEAD:** *(post-Session-15: see branches `session-14-cuda-port` and
+`cpu-amx-port`)* · **Status:** pre-alpha, working on MI300X **and** H100,
+results publishable + **independently verified on a clean GPU**. Polyglot
+scaffold + Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) +
+Phase 2.5 FP8 wiring + autotuned FP8 kernel + **NVIDIA H100 port (Session
+14)** + **F29 FP8 autotune grid expansion + Intel CPU AMX substrate
+(Session 15)** all landed. Headlines: **142 s / 2.68× H100 reference** on
+MI300X at Cosmos 121 f / 36 steps; **138.4 s / 2.75× NVIDIA's published
+H100 reference** with Mirage's adaptive cache on H100 itself; CPU AMX
+substrate per ADR-0007 (perf TBD, see `docs/COSMOS_ON_CPU.md`).
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
 "what is this, what does it do, and where do I go next" cut.
 
 ## TL;DR for a new session
+
+**If you're picking up from Session 14 close (2026-05-24):** read
+`docs/SESSION_14_CLOSE.md` first — focused "what happened today, what
+to do next" cut that supersedes the rankings below. Headline: the
+NVIDIA H100 backend landed AND was benchmarked end-to-end on the same
+day. **Mirage on H100 with adaptive cache alone = 138.4 s** at
+121 f / 36 steps — **2.75× faster than NVIDIA's published H100
+reference (~380 s)**. The MI300X 142 s / 2.68× headline is unchanged
+and now *strengthened* by the stack-vs-stack measurement on the same
+silicon: silicon delta is **only 5–11 %**, not 24 % — the 2.68× win is
+overwhelmingly *stack*, not silicon. Three open items the H100 sweep
+exposed: (a) FP8 Hopper Triton kernel is correct but slower than
+cuDNN-FA3 on Hopper (F29 — needs WGMMA-shaped autotune); (b) TE
+install hits a cu13 / cu12 ABI hazard (F28); (c) Wan-A14B download
+trips the FUSE quota under HF's parallel writer (F30, Session 16
+recoverable via `hf download --max-workers 1`).
 
 **If you're picking up from Session 13 close (2026-05-24):** read
 `docs/SESSION_13_CLOSE.md` first — it's the focused "what happened
@@ -132,7 +152,8 @@ Watchable artifacts (gitignored, local-only):
 | Want to read about | File |
 |---|---|
 | Chronological build log, every decision and finding | `docs/BUILD_LOG.md` (D1-D9, F1-F19, 9 sessions) |
-| The publish-ready first-public-numbers writeup | `docs/COSMOS_ON_MI300X.md` |
+| The publish-ready first-public-numbers writeup (AMD MI300X) | `docs/COSMOS_ON_MI300X.md` |
+| The NVIDIA H100 port-ready writeup (framework; numbers pending Session 15) | `docs/COSMOS_ON_H100.md` |
 | Optimization strategy + measured ledger | `docs/OPTIMIZATION.md` |
 | Architecture component map | `docs/architecture.md` |
 | Key decisions with rationale | `docs/adr/0001..0005` |
@@ -210,6 +231,17 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 **Currently open:**
 
+0. **(highest signal — closes the methodology asymmetry) H100
+   benchmark sweep.** Session 14 landed the NVIDIA backend, the FA-3
+   wrapper, the FP8 Hopper Triton kernel, and the optional TE op
+   (ADR-0006); `docs/COSMOS_ON_H100.md` is the framework. What's
+   missing is the actual measurement on the attached H100 SXM5.
+   Running the same harnesses that anchored the MI300X writeup —
+   `scripts/run_cosmos.py` at 121 f / 36 steps × {no-cache,
+   adaptive, adaptive+FP8, TE-FP8}, plus `verify_timing.py` for
+   multi-prompt variance — yields the stack-vs-stack-on-same-silicon
+   comparison `docs/METHODOLOGY.md` §3 has been honest about lacking.
+
 1. **FP8 kernel tuning** for Cosmos's production shape — autotune
    `BLOCK_M` / `BLOCK_N` per shape, or add a shape-specific code path.
    `scripts/bench_cosmos_fp8.py` is the harness.
@@ -285,9 +317,14 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 ## 7. Pointers for common next operations
 
-- **Adding NVIDIA support:** implement `Backend` Protocol in
-  `src/mirage/backend/cuda.py`, append to `_ALL_BACKENDS` in
-  `src/mirage/backend/registry.py`. No other code changes.
+- **Adding NVIDIA support:** done in Session 14 — see
+  `src/mirage/backend/cuda.py`, `src/mirage/attention/hopper_flash.py`,
+  `src/mirage/attention/fp8_hopper_triton.py`,
+  `src/mirage/attention/transformer_engine.py`, ADR-0006, and
+  `docs/COSMOS_ON_H100.md`. Confirmed the port is exactly what
+  ADR-0003 promised — one Backend class + one registry entry +
+  attention ops below the seam, no changes to model loading, the
+  denoise loop, the engine, or the serving handlers.
 - **Adding a new WM model:** implement `WorldModelEngine` Protocol. Mirror
   the structure of `mirage.models.cosmos`. Reuse the native loop and
   caching by parameterizing them on the pipeline's components.
@@ -384,11 +421,14 @@ strategy-driven rather than tactical.
 | 10 (2026-05-23) | Phase 2.5 (FP8 wiring) + Stage 4 (v2 serving) | Wan smoke 326 s; FP8 wired but a wash (F20) |
 | 11 (2026-05-23) | FP8 autotune (Agent I) + Wan 81f (Agent J) | FP8 142 s = **2.68× H100**; Wan ~1700 s projected |
 | 12 (2026-05-24) | **Verification campaign — rigorous** | All timings reproduced ±0.5 s; cache is trajectory-divergent (F23) |
+| 13 (2026-05-24) | Threshold sweep + multi-prompt variance + 5-pair FVD | Adaptive 154.48 ± 5.96 s across 5 prompts; FVD 166.3 (small-N preliminary); F24 (FVD harness) |
+| 14 (2026-05-24) | **NVIDIA H100 port — architecture + kernels** | CUDABackend lands; Hopper FA-3 + FP8 Triton + TE optional; ADR-0006 closes the "Revisit if" of ADR-0001; F25 + F26 |
+| 15 (2026-05-24) | **CPU AMX substrate + H100 follow-ups** | CPUBackend (Vendor.INTEL) + AMX BF16 flash kernel + ADR-0007; F29 FP8 Hopper autotune grid expansion (BLOCK_M=192, num_stages=5, num_warps=12 on 256x256); FA-3 wheel built from source on Hopper; F31 (MooseFS write-quota incident) + F32 (HF Hub offline-mode metadata writes) recorded |
 
-Findings (F1–F23) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
-0001–0005 cover the structural decisions (MI300X-first, attention
+Findings (F1–F32) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
+0001–0007 cover the structural decisions (MI300X-first, attention
 primitive, vendor-neutral Backend, polyglot tooling scaffold, Rust-core
-fork resolved).
+fork resolved, NVIDIA H100 parallel target, Intel CPU AMX substrate).
 
 ---
 

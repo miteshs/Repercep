@@ -26,6 +26,12 @@ def _gpu_or_skip() -> None:
 
     if not torch.cuda.is_available():
         pytest.skip("no GPU on host")
+    # The AMD FP8 ops below use the fp8_e4m3fnuz / fp8e4b8 dtypes — gfx942-only.
+    # On NVIDIA hosts the kernel compile errors out ("type fp8e4b8 not supported
+    # in this architecture"); the corresponding Hopper kernel lives in
+    # tests/test_attention_cuda.py.  See ADR-0006 + F25 in BUILD_LOG.md.
+    if not torch.version.hip:
+        pytest.skip("fp8e4m3fnuz / fp8e4b8 paths are AMD-only; see tests/test_attention_cuda.py")
 
 
 def test_fp8_scaled_mm_satisfies_protocol() -> None:

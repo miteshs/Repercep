@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mirage.backend.cuda import CUDABackend
 from mirage.backend.rocm import ROCmBackend
 
 if TYPE_CHECKING:
     from mirage.backend.protocol import Backend
 
-# Every backend Mirage knows how to construct.  An NVIDIA backend, when it
-# exists, is appended here and nothing else changes (ADR-0001).
-_ALL_BACKENDS: tuple[Backend, ...] = (ROCmBackend(),)
+# Every backend Mirage knows how to construct.  AMD remains the lead workload
+# (ADR-0001); NVIDIA lands as a parallel track per ADR-0006.  Order matters
+# only when both vendors are present on the same host (rare; CI / dual-GPU
+# dev box) — ROCm-first preserves the "MI300X is lead" framing.  On a
+# single-vendor host, ``available_backends()`` returns just the live one.
+_ALL_BACKENDS: tuple[Backend, ...] = (ROCmBackend(), CUDABackend())
 
 
 def available_backends() -> tuple[Backend, ...]:
