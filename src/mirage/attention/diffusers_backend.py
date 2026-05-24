@@ -187,12 +187,19 @@ def _mirage_fp8_attention(
 
     # Lazy import — the op holds a Triton compile bag and shouldn't cost
     # anything when the backend isn't active. Cache on the function attribute
-    # so repeated calls don't re-instantiate.
+    # so repeated calls don't re-instantiate.  Vendor-aware: the gfx942
+    # (fnuz) and Hopper (e4m3fn) kernels are siblings with different Triton
+    # dtype literals and do NOT cross-compile (F25 / ADR-0006).
     op = getattr(_mirage_fp8_attention, "_op", None)
     if op is None:
-        from mirage.attention.fp8_triton import FP8TritonAttention
+        if torch.version.hip:
+            from mirage.attention.fp8_triton import FP8TritonAttention
 
-        op = FP8TritonAttention()
+            op = FP8TritonAttention()
+        else:
+            from mirage.attention.fp8_hopper_triton import FP8HopperTritonAttention
+
+            op = FP8HopperTritonAttention()
         _mirage_fp8_attention._op = op  # type: ignore[attr-defined]
     if not op.available:
         # The op imported but its kernel isn't usable (e.g. triton broken).
