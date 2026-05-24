@@ -82,7 +82,16 @@ def _run(cmd: list[str]) -> tuple[float, dict[str, Any] | None]:
     return wall, result
 
 
-def _build_cmd(prompt: str, seed: int, out_path: str) -> list[str]:
+def _build_cmd(prompt: str, seed: int, out_path: str, *, no_cache: bool = False) -> list[str]:
+    cache_args = (
+        ["--cache-mode", "none"]
+        if no_cache
+        else [
+            "--cache-mode", "adaptive",
+            "--cache-adaptive-threshold", "0.30",
+            "--cache-force-full-every", "16",
+        ]
+    )
     return [
         ".venv/bin/python",
         "scripts/run_cosmos.py",
@@ -91,9 +100,7 @@ def _build_cmd(prompt: str, seed: int, out_path: str) -> list[str]:
         "--frames", "121",
         "--steps", "36",
         "--native-loop",
-        "--cache-mode", "adaptive",
-        "--cache-adaptive-threshold", "0.30",
-        "--cache-force-full-every", "16",
+        *cache_args,
         "--out", out_path,
     ]
 
@@ -104,6 +111,11 @@ def main() -> int:
                         help="repeats of (prompt[0], seed[0]) for run-to-run variance")
     parser.add_argument("--prompts", type=int, default=1,
                         help=f"distinct (prompt, seed) pairs (1..{len(PROMPTS_AND_SEEDS)})")
+    parser.add_argument("--no-cache-refs", action="store_true",
+                        help="also run no-cache references at each of --prompts pairs "
+                             "for FVD comparison (each ~470 s on MI300X — adds substantial time)")
+    parser.add_argument("--skip-phase-a", action="store_true",
+                        help="skip the N-repeats phase (determinism already verified by MD5)")
     parser.add_argument("--quick", action="store_true",
                         help="--N 1 --prompts 1 — single smoke run")
     args = parser.parse_args()
@@ -123,21 +135,24 @@ def main() -> int:
 
     # 1. Repeats of the first (prompt, seed) — measures hardware/stack noise.
     base_prompt, base_seed = PROMPTS_AND_SEEDS[0]
-    print(f"\n=== Phase A: {args.N} repeats of base prompt, seed {base_seed} ===")
     a_times: list[float] = []
-    for i in range(args.N):
-        out = f"benchmark-results/verify_baseA_run{i}.mp4"
-        wall, r = _run(_build_cmd(base_prompt, base_seed, out))
-        gen = (r or {}).get("generate_seconds")
-        a_times.append(gen if gen is not None else wall)
-        print(f"  run {i+1}/{args.N}: generate={gen}s  wall={wall:.1f}s  out={out}")
-        results["runs"].append({
-            "phase": "A_repeat", "i": i, "prompt_idx": 0,
-            "wall": wall, "result": r,
-        })
+    if not args.skip_phase_a:
+        print(f"\n=== Phase A: {args.N} repeats of base prompt, seed {base_seed} ===")
+        for i in range(args.N):
+            out = f"benchmark-results/verify_baseA_run{i}.mp4"
+            wall, r = _run(_build_cmd(base_prompt, base_seed, out))
+            gen = (r or {}).get("generate_seconds")
+            a_times.append(gen if gen is not None else wall)
+            print(f"  run {i+1}/{args.N}: generate={gen}s  wall={wall:.1f}s  out={out}")
+            results["runs"].append({
+                "phase": "A_repeat", "i": i, "prompt_idx": 0,
+                "wall": wall, "result": r,
+            })
+    else:
+        print("\n=== Phase A skipped (--skip-phase-a) ===")
 
     # 2. Distinct (prompt, seed) pairs — measures workload variance.
-    print(f"\n=== Phase B: {args.prompts} distinct (prompt, seed) pairs ===")
+    print(f"\n=== Phase B: {args.prompts} distinct (prompt, seed) pairs (adaptive) ===")
     b_times: list[float] = []
     for i, (prompt, seed) in enumerate(PROMPTS_AND_SEEDS[: args.prompts]):
         out = f"benchmark-results/verify_baseB_p{i}.mp4"
@@ -150,6 +165,21 @@ def main() -> int:
             "phase": "B_distinct", "i": i, "prompt_idx": i,
             "wall": wall, "result": r,
         })
+
+    # 3. No-cache references at the same (prompt, seed) pairs — for FVD.
+    c_times: list[float] = []
+    if args.no_cache_refs:
+        print(f"\n=== Phase C: no-cache refs at the {args.prompts} distinct pairs ===")
+        for i, (prompt, seed) in enumerate(PROMPTS_AND_SEEDS[: args.prompts]):
+            out = f"benchmark-results/verify_baseC_no_cache_p{i}.mp4"
+            wall, r = _run(_build_cmd(prompt, seed, out, no_cache=True))
+            gen = (r or {}).get("generate_seconds")
+            c_times.append(gen if gen is not None else wall)
+            print(f"  p{i} seed={seed}: generate={gen}s  wall={wall:.1f}s  out={out}")
+            results["runs"].append({
+                "phase": "C_no_cache_ref", "i": i, "prompt_idx": i,
+                "wall": wall, "result": r,
+            })
 
     # 3. Stats.
     def _stats(xs: list[float], label: str) -> None:
@@ -165,16 +195,25 @@ def main() -> int:
         )
 
     print("\n=== Summary ===")
-    _stats(a_times, "Phase A — same prompt+seed")
-    _stats(b_times, "Phase B — distinct prompts")
-    if a_times + b_times:
-        _stats(a_times + b_times, "Combined")
+    _stats(a_times, "Phase A — same prompt+seed (adaptive)")
+    _stats(b_times, "Phase B — distinct prompts (adaptive)")
+    _stats(c_times, "Phase C — distinct prompts (no-cache)")
+    combined_adaptive = a_times + b_times
+    if combined_adaptive:
+        _stats(combined_adaptive, "Combined adaptive (A+B)")
 
     results["summary"] = {
         "phase_A_generate_seconds": a_times,
         "phase_B_generate_seconds": b_times,
-        "mean_all": statistics.fmean(a_times + b_times) if a_times + b_times else None,
-        "std_all": statistics.stdev(a_times + b_times) if len(a_times + b_times) > 1 else None,
+        "phase_C_no_cache_generate_seconds": c_times,
+        "mean_adaptive_all": (
+            statistics.fmean(combined_adaptive) if combined_adaptive else None
+        ),
+        "std_adaptive_all": (
+            statistics.stdev(combined_adaptive) if len(combined_adaptive) > 1 else None
+        ),
+        "mean_no_cache_all": statistics.fmean(c_times) if c_times else None,
+        "std_no_cache_all": statistics.stdev(c_times) if len(c_times) > 1 else None,
     }
 
     ts = int(time.time())

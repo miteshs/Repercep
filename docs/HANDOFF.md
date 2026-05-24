@@ -89,17 +89,27 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 | Wan-2.2-T2V-A14B 17f / 8 steps smoke | 45.2 s warm Session 11 (326 s cold Session 10) | **84–85 GiB peak** |
 | Wan-2.2 81f / 40 steps quality (projected steady-state) | ~1700 s | **85.1 GiB peak** — first Wan-2.2 on AMD MI300X; ~1.6× behind H100 (1041 s with FP8+offload) |
 
-**Verification status (Session 12):** all three Cosmos timings reproduce on
-a clean GPU within ±0.5 s of the agent / prior-session measurements.
-Seed-0 determinism holds (same MD5 across 4 sessions for the
-adaptive-no-FP8 mp4). The 2.68× is a *system-vs-system* claim (Mirage +
-adaptive cache + tuned FP8 vs NVIDIA's published-unstacked H100); the
-raw-hardware comparison has MI300X 1.24× *slower* than H100 at the same
-compute. See `docs/METHODOLOGY.md` for the apples-to-apples breakdown
-and `docs/COSMOS_ON_MI300X.md` §"Quantitative cache quality" for the
-LPIPS / motion-stat trade-off (adaptive caching produces a trajectory-
-divergent output: LPIPS 0.645 vs no-cache, mean inter-frame motion
-−28 %; valid Cosmos output, just different).
+**Verification status (Session 12 + 13):** all three Cosmos timings
+reproduce on a clean GPU within ±0.5 s of the agent / prior-session
+measurements. Seed-0 determinism holds (same MD5 across 4 sessions for
+the adaptive-no-FP8 mp4). The 2.68× is a *system-vs-system* claim
+(Mirage + adaptive cache + tuned FP8 vs NVIDIA's published-unstacked
+H100); the raw-hardware comparison has MI300X 1.24× *slower* than H100
+at the same compute. See `docs/METHODOLOGY.md` for the apples-to-apples
+breakdown.
+
+**Multi-prompt variance (Session 13, 5 distinct prompts):** adaptive
+caching wall = mean 154.48 s, std 5.96 s (3.86 % relative); no-cache
+wall = 469.84 ± 0.32 s (0.07 %). The headline replicates within noise
+across all 5 prompts.
+
+**FVD on 5-pair set (Session 13, 8 clips/video → 40 features/side):**
+**166.3** between adaptive and no-cache. Per-prompt LPIPS mean 0.616 ±
+0.069. Both small-N preliminary; the FVD literature uses N≥1000.
+Pattern is defensible (monotone with threshold, stable across prompts);
+the absolute number should be cited as preliminary. Threshold-FVD
+trace also measured: 110.7 (0.05) → 233.4 (0.50). See
+`docs/COSMOS_ON_MI300X.md` §"Multi-prompt FVD" for the full curve.
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
 Cosmos benchmark on any AMD GPU.** Visual quality at `skip=4` is verified

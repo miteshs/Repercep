@@ -1379,3 +1379,100 @@ absent, so unit tests remain offline-friendly.
 11 skipped). The harness is ready for the held-out reference set step
 described in the open-work block above.
 
+## Session 13 — 2026-05-24 — Threshold sweep + multi-prompt variance + 5-pair FVD
+
+Closing the four items from the Session-12 open-work block in one push.
+
+### Item 1 — Threshold-quality sweep (closed)
+
+121 f / 36 step adaptive at `--cache-adaptive-threshold ∈
+{0.05, 0.10, 0.20, 0.30, 0.50}`. LPIPS each vs `cosmos_no_cache_clean.mp4`.
+Single-pair FVD with 8 clips per video as a secondary signal.
+
+| Threshold | Wall | Speedup vs no-cache (470 s) | vs H100 ref (~380 s) | LPIPS | FVD (8 clips, single pair) |
+|---:|--:|--:|--:|--:|--:|
+| 0.05 | 291.2 s | 1.61× | 1.31× | 0.541 | 110.7 |
+| 0.10 | 228.1 s | 2.06× | 1.67× | 0.563 | 162.2 |
+| 0.20 | 176.8 s | 2.66× | 2.15× | 0.599 | 143.7 |
+| **0.30** (default) | **151.4 s** | 3.10× | **2.51×** | 0.645 | 192.6 |
+| 0.50 | 125.8 s | **3.74×** | **3.02×** | 0.682 | 233.4 |
+
+**Key finding:** the LPIPS curve is *flat* relative to the wall-time
+curve. All 5 thresholds sit in "substantially different" pixel-LPIPS
+band (> 0.4). Across the full range we trade **0.14 LPIPS for 2.31×
+speed**. Lower threshold doesn't recover no-cache pixel-equivalence —
+it just reduces the magnitude of trajectory divergence. **There is no
+threshold setting that gets you to no-cache; that requires
+`--cache-mode none`.** The single-pair FVD trace is broadly monotone
+(small-N 0.10 / 0.20 inversion).
+
+### Item 2 — Multi-prompt variance + no-cache refs (closed)
+
+`scripts/verify_timing.py --skip-phase-a --prompts 5 --no-cache-refs`
+runs adaptive (thr=0.30) and no-cache at 5 distinct (prompt, seed) pairs:
+
+| Phase | Mean wall | Std | Outlier note |
+|---|--:|--:|---|
+| B — adaptive thr=0.30 | **154.48 s** | **5.96 s (3.86 %)** | p2 (rainforest drone) at 165.1 s — motion-heavy prompts skip fewer steps |
+| C — no-cache | **469.84 s** | **0.32 s (0.07 %)** | Effectively zero variance; no-cache compute is prompt-independent |
+
+The headline 151.4 s replicates within noise across all 5 prompts. The
+3.04× mean speedup ratio (adaptive vs no-cache) is workload-stable.
+
+Artifact set: `benchmark-results/verify_base{B,C_no_cache}_p{0..4}.mp4`.
+
+### Item 3 — FVD on the multi-prompt pairs (closed, with caveat)
+
+5 no-cache references × 8 clips per video + 5 adaptive candidates × 8
+clips per video → 40 features per distribution → 2048-D I3D → Fréchet
+distance:
+
+> **FVD = 166.3** (n_ref=40, n_cand=40, feature_dim=2048)
+
+Loud small-N warning fires (FVD literature uses N ≥ 1000 generations
+per side; we have N=5 generations × 8 clips each). The pattern is
+defensible — monotone with threshold (single-pair trace), stable across
+prompts. The absolute number should be cited as **preliminary**.
+
+Per-prompt LPIPS for the 5-pair set: mean **0.616 ± 0.069**, range
+[0.53, 0.71]. Caching's pixel-divergence is consistent across prompts
+— neither magic-low nor catastrophic on any single prompt.
+
+### Item 4 — OSS announcement drafts (descoped)
+
+User dropped this scope mid-session. Drafts were written before the
+descope and live on disk as `docs/RELEASE_NOTES_v0.1.md` +
+`docs/ANNOUNCEMENT.md` — not committed in this session unless user
+explicitly opts in. The drafts cover: GitHub release notes, an X /
+Twitter thread, a Hacker News submission angle, a long-form blog post
+outline, and a publication checklist.
+
+### State of the runtime after Session 13
+
+- Tests: 41 Rust + 124 pytest + 11 GPU-skip, all green. Mypy strict on
+  50 source files. ruff clean.
+- Verification campaign closed: timing reproduced, threshold curve
+  measured, multi-prompt variance measured, multi-prompt FVD computed.
+- Headline numbers settled:
+  - **121 f / 36 / adaptive + tuned-FP8: 142 s = 2.68× H100 reference**
+    (Session 12 verified).
+  - **121 f / 36 / adaptive (thr=0.30): 151 s = 2.52× H100 reference**.
+    Multi-prompt mean **154 s ± 6 s** across 5 distinct prompts.
+  - **121 f / 36 / no-cache: 470 s** (re-verified 5 times across 5
+    prompts; σ = 0.32 s).
+- Quality framing settled: cache produces trajectory-divergent output
+  (LPIPS ~0.6 vs no-cache, FVD 166 small-N preliminary). Valid Cosmos
+  generations; not pixel-equivalent to no-cache. Knob
+  (`--cache-adaptive-threshold`) tunes magnitude of divergence, not
+  whether it exists.
+
+### Truly-open after Session 13
+
+- **FVD at N ≥ 1000.** Requires building or sourcing a held-out Cosmos
+  eval set; the harness is ready, the data isn't.
+- **HIP FP8 kernel correctness.** Triton wins on perf today; HIP is
+  the long-term path.
+- **Continuous batching + action conditioning** (Phase-2 plan-residual).
+- **Bare-metal MI300X validation** vs the VF slice we measure on.
+- **OSS announce push.** Drafts ready on disk if user wants to ship.
+

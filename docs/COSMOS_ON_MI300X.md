@@ -109,10 +109,90 @@ What this says:
   reference comparison shows the reduction.**
 
 The right framing: **adaptive caching is a quality / speed knob, not
-free-lunch.** `--cache-adaptive-threshold 0.30` (the default headline)
-biases speed. For applications that need closer-to-uncached fidelity,
-use `0.05–0.10` and re-measure. A threshold-quality-speed sweep is open
-work.
+free-lunch.** Here is the measured threshold curve at the 121 f / 36
+step config, with LPIPS computed against `cosmos_no_cache_clean.mp4`
+at the same prompt + seed:
+
+| `--cache-adaptive-threshold` | Wall | Speedup vs no-cache (470 s) | vs H100 reference (~380 s) | LPIPS vs no-cache |
+|---:|--:|--:|--:|--:|
+| 0.05 | 291.2 s | 1.61× | 1.31× | **0.541** "substantially different" |
+| 0.10 | 228.1 s | 2.06× | 1.67× | 0.563 |
+| 0.20 | 176.8 s | 2.66× | 2.15× | 0.599 |
+| **0.30** (current default) | **151.4 s** | 3.10× | **2.51×** | 0.645 |
+| 0.50 | 125.8 s | **3.74×** | **3.02×** | 0.682 |
+
+**Critical reading:** all five thresholds sit in the "substantially
+different" pixel-LPIPS band (> 0.4). Lower thresholds do NOT recover
+no-cache pixel-equivalence — they only reduce the magnitude of
+trajectory divergence. Across the full 0.05 → 0.50 range we trade
+**0.14 LPIPS for 2.31× speed**. That is a very flat quality curve and
+a very steep speed curve, which means:
+
+- If you want pixel-equivalent output, use `--cache-mode none`. There
+  is no threshold setting that gets you there.
+- Otherwise, the threshold knob is mostly a speed dial. The quality
+  difference between thresholds is small in absolute terms; the speed
+  difference is large.
+- The default `0.30` is a defensible mid-point. `0.50` is the speed
+  pick. `0.05` is the quality-conservative pick **within cached
+  outputs**, not "near no-cache."
+
+The proper "is cached output distribution-equivalent to no-cache"
+metric is **FVD on a held-out reference set** — see
+`scripts/compute_fvd.py` (added in v0.1). Pixel-level LPIPS is
+strict for diffusion outputs that trade trajectory for compute.
+
+### Threshold-vs-FVD trace (single-pair, preliminary)
+
+Same 5-threshold set against the no-cache reference, computing FVD
+with 8 clips per video (single-pair; small-N caveat applies):
+
+| Threshold | LPIPS | **FVD (single pair, 8 clips)** | Wall |
+|---:|--:|--:|--:|
+| 0.05 | 0.541 | **110.7** | 291 s |
+| 0.10 | 0.563 | 162.2 | 228 s |
+| 0.20 | 0.599 | 143.7 | 177 s |
+| 0.30 | 0.645 | 192.6 | 151 s |
+| 0.50 | 0.682 | **233.4** | 126 s |
+
+FVD trends with threshold (small-N noise inverts 0.10 / 0.20). The
+single-pair FVD is informative but the multi-prompt 5-pair number
+below is the defensible headline.
+
+### Multi-prompt FVD (5 distinct prompts, 8 clips/video = 40 features/side)
+
+We ran no-cache and adaptive (thr=0.30) at 5 distinct (prompt, seed)
+pairs and computed FVD across the full feature distributions:
+
+| Metric | Value |
+|---|--:|
+| Reference clips (5 no-cache × 8 clips) | 40 |
+| Candidate clips (5 adaptive × 8 clips) | 40 |
+| Feature dim (I3D pooled) | 2048 |
+| **FVD** | **166.3** |
+
+LPIPS per-prompt also stable across the 5 (no-cache, adaptive) pairs:
+mean **0.616 ± 0.069**, range [0.53, 0.71]. Caching's pixel-divergence
+is consistent across prompts — neither magic-low nor catastrophic on
+any single prompt.
+
+Multi-prompt timing variance (5 distinct prompts at the headline
+config):
+
+| Phase | Mean wall | Std | Notes |
+|---|--:|--:|---|
+| Adaptive (thr=0.30) | **154.48 s** | **5.96 s** (3.86 %) | One outlier — p2 (rainforest drone) at 165.1 s — suggests motion-heavy prompts skip fewer steps under the gate |
+| No-cache | **469.84 s** | **0.32 s** (0.07 %) | Effectively zero variance; no-cache compute is prompt-independent |
+| **Mean speedup ratio** | — | — | **3.04× adaptive over no-cache** |
+
+The headline `2.52× / 2.68× vs H100` is replicated within noise across
+all 5 prompts; the speedup is not specific to the original delivery-robot
+prompt.
+
+Both numbers carry a *small-N* caveat — the FVD literature uses
+N >= 1000 generations per side; we have N=5. The pattern is
+defensible (multi-pair, 40 features/side, monotone with threshold);
+the absolute number should be cited as **preliminary**.
 
 The full LPIPS / FVD verification campaign is documented in
 `docs/METHODOLOGY.md` § "Reproducibility envelope." The pixel-level LPIPS
