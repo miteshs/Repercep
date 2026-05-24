@@ -108,3 +108,63 @@ def test_hopper_flash_runs_when_built() -> None:
     out = op(q, k, v)
     assert tuple(out.shape) == (b, h, s, d)
     assert torch.isfinite(out).all()
+
+
+@pytest.mark.skipif(not CUDABackend().is_available(), reason="no CUDA GPU on host")
+def test_hopper_flash_matches_sdpa() -> None:
+    """FA-2 / FA-3 output must match SDPA within BF16 numerics on H100.
+
+    SDPA on Hopper already routes to cuDNN flash-attn, so this is a true
+    parity check, not a "flash is better" check.  The wrapper exists to
+    expose the FA-3 entry point when it's built; both paths should agree
+    on output bytes.
+    """
+    op = HopperFlashAttention()
+    if not op.available:
+        pytest.skip("flash-attn not installed")
+    import torch
+
+    dev = CUDABackend().torch_device(0)
+    b, h, s, d = 1, 16, 4096, 128
+    torch.manual_seed(0)
+    q = torch.randn(b, h, s, d, device=dev, dtype=torch.bfloat16) / 8.0
+    k = torch.randn_like(q) / 8.0
+    v = torch.randn_like(q)
+    ref = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    out = op(q, k, v)
+    rel = (out - ref).abs().mean() / ref.abs().mean()
+    assert rel.item() < 0.01, (
+        f"HopperFlash vs SDPA rel diff {rel.item():.4f} > 0.01 — "
+        f"is_fa3={op.is_fa3}, suggests a layout or numerics regression"
+    )
+
+
+@pytest.mark.skipif(not CUDABackend().is_available(), reason="no CUDA GPU on host")
+def test_fp8_hopper_triton_matches_sdpa() -> None:
+    """FP8 Hopper Triton kernel must match SDPA within FP8 tolerance on H100.
+
+    Same correctness contract as the AMD ``test_fp8_triton_matches_sdpa``
+    in ``tests/test_attention_fp8.py``, run on the sibling Hopper kernel.
+    Tolerance is wider because FP8 quantization is unavoidably lossy
+    (~3-5% mean rel diff at the Cosmos production shape on Hopper —
+    see F27 in docs/BUILD_LOG.md).
+    """
+    op = FP8HopperTritonAttention()
+    if not op.available:
+        pytest.skip("Triton FP8 Hopper kernel unavailable")
+    import torch
+
+    dev = CUDABackend().torch_device(0)
+    b, h, s, d = 1, 8, 4096, 128
+    torch.manual_seed(0)
+    q = torch.randn(b, h, s, d, device=dev, dtype=torch.bfloat16) / 8.0
+    k = torch.randn_like(q) / 8.0
+    v = torch.randn_like(q)
+    ref = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    out = op(q, k, v)
+    rel = (out - ref).abs().mean() / ref.abs().mean()
+    # F27 measured 3.4% at this shape; allow headroom for autotune drift.
+    assert rel.item() < 0.10, (
+        f"FP8 Hopper Triton vs SDPA rel diff {rel.item():.4f} > 0.10 — "
+        f"either the kernel regressed or autotune picked a degenerate config"
+    )
