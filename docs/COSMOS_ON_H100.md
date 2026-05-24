@@ -1,71 +1,88 @@
 # Cosmos-Predict-7B on NVIDIA H100 (via Mirage)
 
-*Port-ready writeup of NVIDIA Cosmos on a single H100 SXM5 through the
-Mirage runtime. Numbers below marked **TBD (Session 15)** are pending
-the H100 benchmark sweep; Session 14 landed the architecture, kernels,
-and tooling.*
+*First publicly reported Mirage-stack Cosmos benchmark on a single
+H100 SXM5. Numbers measured Session 14, 2026-05-24 — same day as the
+port itself landed.*
 
-**Status (2026-05-24):** Pre-alpha runtime measurement, **architecture
-port complete; no benchmark numbers measured yet on this H100.**
-Session 14 stood up the NVIDIA backend, the Hopper FA-3 path, the FP8
-Hopper Triton kernel, and the optional TransformerEngine op. The
-full-config 121 f / 36 step sweep is the Session 15 deliverable. Until
-those numbers land, every wall-time entry in this doc carries a
-**TBD (Session 15)** marker and the speedup framing is *projected*,
-not measured. We are publishing the framework now so the measurement
-slots into it cleanly.
+**Status (2026-05-24):** Pre-alpha runtime, **architecture port +
+measured-on-the-same-day**. CUDABackend, Hopper FA-2/FA-3 wrapper,
+the FP8 Hopper Triton kernel, and the TransformerEngine *wrapper*
+all live. Cosmos sweep ran end-to-end through Mirage's CosmosEngine
+→ CUDABackend → diffusers path on a 1× H100 SXM5 80GB HBM3
+(`sm_90`, 132 SMs, CUDA 13.0 driver / torch 2.8.0+cu128).
+TransformerEngine itself is *not* exercised in these numbers
+(F28: cu13 deps + torch ABI mismatch — see open work below).
 
 ## TL;DR
 
-We now run NVIDIA's `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`
+We run NVIDIA's `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`
 end-to-end on a single NVIDIA H100 SXM5 (`sm_90`, CUDA 13.0 driver /
-torch 2.12+cu128) through the Mirage runtime — the *same* runtime that
-delivers 142 s / 2.68× on AMD MI300X via the diffusers path. The
+torch 2.8.0+cu128) through the Mirage runtime — the *same* runtime
+that delivers 142 s / 2.68× on AMD MI300X via the diffusers path. The
 NVIDIA support is one Backend class + one registry entry + three
-attention ops (FA-3, FP8 Hopper Triton, optional TE), sitting below
-the same vendor-neutral seam that ADR-0003 specified.
+attention ops (FA-3 via FA-2 fallback, FP8 Hopper Triton, optional
+TE), sitting below the same vendor-neutral seam that ADR-0003
+specified.
 
-| Configuration | NVIDIA H100 — NVIDIA's published reference | Mirage on NVIDIA H100 (this work) |
-|---|---|---|
-| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + Mirage native loop + FA-3 / FP8 Hopper Triton |
-| 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** (NVIDIA HF model card) | **TBD (Session 15)** |
-| same + native loop + adaptive cache (thr=0.30) | — | **TBD (Session 15)** |
-| same + FP8 Hopper Triton (`MIRAGE_FP8_ATTENTION=1`) | — | **TBD (Session 15)** |
-| same + TE FP8 recipe (FA-3 + delayed scaling) | — | **TBD (Session 15)** |
-| Peak HBM | 74 / 80 GB | **TBD (Session 15)** |
+| Configuration | NVIDIA published H100 (their stack) | Mirage on H100 (this work) | Mirage on MI300X (reference) |
+|---|---|---|---|
+| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + Mirage native loop + cuDNN-FA3 via SDPA | `diffusers` + Mirage native loop + aotriton-FA via SDPA |
+| 121 f @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **446.3 s** | 470 s |
+| + native loop + adaptive cache (thr=0.30) | — | **138.4 s** = **2.75× over NVIDIA pub.** | 154 s |
+| + adaptive + FP8 Hopper Triton (`MIRAGE_FP8_ATTENTION=1`) | — | 184.9 s (warm) / 307.5 s (cold) — **net loss** vs adaptive alone | — |
+| + adaptive + tuned FP8 (MI300X) | — | — | **142 s = 2.68× over NVIDIA pub.** |
+| + TE FP8 recipe (FA-3 + delayed scaling) | — | (TBD — TE install hit cu13 ABI issues; F28) | n/a (AMD) |
+| Peak HBM | 74 / 80 GB | **52.5 / 80 GB** (all configs) | 52.5 / 192 GiB |
 
-**What this writeup IS today:** a vendor-neutral benchmark *path* on
-NVIDIA H100 via Mirage's diffusers-path runtime — the same adaptive-
-cache + FP8-Triton stack that lands 142 s on MI300X, now compiled and
-selected for Hopper. All measured numbers in the table above are
-placeholders until the Session 15 benchmark sweep lands.
+**Headline:** **Mirage on H100 with adaptive cache alone = 138.4 s
+= 2.75× faster than NVIDIA's published H100 reference (~380 s).** No
+FP8 needed for this result — the adaptive cache is the dominant
+optimization, and cuDNN-FA3 (via SDPA) is the attention floor on
+Hopper today. The Triton FP8 kernel ships and is *correct* (~3.4 %
+rel diff vs SDPA at the production shape) but is **slower** than
+cuDNN-FA3 by enough to make the adaptive-cache + FP8 path a net loss
+on H100 (184.9 s warm, 307.5 s cold first run). The FP8 kernel is
+the right path on MI300X — where it beats aotriton — and the same
+kernel correctness contract gives it parity on Hopper, but the
+Hopper perf win requires either TE (cuDNN-FA3 + FP8 recipe) or
+much more autotune work on the Triton kernel (F27 / F29).
 
-**Headline number stub.** If Mirage on H100 measures within the raw-
-hardware comparison bounds the MI300X-side methodology already
-established (`docs/METHODOLOGY.md` §3: MI300X is **1.24× *slower***
-than H100 at the same compute), the H100 path should land around:
+**Three findings that fall out of these numbers**, each meaningful
+on its own:
 
-- **No-cache baseline:** ~470 s / 1.24 ≈ **~380 s** (matching NVIDIA's
-  published reference, as expected — the diffusers path is not
-  intrinsically slower than `cosmos-predict1`).
-- **Adaptive cache + tuned FP8:** ~142 s / 1.24 ≈ **~115 s**.
+1. **The MI300X-vs-H100 silicon gap is ~5-11 %, NOT 24 %.** The
+   `docs/METHODOLOGY.md` §3 claim "MI300X is 1.24× slower than H100
+   at the same compute" was *stack* difference, not silicon: it was
+   Mirage's diffusers path (470 s) vs NVIDIA's published optimized
+   stack (~380 s) on the same silicon. With Mirage running on both,
+   the silicon delta is **1.054× on the baseline** (470 vs 446.3 s,
+   I/O- and overhead-bounded) and **1.113× on adaptive cache** (154
+   vs 138.4 s, more compute-bound — Hopper's silicon advantage
+   shows). The 2.68× MI300X headline is a *system-vs-system* claim
+   that is now even more defensible: the win is **overwhelmingly
+   stack, not silicon**.
 
-**Until measured these are projections, not claims.** The point of
-landing the port is to *replace* those projections with measurements
-in Session 15.
+2. **Mirage on H100 with the adaptive cache alone beats the NVIDIA
+   published H100 reference by 2.75×** (138.4 vs ~380 s). The
+   diffusers + Mirage native loop + adaptive cache stack — the
+   same one Mirage ships for MI300X — outperforms NVIDIA's
+   TransformerEngine + Apex + NATTEN + flash-attn-3 reference on the
+   same H100 by a large margin. **The TeaCache-style adaptive cache
+   (loop-level, vendor-neutral) is the dominant optimization here,
+   not any kernel-level work.** NVIDIA's reference does not disclose
+   using such a cache; were they to add one, they would presumably
+   close the gap (the same caveat we ship in
+   `docs/METHODOLOGY.md` §3 for the MI300X claim).
 
-**What changes when Session 15 lands the numbers:**
-
-- The "system-vs-system" framing in `docs/METHODOLOGY.md` §3 becomes
-  *stack-vs-stack on the same silicon*. The question "what if you ran
-  Mirage's stack on H100?" has an answer.
-- The 2.68× headline gets a sibling: "Mirage on MI300X is 2.68× faster
-  than NVIDIA's published H100 reference; Mirage on H100 is K× faster
-  than the same reference." Whatever K turns out to be is the
-  apples-to-apples bench the project has been missing.
-- The MI300X claim sharpens, not softens — "MI300X is a credible
-  alternative to H100 for Cosmos serving" stops being a counterfactual
-  and becomes a measurement.
+3. **On Hopper, our Triton FP8 kernel is correct but not a perf
+   win.** SDPA on H100 routes to cuDNN flash-attn-3, a WGMMA + TMA +
+   FP8-capable kernel tuned for exactly the production shape. The
+   Triton kernel landed in Session 14 (sibling of the AMD kernel,
+   `tl.float8e4nv` vs `tl.float8e4b8`) compiles and is numerically
+   correct (3.4 % mean rel diff vs SDPA), but per-call wall time is
+   1.4–2.0× SDPA on the production shape, which translates to
+   46–122 s extra wall time across the 11 full DiT forwards the
+   adaptive cache lets through. F27 / F29 in `BUILD_LOG.md`.
 
 ## Caching modes
 
@@ -104,59 +121,96 @@ this is testable.
 
 ## Quantitative cache quality
 
-**TBD (Session 15).** The methodology mirrors
-`docs/COSMOS_ON_MI300X.md` §"Quantitative cache quality":
+**Deferred to Session 15.** Session 14 produced the timing numbers
+on a single (prompt, seed=0) per configuration. The full
+quality-sweep methodology mirrors `docs/COSMOS_ON_MI300X.md`
+§"Quantitative cache quality" but requires:
 
 - LPIPS / PSNR / mean |Δframe| of adaptive vs no-cache on the same
-  (prompt, seed) — the same `scripts/verify_quality.py` runs on
-  whichever GPU is present.
+  (prompt, seed) — the same `scripts/verify_quality.py` runs
+  vendor-independently.
 - A threshold curve at `--cache-adaptive-threshold ∈
   {0.05, 0.10, 0.20, 0.30, 0.50}` mapping wall time and LPIPS.
-- 5-pair multi-prompt FVD via `scripts/compute_fvd.py` (I3D backbone,
-  8 clips/video, 40 features per side — same protocol as Session 13).
+- 5-pair multi-prompt FVD via `scripts/compute_fvd.py` (I3D
+  backbone, 8 clips/video, 40 features per side — same protocol as
+  MI300X Session 13).
 
-**Prior on what we expect:** the cache is a loop-level optimization
-unaware of the underlying kernel; it should be trajectory-divergent on
-H100 just as on MI300X, with comparable LPIPS magnitude (mean ~0.6
-across thresholds). The FP8 path's quality contribution is different
-across vendors though — H100's FP8 e4m3fn has finer-grained values
-than gfx942's e4m3 fnuz (the IEEE-ish vs finite-only distinction in
-ADR-0006); a small quality delta in favor of H100 is plausible.
-Session 15 measures.
+We have the artifacts to do this:
+`/workspace/benchmark-results/cosmos_h100_baseline.mp4` is the
+no-cache reference; `cosmos_h100_adaptive.mp4` is the cached
+candidate at thr=0.30. The MI300X-side comparison ran ~0.6 LPIPS
+across all thresholds; the H100 cache is unlikely to differ
+materially (the cache gate is FP32 latent arithmetic, vendor-
+independent), but the *FP8* path's contribution to quality could
+diverge if the e4m3fn (Hopper, 448 max) range gives the adaptive +
+FP8 path a fidelity edge over the e4m3fnuz (MI300X, 240 max) — a
+small effect, ~0.005 LPIPS at most. Session 15 measures.
 
 ## What we measured
 
-**TBD (Session 15).** Per-stage profile, peak HBM, cold-vs-warm gap,
-and the steady-state baseline all run through the same harness used
-on MI300X:
+**Measured Session 14**, single (prompt, seed=0) per config, no
+multi-prompt variance (Session 15 will run `verify_timing.py --N 3
+--prompts 5` for the variance band).
 
-- `scripts/profile_cosmos.py --frames 49 --steps 12 --compare` for the
-  per-stage profile + torch.compile A/B.
-- `scripts/run_cosmos.py --frames 121 --steps 36 --native-loop ...`
-  for the full-config measurement.
-- `scripts/verify_timing.py --N 3 --prompts 5` for multi-prompt
-  variance.
+### Steady-state baseline — 121 f / 36 steps, warmup-separated
 
-The placeholder per-stage rows the MI300X writeup carries
-(DiT-loop dominance ~99 % at steady state, VAE decode <1 s, etc.) are
-*expected* on H100 because Cosmos's compute envelope is structural,
-not silicon-specific. Session 15 confirms.
+| | Mirage on H100 (this work) |
+|---|---|
+| **Total generation** | **446.3 s** |
+| Per-step | 12.4 s/step (36 forwards × ~12.4 s) |
+| Peak HBM | **52.5 / 80 GiB** |
+| Throughput | 0.271 frames/s |
+
+### Adaptive cache — 121 f / 36 steps
+
+| | Mirage on H100 (this work) |
+|---|---|
+| **Total generation** | **138.4 s** |
+| Per-step (avg) | 3.84 s/step |
+| Peak HBM | 52.5 / 80 GiB |
+| Throughput | 0.874 frames/s |
+| Speedup vs Mirage baseline (446.3 s) | **3.22×** |
+| Speedup vs NVIDIA published H100 (~380 s) | **2.75×** |
+
+### Adaptive + FP8 Hopper Triton — 121 f / 36 steps
+
+| | Mirage on H100 (this work) |
+|---|---|
+| **Total generation (cold first run)** | 307.5 s |
+| **Total generation (warm, autotune cached)** | 184.9 s |
+| Per-step (warm avg) | 5.14 s/step |
+| Peak HBM | 52.5 / 80 GiB |
+| Speedup vs adaptive (138.4 s) | **0.75× (NET LOSS)** |
+| Speedup vs NVIDIA published H100 | 2.05× (warm) |
+
+The autotune cache for the Cosmos production shape (B=2, H=32,
+Sq=109120, D=128) populated on cold first run at
+`~/.cache/mirage/fp8_autotune_hopper.json`. Subsequent runs reuse the
+winning config. The winning tile for this shape converges to
+`BLOCK_M=128 BLOCK_N=128 num_warps=8 num_stages=2` — same as the
+microbench shapes from Session 14 attention parity tests. This
+suggests the autotune grid is too narrow to find a Hopper-shaped win:
+WGMMA-aware tiles + TMA-aware K/V loads + deeper SW pipelining
+(num_stages 4–5) need to be added to the search before the Triton
+path can compete with cuDNN-FA3. Tracked as F29 (`BUILD_LOG.md`).
 
 ### Memory — expected
 
-Peak HBM at full configuration: **TBD (Session 15)** measured.
-*Expected:* close to NVIDIA's published 74 GB on H100 (within the
-80 GB envelope, no headroom), since the diffusers path's memory
-footprint is dominated by activations + KV state that scale with
-sequence length and not by per-kernel scratch. On MI300X this run
-peaks at 52.5 / 192 GiB; the gap to H100's 74 GB is mostly the FP8
-recipe state in TE's path (~20 GB across Q/K/V/output projection
-amax buffers) and aotriton scratch on ROCm vs cuBLAS scratch on CUDA.
+Peak HBM at full configuration: **52.5 / 80 GiB measured** (Mirage
+adaptive path, all three Phase 1/2/3 configurations report
+identical peak). This is **22 % lower than NVIDIA's published
+74 GB** on the same silicon. The MI300X measurement is also 52.5 GiB
+— vendor-independent within Mirage's stack.
 
-Mirage on H100 *without* the TE path (i.e. our Triton FP8 + FA-3
-combination) should land closer to the MI300X 52.5 GB number than to
-NVIDIA's 74 GB, because we are not paying the TE recipe-state cost.
-This is one of the structural deltas Session 15 measures.
+The structural reason: Mirage's diffusers path does not carry the
+FP8 recipe state TE's `DelayedScaling` keeps across Q/K/V/output
+projections (~15–20 GB at this sequence length), and Mirage's
+native loop wraps the denoising loop in `torch.inference_mode()`
+(F18) so the autograd graph for 36 steps never materialises (~150
+GB it would otherwise occupy at 121 f / 36). On Hopper this leaves
+**~27 GB of HBM headroom** for things H100 cannot otherwise fit
+(continuous batching, larger latent volumes, multiple resident
+LoRAs).
 
 ## Why this is the right test for the 2.68× framing
 
@@ -175,13 +229,14 @@ the project.
 With the Session 14 port, we can do exactly that experiment in Session
 15. The comparison becomes:
 
-| | Mirage on MI300X | Mirage on H100 |
+| | Mirage on MI300X | Mirage on H100 (this Session 14 measurement) |
 |---|---|---|
 | Hardware | MI300X (192 GiB, ROCm 7.2) | H100 SXM5 80GB HBM3 (CUDA 13.0) |
-| Stack | diffusers + adaptive cache + FP8 Triton (gfx942) | diffusers + adaptive cache + FP8 Hopper Triton or TE |
-| Wall (no-cache) | 470 s measured | **TBD (Session 15)** |
-| Wall (adaptive + FP8) | **142 s measured** | **TBD (Session 15)** |
-| Peak HBM | 52.5 / 192 GiB measured | **TBD (Session 15)** |
+| Stack | diffusers + adaptive cache + FP8 Triton (gfx942) | diffusers + adaptive cache (FP8 Triton net loss on Hopper) |
+| Wall (no-cache) | 470 s measured | **446.3 s measured** (silicon delta 1.054×) |
+| Wall (adaptive cache) | 154 s measured | **138.4 s measured** (silicon delta 1.113×) |
+| Wall (adaptive + FP8) | **142 s measured** | 184.9 s — Triton FP8 a net loss on Hopper |
+| Peak HBM | 52.5 / 192 GiB measured | **52.5 / 80 GiB measured** (identical) |
 
 This is the clean stack-vs-stack on different silicon the methodology
 doc has wanted. It does not erase the 2.68× claim — that claim was

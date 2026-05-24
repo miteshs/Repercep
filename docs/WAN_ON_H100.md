@@ -1,14 +1,23 @@
 # Wan-2.2-T2V-A14B on NVIDIA H100 (via Mirage)
 
 *Port-ready writeup of Alibaba's Wan-2.2-T2V-A14B on a single H100 SXM5
-through the Mirage runtime. Sibling of `docs/WAN_ON_MI300X.md`. Numbers
-marked **TBD (Session 15)** are pending the H100 benchmark sweep that
-was queued in Session 14 to auto-launch after the Cosmos sweep.*
+through the Mirage runtime. Sibling of `docs/WAN_ON_MI300X.md`.
+**Architecture port complete; H100 numbers blocked by F30 — deferred
+to Session 16.***
 
 **Status (2026-05-24):** Architecture port complete (CUDABackend +
-WanEngine already vendor-neutral by construction). End-to-end smoke +
-81 f / 40 step quality run are queued; this doc fills in once the
-sweep lands.
+WanEngine already vendor-neutral by construction). Wan smoke + 81 f /
+40 step quality runs were queued for Session 14 but **the model
+download (~118 GB across 39 files) failed repeatedly with FUSE
+"Disk quota exceeded" errors on the RunPod-mounted /workspace volume**
+under HF Hub's parallel downloader. The error is transient (1 GB
+sequential writes succeed; small writes succeed; single-attempt FUSE
+quota is well above 118 GB), but the concurrent-write pattern of the
+default downloader overwhelms the backend at scale. See F30 in
+`docs/BUILD_LOG.md`. Session 16 recovery options: `hf download
+--max-workers 1` (serialized), or `HF_HUB_ENABLE_HF_TRANSFER=0` to
+disable the Rust downloader, or pre-fetch the safetensors files
+sequentially via curl. None are blocked on code work.
 
 ## TL;DR
 
@@ -26,8 +35,8 @@ the `comp_effic.png` table in
 | Configuration | Wan team H100 (their stack) | Mirage on H100 (this work) | Mirage on MI300X (reference) |
 |---|---|---|---|
 | Stack | Wan2.2 repo + FA-3 + offload + FP8 | `diffusers` 0.37.1 + Mirage WanEngine | `diffusers` 0.37.1 + Mirage WanEngine |
-| 17 f / 8 step smoke | — | **TBD (Session 15)** | 45.2 s warm gen, 84.3 GiB peak |
-| 81 f / 40 step quality (1280×720) | **1041.5 s / 79.8 GB** | **TBD (Session 15)** | ~1700 s steady-state proj. / 85.1 GiB |
+| 17 f / 8 step smoke | — | **TBD (Session 16 — see F30)** | 45.2 s warm gen, 84.3 GiB peak |
+| 81 f / 40 step quality (1280×720) | **1041.5 s / 79.8 GB** | **TBD (Session 16 — see F30)** | ~1700 s steady-state proj. / 85.1 GiB |
 | Offload (inactive MoE expert) | yes | no | no |
 | FP8 weight conversion | yes | no | no |
 
@@ -40,7 +49,7 @@ NOT apples-to-apples with the Wan team's 1041 s** until we add the
 matching offload + FP8 wiring. The honest framing is:
 
 - **Mirage's BF16, no-offload, both-experts-resident path on H100:**
-  TBD (Session 15). Directly comparable to the MI300X
+  TBD (Session 16 — see F30). Directly comparable to the MI300X
   `WAN_ON_MI300X.md` number (~1700 s steady-state projected; same
   stack on different silicon).
 - **Mirage with the Wan team's offload + FP8 stack on H100:** TBD
@@ -75,7 +84,7 @@ once the loop is shaped for Wan's MoE topology.
 
 ## What we measured
 
-**TBD (Session 15).** Per-stage profile (high-noise expert vs
+**TBD (Session 16 — see F30).** Per-stage profile (high-noise expert vs
 low-noise expert + VAE), peak HBM, cold-vs-warm gap. The harness is
 identical to MI300X — `scripts/run_wan.py --frames 81 --steps 40 --profile`.
 
@@ -83,7 +92,7 @@ identical to MI300X — `scripts/run_wan.py --frames 81 --steps 40 --profile`.
 
 | | |
 |---|---|
-| Total generation | **TBD (Session 15)** |
+| Total generation | **TBD (Session 16 — see F30)** |
 | Per step | TBD |
 | Peak HBM | TBD |
 
@@ -91,7 +100,7 @@ identical to MI300X — `scripts/run_wan.py --frames 81 --steps 40 --profile`.
 
 | | |
 |---|---|
-| Total generation | **TBD (Session 15)** |
+| Total generation | **TBD (Session 16 — see F30)** |
 | Steady-state per-step | TBD |
 | Peak HBM | TBD |
 

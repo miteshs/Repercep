@@ -14,17 +14,21 @@ distills `docs/BUILD_LOG.md` (the full chronological log) into the
 
 ## TL;DR for a new session
 
-**If you're picking up from Session 14 close (2026-05-24):** the
-NVIDIA H100 backend has landed as a parallel target. AMD MI300X
-remains the lead workload — the 142 s / 2.68× Cosmos headline, the
-`COSMOS_ON_MI300X.md` writeup, the `BUILD_LOG.md` chronology are all
-unchanged. What is new: a `CUDABackend`, Hopper FA-3 + FP8 Triton +
-optional TransformerEngine attention ops, and `docs/COSMOS_ON_H100.md`
-(framework + projections; **no benchmark numbers measured yet on this
-H100**). ADR-0006 closes the "Revisit if" clause of ADR-0001. The
-highest-signal open item is the **Session 15 H100 benchmark sweep** —
-it closes the apples-to-apples asymmetry called out in
-`docs/METHODOLOGY.md` §3.
+**If you're picking up from Session 14 close (2026-05-24):** read
+`docs/SESSION_14_CLOSE.md` first — focused "what happened today, what
+to do next" cut that supersedes the rankings below. Headline: the
+NVIDIA H100 backend landed AND was benchmarked end-to-end on the same
+day. **Mirage on H100 with adaptive cache alone = 138.4 s** at
+121 f / 36 steps — **2.75× faster than NVIDIA's published H100
+reference (~380 s)**. The MI300X 142 s / 2.68× headline is unchanged
+and now *strengthened* by the stack-vs-stack measurement on the same
+silicon: silicon delta is **only 5–11 %**, not 24 % — the 2.68× win is
+overwhelmingly *stack*, not silicon. Three open items the H100 sweep
+exposed: (a) FP8 Hopper Triton kernel is correct but slower than
+cuDNN-FA3 on Hopper (F29 — needs WGMMA-shaped autotune); (b) TE
+install hits a cu13 / cu12 ABI hazard (F28); (c) Wan-A14B download
+trips the FUSE quota under HF's parallel writer (F30, Session 16
+recoverable via `hf download --max-workers 1`).
 
 **If you're picking up from Session 13 close (2026-05-24):** read
 `docs/SESSION_13_CLOSE.md` first — it's the focused "what happened

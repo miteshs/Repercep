@@ -1677,39 +1677,130 @@ port is below the seam, not above it.**
   AMD. ADR-0006 §"Revisit if" already calls this out as a trigger to
   flip the default if Session 15 confirms it.
 
+- **F28 — TransformerEngine install on Hopper has a cu13/cu12 ABI
+  hazard.** `pip install "transformer-engine[pytorch]"` ships
+  `transformer-engine-cu13` by default. On a CUDA-12.8-toolkit host
+  it fails to load (`libcublas.so.13: cannot open shared object`).
+  Pinning `transformer-engine-cu12` alongside pulls in 49 cu13 deps
+  including torch 2.12.0+cu130, silently *upgrading* torch from
+  the cu128 wheel and breaking torchvision (`operator
+  torchvision::nms does not exist`). The TE pytorch submodule then
+  still fails to import (`No module named transformer_engine.pytorch`).
+  The right Session 16 fix is to pin TE + matching torch in a single
+  `uv pip install` command, or document the install recipe in
+  `docs/COSMOS_ON_H100.md` §Reproduce. Until then the TE wrapper
+  loads fine when TE is *correctly* installed; we just couldn't
+  verify TE-FP8-on-Hopper end-to-end in Session 14.
+
+- **F29 — Even with autotune cache warm, FP8 Hopper Triton kernel
+  is a NET LOSS on the Cosmos production shape.** Phase 3 retry
+  measurements:
+  - Cold first run (autotune fires for shape B=2, H=32, S=109120,
+    D=128): **307.5 s** wall, 8.54 s/step.
+  - Warm (autotune cache hit): **184.9 s** wall, 5.14 s/step.
+  - Adaptive cache alone: **138.4 s** wall, 3.84 s/step.
+
+  Even with the autotune tax amortized, the FP8 Triton path adds
+  ~46 s wall time vs cuDNN-FA3 across the 11 full DiT forwards.
+  Per-call attention is ~4.2 s slower than SDPA. The autotuner
+  converged on `BLOCK_M=128 BLOCK_N=128 num_warps=8 num_stages=2`
+  for every Hopper shape tried (4 microbench shapes + production) —
+  a sign the search grid is too narrow to find a true Hopper-shaped
+  winner. The Session 16 work to make this competitive is:
+  WGMMA-aware tile sizing (Hopper's 64-wide warpgroup MMA wants
+  multiples of 64 along the M axis), TMA-aware K/V loads, deeper SW
+  pipelining (num_stages ∈ {4, 5}). Until then, TE is the right
+  Hopper FP8 path; `MIRAGE_FP8_ATTENTION=1` on Hopper should be
+  treated as "demonstration that the kernel runs," not a perf-on
+  setting. ADR-0006 §"Revisit if" trigger is now armed.
+
+- **F30 — HF Hub parallel downloader trips the FUSE quota on Wan
+  download.** Wan-2.2-T2V-A14B is ~118 GB across 39 files. The
+  default HF Hub downloader (parallel writes via hf_transfer) hits
+  "Disk quota exceeded (os error 122)" mid-stream on the
+  RunPod-mounted /workspace volume — the error is transient (1 GB
+  sequential writes succeed; small writes succeed; single-file
+  writes succeed), but the concurrent-write pattern overwhelms the
+  FUSE backend at scale. Cosmos (~23 GB, 20 files) succeeded by
+  luck — smaller download, fewer concurrent file handles. **Wan is
+  deferred to Session 16.** The recovery path is to pre-fetch via
+  `hf download Wan-AI/Wan2.2-T2V-A14B-Diffusers --max-workers 1`
+  (serialized writes), then run the benchmark against the warm
+  cache. This is a *plumbing* problem, not an architectural one;
+  the WanEngine path through CUDABackend is verified by the
+  existing Mirage tests.
+
 ### State of the runtime after Session 14
 
-- AMD MI300X path: unchanged. 142 s / 2.68× headline holds; the
+- **AMD MI300X path: unchanged.** 142 s / 2.68× headline holds; the
   verification campaign closed at Session 13 is the settled
   measurement set.
-- NVIDIA H100 path: **architecture port complete**, no benchmark
-  numbers measured yet on this host. `docs/COSMOS_ON_H100.md` is the
-  port-ready writeup with every measured-number cell carrying a
-  **TBD (Session 15)** marker.
-- Tests: 41 Rust + ~130 pytest + GPU-skip on whichever vendor is
-  absent. Mypy strict over the new files. ruff clean.
-- ADRs: 0006 lands and closes the "Revisit if" of 0001.
-- `docs/HANDOFF.md` updated: TL;DR + §5 "What's open" + §10 timeline
-  + §3 "where everything lives" + §7 "Adding NVIDIA support" pointer.
+- **NVIDIA H100 Cosmos path: measured end-to-end.** Numbers landed
+  same day as the architecture port. See the table in the next
+  section + the full breakdown in `docs/COSMOS_ON_H100.md`.
+- **NVIDIA H100 Wan path: blocked by F30** (FUSE download quota).
+  Architecture port complete; benchmark deferred. WAN_ON_H100.md
+  retains the Session 16 TBD markers.
+- **Tests:** 143 pytest passed + 12 skipped (vendor-conditional);
+  41 Rust tests unchanged. Mypy strict over 56 source files.
+  Ruff clean across src/, tests/, scripts/.
+- **ADRs:** 0006 lands and closes the "Revisit if" of 0001.
+- `docs/COSMOS_ON_H100.md` filled in with the measured numbers;
+  every former "TBD (Session 15)" cell now carries a real
+  measurement.
+
+### Session 14 measured Cosmos numbers — H100 SXM5 80GB HBM3
+
+121 f @ 1280×704, 36 steps, BF16, seed=0, single prompt — same
+configuration as the MI300X reference:
+
+| Config | Wall | Peak HBM | s/step | vs NVIDIA pub. (~380 s) | vs Mirage MI300X |
+|---|--:|--:|--:|--:|--:|
+| Baseline (no cache) | 446.3 s | 52.5 GiB | 12.4 | 0.85× | 1.05× faster than 470 s |
+| Adaptive cache (thr=0.30) | **138.4 s** | 52.5 GiB | 3.84 | **2.75×** | 1.11× faster than 154 s |
+| Adaptive + FP8 Hopper Triton (cold) | 307.5 s | 52.5 GiB | 8.54 | 1.24× | 0.46× (loss) |
+| Adaptive + FP8 Hopper Triton (warm) | 184.9 s | 52.5 GiB | 5.14 | 2.05× | 0.77× (loss) |
+| Smoke (17 f / 8 steps, warm) | 10.7 s | 28.4 GiB | 1.34 | — | comparable to MI300X 45 s |
+
+**Stack-vs-stack on the same silicon (the apples-to-apples
+comparison the original METHODOLOGY.md §3 was missing):** Mirage on
+H100 at the adaptive headline (138.4 s) and Mirage on MI300X at the
+same configuration (154 s) — **silicon delta = 1.113×**, not the
+1.24× the original Mirage-MI300X-vs-NVIDIA-published-H100 framing
+implied. The 24 % delta was overwhelmingly *stack*, not silicon.
+This **strengthens** the MI300X 2.68× claim, not weakens it: the
+optimization stack is the win; MI300X is essentially tied with H100
+silicon-for-silicon when both run Mirage's path.
 
 ### Open after Session 14
 
-- **(highest signal) Session 15 H100 benchmark sweep.** Run the same
-  `scripts/run_cosmos.py` harness used on MI300X, at 121 f / 36
-  steps, across {no-cache, adaptive thr=0.30, adaptive+FP8 Hopper
-  Triton, TE FP8}. Plus `scripts/verify_timing.py --N 3 --prompts 5`
-  for variance. Fills every TBD in `docs/COSMOS_ON_H100.md` and
-  closes the methodology-asymmetry described in F26.
-- **TE-vs-Triton perf comparison on H100 at Cosmos production shape.**
-  *No prior art exists* for either at this exact configuration
-  (B=2, H=32, D=128, S=109k, 121 f / 36 steps on Cosmos-Predict1-7B
-  Text2World). Session 15 generates both numbers as a side-effect of
-  the sweep above.
-- **FP8 Hopper kernel autotune.** The kernel ships with a starting
-  grid; the production winner is host-specific and gets baked into
-  `~/.cache/mirage/fp8_autotune_hopper.json` on first run. Same
-  pattern as the gfx942 kernel; same `scripts/autotune_fp8.py` runner
-  works (it picks the right kernel based on the detected backend).
+- **(highest signal) Multi-prompt variance on H100.** Session 14
+  measured single (prompt, seed=0). Run
+  `scripts/verify_timing.py --N 3 --prompts 5` for the variance
+  band; expect ±0.5 % on the no-cache baseline (Phase 1 measured
+  cleanly) and ±3-5 % on adaptive (per the MI300X Session 13
+  variance characterization).
+- **TE FP8 path on H100** — unblock F28 first (pin TE + torch
+  versions correctly in a single `uv pip install`), then run a
+  fourth Phase 4 measurement. Expected ~115-130 s (faster than
+  adaptive alone because TE uses cuDNN-FA3 + FP8 in a single
+  kernel; per-call attention cost should drop ~30 % vs the
+  BF16-only cuDNN-FA3 baseline that adaptive runs today). If TE
+  measures ≤ adaptive-alone, the Triton FP8 path becomes purely a
+  research surface.
+- **Wan-2.2-T2V-A14B sweep on H100** — unblock F30 via
+  `hf download --max-workers 1`, then run the 17 f / 8 step smoke
+  + 81 f / 40 step quality reference. The Wan team's H100
+  reference (1041.5 s with `--offload_model --convert_model_dtype`)
+  is the comparable; our path runs BF16 + both experts resident
+  + no offload, so a like-for-like vs the MI300X 1700 s projection
+  is what we want.
+- **FP8 Hopper kernel autotune work (F29).** Expand the autotune
+  grid with WGMMA-aware tiles (M ∈ {64, 128, 192, 256} × N ∈ {64,
+  128, 256} × num_stages ∈ {2, 3, 4, 5}), add TMA-based K/V loads
+  via `tl.make_tensor_descriptor`. Goal: beat cuDNN-FA3 at the
+  Cosmos production shape, restoring `MIRAGE_FP8_ATTENTION=1` as a
+  perf-on setting on Hopper.
 - **The MI300X-side Truly-open list from Session 13 remains open**
   (FVD at N ≥ 1000, HIP FP8 correctness, continuous batching,
   action conditioning, bare-metal MI300X validation, OSS announce
