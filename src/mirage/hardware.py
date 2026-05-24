@@ -12,10 +12,11 @@ from dataclasses import dataclass
 
 
 class Vendor(enum.StrEnum):
-    """GPU vendor.  Disambiguates the ``gfx``/``sm`` architecture namespaces."""
+    """Compute vendor.  Disambiguates the ``gfx``/``sm``/CPU-uarch namespaces."""
 
     AMD = "amd"
     NVIDIA = "nvidia"
+    INTEL = "intel"
 
 
 class DType(enum.StrEnum):
@@ -53,6 +54,13 @@ MI300X = DeviceArch(Vendor.AMD, "gfx942", "CDNA3")
 MI250X = DeviceArch(Vendor.AMD, "gfx90a", "CDNA2")
 H100 = DeviceArch(Vendor.NVIDIA, "sm90a", "Hopper")
 H200 = DeviceArch(Vendor.NVIDIA, "sm90a", "Hopper")
+# Intel CPU uarchs that carry AMX (the lever for matmul on CPU).  Sapphire
+# Rapids was the first AMX part (Q1-2023); Emerald Rapids inherits the same
+# AMX_BF16 + AMX_INT8 ISA; Granite Rapids adds AMX_FP16 + AMX_COMPLEX.
+# Older Xeon parts (Ice Lake, Cascade Lake) fall back to plain AVX-512.
+SAPPHIRE_RAPIDS = DeviceArch(Vendor.INTEL, "spr", "Sapphire Rapids")
+EMERALD_RAPIDS = DeviceArch(Vendor.INTEL, "emr", "Emerald Rapids")
+GRANITE_RAPIDS = DeviceArch(Vendor.INTEL, "gnr", "Granite Rapids")
 
 
 @dataclass(frozen=True, slots=True)

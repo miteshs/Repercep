@@ -26,3 +26,8 @@ weights/
 .cache/
 *.log
 benchmark-results/
+
+# CPU AMX kernel build artifacts
+kernels/cpu/*/build/
+kernels/cpu/*/*.so
+

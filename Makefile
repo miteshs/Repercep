@@ -7,7 +7,7 @@ CARGO := cargo
 
 .PHONY: help install lint format typecheck test check-gpu info \
         rust-build rust-check rust-fmt rust-fmt-check rust-clippy rust-test \
-        rust-install lint-all check-all
+        rust-install kernels-cpu lint-all check-all
 
 help:
 	@echo "Mirage Runtime — make targets:"
@@ -126,6 +126,25 @@ else
 	@echo "==> uv pip install --reinstall <built wheels>"
 	@$(UV) pip install --python .venv --reinstall target/wheels/mirage_*.whl
 endif
+
+# Build the CPU AMX flash-attention kernel (Intel Sapphire Rapids+).
+# Requires gcc 13+ with AMX intrinsic support and a host with `amx_bf16`
+# in /proc/cpuinfo.  Produces `kernels/cpu/amx_attn/_native.*.so` in
+# place, which the `mirage.attention.amx_flash.AMXFlashAttention`
+# wrapper imports lazily.  See `docs/adr/0007-cpu-backend.md`.
+kernels-cpu:
+	@if [ ! -d kernels/cpu/amx_attn ]; then \
+	    echo "kernels/cpu/amx_attn missing — skipping CPU AMX kernel build"; \
+	    exit 0; \
+	fi
+	@if ! grep -q amx_bf16 /proc/cpuinfo 2>/dev/null; then \
+	    echo "==> CPU lacks amx_bf16; AMX kernel build skipped"; \
+	    echo "    (the SDPA->oneDNN floor still gets AMX wins on this host"; \
+	    echo "     if amx_bf16 lights up later — recheck with `make check-gpu`)"; \
+	    exit 0; \
+	fi
+	@echo "==> building CPU AMX flash kernel in kernels/cpu/amx_attn/"
+	cd kernels/cpu/amx_attn && $(PY) setup.py build_ext --inplace
 
 lint-all: lint rust-fmt-check rust-clippy
 

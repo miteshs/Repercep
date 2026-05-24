@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mirage.backend.cpu import CPUBackend
 from mirage.backend.cuda import CUDABackend
 from mirage.backend.rocm import ROCmBackend
 
@@ -11,11 +12,14 @@ if TYPE_CHECKING:
     from mirage.backend.protocol import Backend
 
 # Every backend Mirage knows how to construct.  AMD remains the lead workload
-# (ADR-0001); NVIDIA lands as a parallel track per ADR-0006.  Order matters
-# only when both vendors are present on the same host (rare; CI / dual-GPU
-# dev box) — ROCm-first preserves the "MI300X is lead" framing.  On a
-# single-vendor host, ``available_backends()`` returns just the live one.
-_ALL_BACKENDS: tuple[Backend, ...] = (ROCmBackend(), CUDABackend())
+# (ADR-0001); NVIDIA lands as a parallel track per ADR-0006; CPU/AMX is the
+# substrate floor per ADR-0007.  Order matters when multiple backends are
+# present on the same host — ``select_backend()`` returns the first
+# available, and a GPU should always preempt CPU on a GPU host.  ROCm-first
+# preserves the "MI300X is lead" framing; CUDA-second covers NVIDIA hosts;
+# CPU-last is the always-available substrate that never wins selection on
+# a GPU host but enables CI without a GPU.
+_ALL_BACKENDS: tuple[Backend, ...] = (ROCmBackend(), CUDABackend(), CPUBackend())
 
 
 def available_backends() -> tuple[Backend, ...]:
@@ -27,8 +31,9 @@ def select_backend(prefer: str | None = None) -> Backend:
     """Return a usable backend.
 
     Args:
-        prefer: pin a specific backend by name (e.g. ``"rocm"``).  If ``None``,
-            the first available backend is returned.
+        prefer: pin a specific backend by name (e.g. ``"rocm"``, ``"cuda"``,
+            ``"cpu"``).  If ``None``, the first available backend is returned
+            in declaration order (GPU vendors before CPU).
 
     Raises:
         ValueError: ``prefer`` names a backend Mirage does not know.
@@ -47,6 +52,6 @@ def select_backend(prefer: str | None = None) -> Backend:
         if backend.is_available():
             return backend
     raise RuntimeError(
-        "no Mirage backend is available — is a GPU visible and torch installed? "
+        "no Mirage backend is available — is torch installed? "
         "Run `python scripts/check_gpu.py` to diagnose."
     )
