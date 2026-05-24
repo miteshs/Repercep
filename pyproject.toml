@@ -63,6 +63,15 @@ nvidia = [
   # "flash-attn>=2.7",                  # install separately, see COSMOS_ON_H100.md
   "transformer-engine[pytorch]>=1.12",
 ]
+# Intel CPU AMX extras — Intel Extension for PyTorch (IPEX) for the
+# fused-attention path that explicitly targets AMX_BF16 on Sapphire
+# Rapids and newer.  OPTIONAL — Mirage's AMXSDPAAttention floor still
+# gets oneDNN-AMX wins on BF16 matmul without IPEX, and the custom
+# `kernels/cpu/amx_attn/` kernel is in-tree (no third-party dep).
+# See ADR-0007 and docs/COSMOS_ON_CPU.md.
+cpu = [
+  "intel-extension-for-pytorch>=2.6,<3",
+]
 dev = [
   "mypy>=1.11",
   "ruff>=0.6",
@@ -127,6 +136,8 @@ module = [
   "flash_attn.*",
   "flash_attn_interface.*",
   "transformer_engine.*",
+  "intel_extension_for_pytorch.*",
+  "kernels.cpu.*",
   "cosmos_guardrail.*",
   "nltk.*",
   "pytorchvideo.*",
