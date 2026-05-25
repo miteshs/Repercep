@@ -115,3 +115,188 @@ def test_quantize_linear_bfloat16_input() -> None:
     err = (reconstructed.to(torch.float32) - weight.to(torch.float32)).abs()
     rel = err / weight.to(torch.float32).abs().clamp(min=1e-3)
     assert rel.median().item() < 0.04
+
+
+def test_quantize_linear_bf16_roundtrip_within_scale() -> None:
+    """BF16 weight: round-trip error per element bounded by scale/127 + 1 ULP.
+
+    The tightest per-element bound for symmetric INT8 is scale/2 (half a
+    quantization step), but starting from a BF16 weight we also pay a
+    one-ULP BF16 truncation on the *input* to quantize and another on the
+    output of dequant.  Bound: scale/2 + 2 BF16 ULPs of the weight.
+    """
+    import torch
+
+    from mirage.runtime.quantize import dequantize_linear, quantize_linear_symmetric
+
+    torch.manual_seed(2)
+    weight = (torch.randn(32, 64) * 0.8).to(torch.bfloat16)
+    q = quantize_linear_symmetric(weight)
+    reconstructed = dequantize_linear(q, dtype=torch.bfloat16)
+    err = (reconstructed.to(torch.float32) - weight.to(torch.float32)).abs()
+    # scale/2 dominates here; the BF16 ULP slack accounts for a handful of
+    # boundary elements where rounding goes the long way.
+    per_row_bound = (q.scale * 0.5).unsqueeze(1).expand_as(err)
+    bf16_ulp_slack = weight.to(torch.float32).abs() * (2.0 ** -7)
+    assert (err <= per_row_bound + bf16_ulp_slack + 1e-8).all()
+
+
+def test_quantized_linear_module_matches_linear_bf16() -> None:
+    """``QuantizedLinearModule.forward`` matches ``nn.Linear.forward`` post-quant.
+
+    The reference here is *not* the original ``nn.Linear`` (which would
+    fail by design) but the ``nn.Linear`` rebuilt from the dequantized
+    weight — i.e. we assert the wrapper computes the same matmul as the
+    fallback dequant path, no extra error.
+    """
+    import torch
+
+    from mirage.runtime.quantize import (
+        dequantize_linear,
+        quantize_linear_symmetric,
+    )
+    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401 (PEP 562)
+
+    torch.manual_seed(3)
+    linear = torch.nn.Linear(8, 16).to(torch.bfloat16)
+    qmod = QuantizedLinearModule.from_linear(linear)
+
+    # Reference: a fresh Linear holding the dequantized weight + original bias.
+    ref = torch.nn.Linear(8, 16, bias=True).to(torch.bfloat16)
+    q = quantize_linear_symmetric(linear.weight, linear.bias)
+    with torch.no_grad():
+        ref.weight.copy_(dequantize_linear(q, dtype=torch.bfloat16))
+        ref.bias.copy_(linear.bias)
+
+    x = torch.randn(4, 8, dtype=torch.bfloat16)
+    out_q = qmod(x)
+    out_ref = ref(x)
+    # Same dequant, same matmul kernel — diff should be at most BF16
+    # accumulation slop.
+    diff = (out_q.to(torch.float32) - out_ref.to(torch.float32)).abs().max().item()
+    assert diff < 1e-2, f"qmod vs ref max diff = {diff:.4e}"
+
+
+def test_quantized_linear_module_error_vs_original_bounded() -> None:
+    """Sanity: error vs the *original* Linear is bounded by per-row scale * ||x||."""
+    import torch
+
+    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+
+    torch.manual_seed(4)
+    linear = torch.nn.Linear(8, 16, bias=False).to(torch.bfloat16)
+    qmod = QuantizedLinearModule.from_linear(linear)
+
+    x = torch.randn(4, 8, dtype=torch.bfloat16)
+    out_q = qmod(x).to(torch.float32)
+    out_ref = linear(x).to(torch.float32)
+    err = (out_q - out_ref).abs()
+    # Per-row weight error <= scale/2, so per-row output error <= (scale/2) * ||x||_1
+    # plus BF16 matmul slop.  Use a relaxed bound that's still meaningful.
+    x_l1 = x.to(torch.float32).abs().sum(dim=-1, keepdim=True)
+    scale = qmod.scale.unsqueeze(0)
+    bound = 0.5 * scale * x_l1 + 1e-2
+    assert (err <= bound).all(), f"max err / bound = {(err / bound).max().item():.3f}"
+
+
+def test_quantized_linear_module_preserves_bias() -> None:
+    """Bias passes through the swap and is reachable from ``parameters()``."""
+    import torch
+
+    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+
+    linear = torch.nn.Linear(8, 4).to(torch.bfloat16)
+    qmod = QuantizedLinearModule.from_linear(linear)
+    assert qmod.bias is not None
+    assert torch.equal(qmod.bias.detach(), linear.bias.detach())
+    assert any(p is qmod.bias for p in qmod.parameters())
+
+    # And the bias=False case yields a None bias attribute.
+    linear_nb = torch.nn.Linear(8, 4, bias=False).to(torch.bfloat16)
+    qmod_nb = QuantizedLinearModule.from_linear(linear_nb)
+    assert qmod_nb.bias is None
+
+
+def test_replace_linears_with_quantized_swaps_in_place() -> None:
+    """Every ``nn.Linear`` is replaced; non-Linear children are untouched."""
+    import torch
+
+    from mirage.runtime.quantize import (
+        replace_linears_with_quantized,
+    )
+    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+
+    class Toy(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.dit = torch.nn.Sequential(
+                torch.nn.Linear(8, 8),
+                torch.nn.ReLU(),
+                torch.nn.Linear(8, 8),
+            )
+            self.vae = torch.nn.Sequential(
+                torch.nn.Linear(4, 4),
+            )
+            self.norm = torch.nn.LayerNorm(8)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # not exercised here
+            return self.dit(x)
+
+    m = Toy()
+    n = replace_linears_with_quantized(m)
+    assert n == 3
+    # Every Linear is now a QuantizedLinearModule; the ReLU + LayerNorm are
+    # left intact.
+    assert isinstance(m.dit[0], QuantizedLinearModule)
+    assert isinstance(m.dit[1], torch.nn.ReLU)
+    assert isinstance(m.dit[2], QuantizedLinearModule)
+    assert isinstance(m.vae[0], QuantizedLinearModule)
+    assert isinstance(m.norm, torch.nn.LayerNorm)
+    # And no nn.Linear instances remain anywhere in the tree.
+    assert not any(isinstance(sub, torch.nn.Linear) for sub in m.modules())
+
+
+def test_replace_linears_with_quantized_filters_by_name() -> None:
+    """With ``name_filter="dit"``, the VAE linear is left alone."""
+    import torch
+
+    from mirage.runtime.quantize import (
+        replace_linears_with_quantized,
+    )
+    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+
+    class Toy(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.dit = torch.nn.Sequential(
+                torch.nn.Linear(8, 8),
+                torch.nn.Linear(8, 8),
+            )
+            self.vae = torch.nn.Linear(4, 4)
+
+    m = Toy()
+    n = replace_linears_with_quantized(m, name_filter="dit")
+    assert n == 2
+    assert isinstance(m.dit[0], QuantizedLinearModule)
+    assert isinstance(m.dit[1], QuantizedLinearModule)
+    # The VAE linear must be untouched — same instance type, same identity.
+    assert isinstance(m.vae, torch.nn.Linear)
+    assert not isinstance(m.vae, QuantizedLinearModule)
+
+
+def test_replace_linears_preserves_bias_through_swap() -> None:
+    """Bias on the original Linear shows up on the wrapper after swap."""
+    import torch
+
+    from mirage.runtime.quantize import replace_linears_with_quantized
+
+    m = torch.nn.Sequential(
+        torch.nn.Linear(8, 16, bias=True),
+        torch.nn.Linear(16, 4, bias=False),
+    )
+    original_bias = m[0].bias.detach().clone()
+    n = replace_linears_with_quantized(m)
+    assert n == 2
+    assert m[0].bias is not None
+    assert torch.equal(m[0].bias.detach(), original_bias)
+    assert m[1].bias is None
