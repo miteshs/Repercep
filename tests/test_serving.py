@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient
 
 from mirage.serving.app import create_app

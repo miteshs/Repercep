@@ -23,6 +23,11 @@ class AttentionOp(Protocol):
 
     name: str
 
+    @property
+    def available(self) -> bool:
+        """True when the concrete kernel can be used on this host."""
+        ...
+
     def supports(self, shape: AttentionShape, dtype: DType) -> bool:
         """True if this op can correctly run the given problem shape and dtype."""
         ...

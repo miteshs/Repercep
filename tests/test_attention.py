@@ -28,10 +28,17 @@ def test_naive_supports_any_shape() -> None:
     assert NaiveAttention().supports(odd, DType.FP32)
 
 
+def test_naive_declares_available() -> None:
+    op = NaiveAttention()
+    assert isinstance(op, AttentionOp)
+    assert op.available is True
+
+
 def test_select_returns_attention_op() -> None:
     shape = AttentionShape(batch=1, heads=16, seq_len_q=1024, seq_len_kv=1024, head_dim=128)
     op = select_attention_op(MI300X, shape, DType.BF16)
     assert isinstance(op, AttentionOp)
+    assert isinstance(op.available, bool)
     # Without the CK flash-attn build installed, selection falls to the floor.
     assert op.name in ("rocm-ck-flash", "naive-sdpa")
 

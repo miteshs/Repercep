@@ -146,15 +146,18 @@ class WanEngine:
 
         # diffusers ships only partial type info: from_pretrained reads as an
         # untyped call under mypy --strict. The signature is well-defined.
-        vae = AutoencoderKLWan.from_pretrained(  # type: ignore[no-untyped-call]
+        vae = AutoencoderKLWan.from_pretrained(
             self._config.repo_id, subfolder="vae", torch_dtype=vae_dtype
         )
-        pipe = WanPipeline.from_pretrained(  # type: ignore[no-untyped-call]
+        pipe = WanPipeline.from_pretrained(
             self._config.repo_id, vae=vae, torch_dtype=compute_dtype
         )
         pipe.to(device)
         if self._config.vae_tiling:
             pipe.vae.enable_tiling()
+        from mirage.attention.wan_processor import maybe_install_mirage_wan_attention
+
+        maybe_install_mirage_wan_attention(pipe)
         if self._config.compile_transformer:
             pipe.transformer = torch.compile(pipe.transformer)
             # MoE A14B variants ship a second transformer for low-noise steps.

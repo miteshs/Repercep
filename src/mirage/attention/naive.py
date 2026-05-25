@@ -25,6 +25,7 @@ class NaiveAttention:
     """
 
     name = "naive-sdpa"
+    available = True
 
     def supports(self, shape: AttentionShape, dtype: DType) -> bool:
         return True

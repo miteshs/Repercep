@@ -141,38 +141,32 @@ kernels-cpu: kernels-cpu-bf16 kernels-cpu-int8 kernels-cpu-fp16
 kernels-cpu-bf16:
 	@if [ ! -d kernels/cpu/amx_attn ]; then \
 	    echo "kernels/cpu/amx_attn missing — skipping AMX BF16 build"; \
-	    exit 0; \
-	fi
-	@if ! grep -q amx_bf16 /proc/cpuinfo 2>/dev/null; then \
+	elif ! grep -q amx_bf16 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_bf16; AMX BF16 kernel build skipped"; \
-	    exit 0; \
+	else \
+	    echo "==> building CPU AMX BF16 flash kernel in kernels/cpu/amx_attn/"; \
+	    cd kernels/cpu/amx_attn && $(PY) setup.py build_ext --inplace; \
 	fi
-	@echo "==> building CPU AMX BF16 flash kernel in kernels/cpu/amx_attn/"
-	cd kernels/cpu/amx_attn && $(PY) setup.py build_ext --inplace
 
 kernels-cpu-int8:
 	@if [ ! -d kernels/cpu/amx_int8_attn ]; then \
 	    echo "kernels/cpu/amx_int8_attn missing — skipping AMX INT8 build"; \
-	    exit 0; \
-	fi
-	@if ! grep -q amx_int8 /proc/cpuinfo 2>/dev/null; then \
+	elif ! grep -q amx_int8 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_int8; AMX INT8 kernel build skipped"; \
-	    exit 0; \
+	else \
+	    echo "==> building CPU AMX INT8 flash kernel in kernels/cpu/amx_int8_attn/"; \
+	    cd kernels/cpu/amx_int8_attn && $(PY) setup.py build_ext --inplace; \
 	fi
-	@echo "==> building CPU AMX INT8 flash kernel in kernels/cpu/amx_int8_attn/"
-	cd kernels/cpu/amx_int8_attn && $(PY) setup.py build_ext --inplace
 
 kernels-cpu-fp16:
 	@if [ ! -d kernels/cpu/amx_fp16_attn ]; then \
 	    echo "kernels/cpu/amx_fp16_attn missing — skipping AMX FP16 build"; \
-	    exit 0; \
-	fi
-	@if ! grep -q amx_fp16 /proc/cpuinfo 2>/dev/null; then \
+	elif ! grep -q amx_fp16 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_fp16 (Granite Rapids+); AMX FP16 kernel build skipped"; \
-	    exit 0; \
+	else \
+	    echo "==> building CPU AMX FP16 flash kernel in kernels/cpu/amx_fp16_attn/"; \
+	    cd kernels/cpu/amx_fp16_attn && $(PY) setup.py build_ext --inplace; \
 	fi
-	@echo "==> building CPU AMX FP16 flash kernel in kernels/cpu/amx_fp16_attn/"
-	cd kernels/cpu/amx_fp16_attn && $(PY) setup.py build_ext --inplace
 
 lint-all: lint rust-fmt-check rust-clippy
 

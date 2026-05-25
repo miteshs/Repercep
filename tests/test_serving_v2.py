@@ -14,6 +14,8 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+
+pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient
 
 from mirage.runtime.engine import EngineInfo

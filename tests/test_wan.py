@@ -7,7 +7,13 @@ GPU, and is exercised by ``scripts/run_wan.py`` rather than the unit suite.
 
 from __future__ import annotations
 
-from typing import Any
+import sys
+import types
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from mirage.backend.rocm import ROCmBackend
 from mirage.models import (
@@ -18,6 +24,74 @@ from mirage.models import (
     WanEngine,
 )
 from mirage.runtime.engine import WorldModelEngine
+
+
+@contextmanager
+def _fake_diffusers_loader(fake_vae: Any, fake_pipe: Any) -> Iterator[None]:
+    """Provide just enough of diffusers for WanEngine.load unit tests."""
+
+    module = types.ModuleType("diffusers")
+
+    class FakeAutoencoderKLWan:
+        @staticmethod
+        def from_pretrained(*args: Any, **kwargs: Any) -> Any:
+            return fake_vae
+
+    class FakeWanPipeline:
+        @staticmethod
+        def from_pretrained(*args: Any, **kwargs: Any) -> Any:
+            return fake_pipe
+
+    module.__dict__["AutoencoderKLWan"] = FakeAutoencoderKLWan
+    module.__dict__["WanPipeline"] = FakeWanPipeline
+    prior = sys.modules.get("diffusers")
+    sys.modules["diffusers"] = module
+    try:
+        yield
+    finally:
+        if prior is None:
+            sys.modules.pop("diffusers", None)
+        else:
+            sys.modules["diffusers"] = prior
+
+
+@contextmanager
+def _fake_wan_processor_module(processor_cls: type[Any]) -> Iterator[None]:
+    """Provide the diffusers WanAttnProcessor import path only."""
+
+    module_names = (
+        "diffusers",
+        "diffusers.models",
+        "diffusers.models.transformers",
+        "diffusers.models.transformers.transformer_wan",
+    )
+    prior = {name: sys.modules.get(name) for name in module_names}
+
+    diffusers = types.ModuleType("diffusers")
+    diffusers.__dict__["__path__"] = []
+    models = types.ModuleType("diffusers.models")
+    models.__dict__["__path__"] = []
+    transformers = types.ModuleType("diffusers.models.transformers")
+    transformers.__dict__["__path__"] = []
+    transformer_wan = types.ModuleType("diffusers.models.transformers.transformer_wan")
+    transformer_wan.__dict__["WanAttnProcessor"] = processor_cls
+
+    diffusers.__dict__["models"] = models
+    models.__dict__["transformers"] = transformers
+    transformers.__dict__["transformer_wan"] = transformer_wan
+
+    sys.modules["diffusers"] = diffusers
+    sys.modules["diffusers.models"] = models
+    sys.modules["diffusers.models.transformers"] = transformers
+    sys.modules["diffusers.models.transformers.transformer_wan"] = transformer_wan
+    try:
+        yield
+    finally:
+        for name, module in prior.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def test_wan_engine_satisfies_engine_protocol() -> None:
@@ -136,16 +210,13 @@ def test_wan_config_vae_tiling_default_off() -> None:
 
 def test_wan_engine_load_calls_enable_tiling_when_vae_tiling_true() -> None:
     """vae_tiling=True must invoke pipe.vae.enable_tiling() during load()."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     fake_vae = MagicMock(name="vae")
     fake_pipe = MagicMock(name="pipe")
     fake_pipe.vae = fake_vae
 
-    with (
-        patch("diffusers.AutoencoderKLWan.from_pretrained", return_value=fake_vae),
-        patch("diffusers.WanPipeline.from_pretrained", return_value=fake_pipe),
-    ):
+    with _fake_diffusers_loader(fake_vae, fake_pipe):
         engine = WanEngine(backend=ROCmBackend(), config=WanConfig(vae_tiling=True))
         engine.load()
 
@@ -154,20 +225,94 @@ def test_wan_engine_load_calls_enable_tiling_when_vae_tiling_true() -> None:
 
 def test_wan_engine_load_does_not_call_enable_tiling_when_vae_tiling_false() -> None:
     """vae_tiling=False (default) must NOT touch enable_tiling."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     fake_vae = MagicMock(name="vae")
     fake_pipe = MagicMock(name="pipe")
     fake_pipe.vae = fake_vae
 
-    with (
-        patch("diffusers.AutoencoderKLWan.from_pretrained", return_value=fake_vae),
-        patch("diffusers.WanPipeline.from_pretrained", return_value=fake_pipe),
-    ):
+    with _fake_diffusers_loader(fake_vae, fake_pipe):
         engine = WanEngine(backend=ROCmBackend(), config=WanConfig(vae_tiling=False))
         engine.load()
 
     fake_vae.enable_tiling.assert_not_called()
+
+
+def test_wan_attention_installer_noops_without_env(monkeypatch: Any) -> None:
+    from mirage.attention.wan_processor import maybe_install_mirage_wan_attention
+
+    class FakeTransformer:
+        def __init__(self) -> None:
+            self.processor: Any | None = None
+
+        def set_attn_processor(self, processor: Any) -> None:
+            self.processor = processor
+
+    fake_pipe = types.SimpleNamespace(transformer=FakeTransformer(), transformer_2=None)
+    monkeypatch.delenv("MIRAGE_FP8_ATTENTION", raising=False)
+
+    assert maybe_install_mirage_wan_attention(fake_pipe) is False
+    assert fake_pipe.transformer.processor is None
+
+
+def test_wan_attention_installer_sets_mirage_backend(monkeypatch: Any) -> None:
+    from mirage.attention import diffusers_backend
+    from mirage.attention.wan_processor import maybe_install_mirage_wan_attention
+
+    class FakeWanAttnProcessor:
+        _attention_backend: Any
+        _mirage_attention_backend: str
+
+        pass
+
+    class FakeTransformer:
+        def __init__(self) -> None:
+            self.processor: Any | None = None
+
+        def set_attn_processor(self, processor: Any) -> None:
+            self.processor = processor
+
+    fake_pipe = types.SimpleNamespace(
+        transformer=FakeTransformer(),
+        transformer_2=FakeTransformer(),
+    )
+    monkeypatch.setenv("MIRAGE_FP8_ATTENTION", "fa")
+    monkeypatch.setattr(
+        diffusers_backend,
+        "register_mirage_fp8_backend",
+        lambda: "mirage-backend",
+    )
+
+    with _fake_wan_processor_module(FakeWanAttnProcessor):
+        assert maybe_install_mirage_wan_attention(fake_pipe) is True
+
+    for transformer in (fake_pipe.transformer, fake_pipe.transformer_2):
+        assert isinstance(transformer.processor, FakeWanAttnProcessor)
+        assert transformer.processor._attention_backend == "mirage-backend"
+        assert transformer.processor._mirage_attention_backend == "mirage_fp8"
+
+
+def test_wan_engine_load_invokes_attention_installer(monkeypatch: Any) -> None:
+    from unittest.mock import MagicMock
+
+    import mirage.attention.wan_processor as wan_processor
+
+    fake_vae = MagicMock(name="vae")
+    fake_pipe = MagicMock(name="pipe")
+    fake_pipe.vae = fake_vae
+    calls: list[Any] = []
+
+    def fake_install(pipe: Any) -> bool:
+        calls.append(pipe)
+        return True
+
+    monkeypatch.setattr(wan_processor, "maybe_install_mirage_wan_attention", fake_install)
+
+    with _fake_diffusers_loader(fake_vae, fake_pipe):
+        engine = WanEngine(backend=ROCmBackend())
+        engine.load()
+
+    assert calls == [fake_pipe]
 
 
 def _make_engine_with_fake_pipe(boundary_ratio: float | None) -> tuple[WanEngine, Any]:
