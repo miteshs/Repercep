@@ -69,8 +69,16 @@ nvidia = [
 # gets oneDNN-AMX wins on BF16 matmul without IPEX, and the custom
 # `kernels/cpu/amx_attn/` kernel is in-tree (no third-party dep).
 # See ADR-0007 and docs/COSMOS_ON_CPU.md.
+#
+# The PEP 508 marker gates IPEX to Linux x86_64 because Intel only
+# publishes wheels for that platform — on macOS (Intel or Apple
+# Silicon) or ARM Linux the dependency would otherwise fail to
+# resolve and turn `pip install -e ".[cpu]"` into a hard error on
+# every developer laptop that isn't a Xeon box. Off-platform users
+# still get a working install; they just fall back to the AMX SDPA
+# floor, which is the documented behaviour above.
 cpu = [
-  "intel-extension-for-pytorch>=2.6,<3",
+  "intel-extension-for-pytorch>=2.6,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 dev = [
   "mypy>=1.11",
