@@ -110,9 +110,9 @@ is the second-run figure.
 
 | | |
 |---|---|
-| Total generation | **37.7 s** |
+| Total generation (mean over 5 prompts × 5 seeds) | **37.66 ± 0.31 s** (range 37.4–38.0 s, spread 1.59 %) |
 | Per step (avg DiT call) | 2.09 s |
-| Peak HBM | **66.4 GiB** |
+| Peak HBM | **66.4 GiB** (identical across all 5 runs — allocator deterministic) |
 | Load (warm page cache) | 64.6 s |
 | DiT loop | 33.4 s (89 % of total) — hi-noise 12.65 s / 6 calls + lo-noise 20.73 s / 10 calls |
 | VAE decode | 3.15 s |
@@ -122,6 +122,14 @@ H100 here is **1.20 × faster** than MI300X's 45.2 s warm smoke at the
 same shape. Peak HBM is **18 GiB lower** than MI300X's 84.3 GiB —
 attributable to the new VAE tiling rather than silicon (MI300X had
 the headroom and didn't tile).
+
+The 1.59 % variance is **tighter than Cosmos's 3.86 % at 121f/36** (per
+SESSION_16_CLOSE §1) — consistent with F40 (no FA-3 dispatch =
+no kernel-selection variance) and the smaller shape having fewer
+kernels overall.  Reproduce via
+`MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+HF_HOME=/workspace/hf-cache .venv/bin/python scripts/verify_wan_timing.py --N 5`;
+sidecar JSON written to `benchmark-results/verify_wan_timing_<ts>.json`.
 
 ### Quality reference — 81 f / 40 steps, 1280 × 720 (canonical Wan reference shape)
 
@@ -184,18 +192,19 @@ The answer (this work):
 
 ## Caveats
 
-- **FA-3 bridge appears NOT to engage on Wan end-to-end (F40).** The
-  Mirage source-built FA-3 (`flash-attention/hopper` minimal config,
-  per `SESSION_16_CLOSE.md` §2) is installed and the diffusers bridge
-  is active (`MIRAGE_FP8_ATTENTION=fa`), but the Wan-vs-MI300X
-  speedup is ~5-9 % — close to the silicon delta, not the 3.81 ×
-  Cosmos shows under the same bridge. Suspected root cause is the
-  same F36 issue: `WanTransformer3DModel`'s diffusers attention
-  layers may bypass the `_AttentionBackendRegistry` dispatcher in a
-  way Cosmos's transformer doesn't. Wan-side attention thus
-  effectively runs through SDPA → cuDNN flash; FA-3's WGMMA-based
-  Hopper kernel never sees the call. Investigation is queued — see
-  the BUILD_LOG F40 entry.
+- **FA-3 bridge does NOT engage on Wan end-to-end (F40, confirmed).**
+  The Mirage source-built FA-3 (`flash-attention/hopper` minimal
+  config, per `SESSION_16_CLOSE.md` §2) is installed and the diffusers
+  bridge is active (`MIRAGE_FP8_ATTENTION=fa`), but
+  `scripts/trace_wan_attention.py` shows **0 dispatcher engagements
+  and 780 direct `torch.F.scaled_dot_product_attention` calls** over
+  one 17 f / 4 step smoke. `WanTransformer3DModel`'s attention layers
+  bypass `_AttentionBackendRegistry` entirely — the same F36 pattern
+  Cosmos's diffusers pipeline exhibited.  Wan-side attention runs
+  through cuDNN-flash internally; FA-3's WGMMA-based Hopper kernel
+  never sees the call. Result: today's `MIRAGE_FP8_ATTENTION=fa`
+  flag is informational, not load-bearing, for Wan. See BUILD_LOG
+  F40 for the trace + fix paths.
 - **VAE tiling is required.** Without `--vae-tiling`, the run OOMs
   at the VAE decode step regardless of `PYTORCH_CUDA_ALLOC_CONF=
   expandable_segments:True` (which recovers ~3 GiB of fragmentation

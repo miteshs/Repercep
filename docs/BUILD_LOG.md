@@ -2014,13 +2014,44 @@ registry (`_AttentionBackendRegistry`) is the capture point for
 Cosmos's `CosmosTransformer3DModel`, but `WanTransformer3DModel`
 appears to take a different path — either calling SDPA directly,
 or going through a per-block flag that doesn't read the active
-backend.  Confirming the root cause needs a forward-hook trace
-through one Wan attention block (count the dispatcher calls; if
-zero, that's F36 on Wan).
+backend.
+
+**Confirmed empirically.**  `scripts/trace_wan_attention.py`
+patches `_mirage_fp8_attention`, `_native_fallback`, AND
+`torch.nn.functional.scaled_dot_product_attention` with counters,
+then runs one 17 f / 4 step Wan smoke under
+`MIRAGE_FP8_ATTENTION=fa`.  Result:
+
+```
+=== ATTENTION DISPATCHER COUNTERS ===
+  torch.F.scaled_dot_product_attention (direct)   780
+
+=== VERDICT ===
+  F40 CONFIRMED: bridge engaged 0x; 780 direct SDPA calls.
+  WanTransformer3DModel bypasses _AttentionBackendRegistry.
+```
+
+780 SDPA calls over 4 steps × 2 CFG forwards × ~98 attention
+sublayers ≈ 195 calls / step / forward, consistent with Wan A14B's
+30 transformer blocks × ~3 attention paths (self + cross) per block.
+The Mirage diffusers bridge is a dead lever on Wan today.
 
 Until that's fixed, FA-3 is dead weight on Wan and `MIRAGE_FP8_
 ATTENTION=fa` is informational, not load-bearing.  Wired into
 `docs/WAN_ON_H100.md` Caveats and Reproduce sections.
+
+**Fix paths**, ranked by surface area:
+
+1. **Diffusers `set_attn_processor` API.**  Inject a custom
+   `WanAttnProcessor` that calls `mirage.attention.select_attention_op`
+   directly.  Targeted to Wan, doesn't perturb other models.
+2. **Monkey-patch `torch.nn.functional.scaled_dot_product_attention`**
+   inside `WanEngine.load()` for the duration of the run.  Heavy
+   hammer but works for any model that calls SDPA directly; can
+   gate by query shape to route only Wan-sized attention.
+3. **Patch `WanTransformer3DModel.forward` upstream in diffusers.**
+   Right fix architecturally but requires a diffusers PR; not in
+   our control.
 
 ### F41 — pytest tolerance assertion incompatible with bf16 when FA-3 changes the dispatcher route
 

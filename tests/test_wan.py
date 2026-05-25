@@ -7,6 +7,8 @@ GPU, and is exercised by ``scripts/run_wan.py`` rather than the unit suite.
 
 from __future__ import annotations
 
+from typing import Any
+
 from mirage.backend.rocm import ROCmBackend
 from mirage.models import (
     WAN_DEFAULT_REPO,
@@ -124,6 +126,105 @@ def test_wan_profile_dit_share_zero_when_total_zero() -> None:
         compiled=False,
     )
     assert prof.dit_share == 0.0
+
+
+def test_wan_config_vae_tiling_default_off() -> None:
+    # Default-off keeps the MI300X (192 GiB) baseline path unchanged; the flag
+    # is opt-in for the 80 GiB H100 envelope.
+    assert WanConfig().vae_tiling is False
+
+
+def test_wan_engine_load_calls_enable_tiling_when_vae_tiling_true() -> None:
+    """vae_tiling=True must invoke pipe.vae.enable_tiling() during load()."""
+    from unittest.mock import MagicMock, patch
+
+    fake_vae = MagicMock(name="vae")
+    fake_pipe = MagicMock(name="pipe")
+    fake_pipe.vae = fake_vae
+
+    with (
+        patch("diffusers.AutoencoderKLWan.from_pretrained", return_value=fake_vae),
+        patch("diffusers.WanPipeline.from_pretrained", return_value=fake_pipe),
+    ):
+        engine = WanEngine(backend=ROCmBackend(), config=WanConfig(vae_tiling=True))
+        engine.load()
+
+    fake_vae.enable_tiling.assert_called_once()
+
+
+def test_wan_engine_load_does_not_call_enable_tiling_when_vae_tiling_false() -> None:
+    """vae_tiling=False (default) must NOT touch enable_tiling."""
+    from unittest.mock import MagicMock, patch
+
+    fake_vae = MagicMock(name="vae")
+    fake_pipe = MagicMock(name="pipe")
+    fake_pipe.vae = fake_vae
+
+    with (
+        patch("diffusers.AutoencoderKLWan.from_pretrained", return_value=fake_vae),
+        patch("diffusers.WanPipeline.from_pretrained", return_value=fake_pipe),
+    ):
+        engine = WanEngine(backend=ROCmBackend(), config=WanConfig(vae_tiling=False))
+        engine.load()
+
+    fake_vae.enable_tiling.assert_not_called()
+
+
+def _make_engine_with_fake_pipe(boundary_ratio: float | None) -> tuple[WanEngine, Any]:
+    """Construct a WanEngine whose loaded pipe is a MagicMock with a chosen
+    boundary_ratio. Returns (engine, fake_pipe) so the test can inspect the
+    kwargs passed to fake_pipe.__call__."""
+    from unittest.mock import MagicMock
+
+    fake_pipe = MagicMock(name="pipe")
+    fake_pipe.config.boundary_ratio = boundary_ratio
+    # Mock the __call__ return: output.frames[0] must be a tensor convertible
+    # via _as_frame_tensor. Easiest: return uint8 frames-tensor of shape
+    # (T, C, H, W) in [0, 1].
+    import torch
+
+    fake_frames = torch.zeros((2, 3, 64, 64), dtype=torch.float32)
+    fake_pipe.return_value.frames = [fake_frames]
+
+    engine = WanEngine(backend=ROCmBackend())
+    engine._pipe = fake_pipe  # bypass load()
+    return engine, fake_pipe
+
+
+def test_wan_engine_passes_guidance_scale_2_for_moe_variant() -> None:
+    """A14B (boundary_ratio != None) must receive guidance_scale_2."""
+    from mirage.runtime.types import GenerationParams, GenerationRequest
+
+    engine, fake_pipe = _make_engine_with_fake_pipe(boundary_ratio=0.875)
+    request = GenerationRequest(
+        prompt="x", negative_prompt="y",
+        params=GenerationParams(num_frames=2, num_inference_steps=2, height=64, width=64,
+                                guidance_scale=4.0, fps=16, seed=0),
+    )
+    _ = list(engine.generate(request))
+    _, kwargs = fake_pipe.call_args
+    assert "guidance_scale_2" in kwargs
+    assert kwargs["guidance_scale_2"] == 3.0  # WanConfig default
+
+
+def test_wan_engine_omits_guidance_scale_2_for_non_moe_variant() -> None:
+    """TI2V-5B (boundary_ratio == None) must NOT receive guidance_scale_2.
+
+    Diffusers raises ``ValueError: guidance_scale_2 is only supported when
+    the pipeline's boundary_ratio is not None`` if the kwarg is passed to a
+    non-MoE Wan variant. See BUILD_LOG F39.
+    """
+    from mirage.runtime.types import GenerationParams, GenerationRequest
+
+    engine, fake_pipe = _make_engine_with_fake_pipe(boundary_ratio=None)
+    request = GenerationRequest(
+        prompt="x", negative_prompt="y",
+        params=GenerationParams(num_frames=2, num_inference_steps=2, height=64, width=64,
+                                guidance_scale=4.0, fps=16, seed=0),
+    )
+    _ = list(engine.generate(request))
+    _, kwargs = fake_pipe.call_args
+    assert "guidance_scale_2" not in kwargs
 
 
 def test_wan_profile_dit_share_reports_loop_fraction() -> None:
