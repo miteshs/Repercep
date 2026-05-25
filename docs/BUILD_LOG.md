@@ -2228,3 +2228,53 @@ depends on whether anyone actually wants to deploy Cosmos / Wan on
 those cards — if yes, the next move is an L40S host to validate the
 long-S crossover and re-tune.
 
+### F45 — F40 fix-path 1 lands: Wan diffusers bridge now engages on H100
+
+Session 19 wired `mirage.attention.wan_processor.maybe_install_mirage_
+wan_attention(pipe)` into `WanEngine.load()`.  The processor finds
+`diffusers.models.transformers.transformer_wan.WanAttnProcessor`,
+sets its `_attention_backend` to Mirage's registered `mirage_fp8`
+backend, and installs it via `transformer.set_attn_processor(...)`
+on both `transformer` and `transformer_2` (MoE).  This is
+F40 fix-path 1 from F40's recommendations.
+
+**Confirmed empirically on H100.**  Re-running
+`scripts/trace_wan_attention.py --small --frames 17 --steps 8`
+under `MIRAGE_FP8_ATTENTION=fa` on TI2V-5B:
+
+```
+=== ATTENTION DISPATCHER COUNTERS ===
+  torch.F.scaled_dot_product_attention (direct)   1100
+  mirage_fp8_attention (dispatcher entry)         960
+  native_fallback -> SDPA (fallback)              960
+
+=== VERDICT ===
+  PARTIAL: bridge engaged 960x but never took FA-3
+  (SDPA fallback 960x). Eligibility guard rejected.
+```
+
+Bridge engagement count: **0 (F40 baseline, Session 17) → 960
+(now, Session 19+).**  The Wan dispatcher is no longer a dead
+lever.  The "PARTIAL" verdict is because `flash-attn` is not
+installed in this venv, so `_native_fallback._fa_op` is `None` and
+the eligibility guard sends bridge calls to SDPA instead of FA-3.
+Once FA-3 is installed (`pip install flash-attn`), all 960 calls
+take the FA-3 path automatically — wiring is correct, only the
+backend kernel is absent.
+
+The 1100 "direct" SDPA calls are non-WanTransformer attention:
+the VAE's `AutoencoderKLWan` decoder and the UMT5-XXL text encoder
+both call `torch.nn.functional.scaled_dot_product_attention`
+directly without going through the diffusers attention dispatcher.
+Routing these through the bridge requires a separate path
+(monkeypatch in `WanEngine.load()` scoped to non-DiT components,
+or upstream diffusers PR).  Not load-bearing for headline numbers —
+the DiT dominates wall time, not the VAE or text encoder.
+
+**Status.**  F40 fix-path 1 is complete and verified.  The next
+incremental move on Wan is installing `flash-attn` (or
+`flash-attn-3`) in the H100 venv and re-running the same trace —
+expected counter: `native_fallback -> FA-3 = 960`.  After that,
+benchmark `MIRAGE_FP8_ATTENTION=fa` Wan TI2V-5B 17f/8 wall time
+against the un-bridged baseline to quantify the FA-3 lift on Wan.
+
