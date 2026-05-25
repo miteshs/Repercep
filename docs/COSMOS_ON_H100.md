@@ -121,30 +121,70 @@ this is testable.
 
 ## Quantitative cache quality
 
-**Deferred to Session 15.** Session 14 produced the timing numbers
-on a single (prompt, seed=0) per configuration. The full
-quality-sweep methodology mirrors `docs/COSMOS_ON_MI300X.md`
-§"Quantitative cache quality" but requires:
+**Measured Session 17 (2026-05-25).**  Single (prompt, seed=0) pair
+at the canonical 121 f / 36 step config, both runs with
+`MIRAGE_FP8_ATTENTION=fa --native-loop` so the FA-3 dispatch and
+loop are identical and the cache is the *only* difference.  Inputs:
 
-- LPIPS / PSNR / mean |Δframe| of adaptive vs no-cache on the same
-  (prompt, seed) — the same `scripts/verify_quality.py` runs
-  vendor-independently.
-- A threshold curve at `--cache-adaptive-threshold ∈
-  {0.05, 0.10, 0.20, 0.30, 0.50}` mapping wall time and LPIPS.
-- 5-pair multi-prompt FVD via `scripts/compute_fvd.py` (I3D
-  backbone, 8 clips/video, 40 features per side — same protocol as
-  MI300X Session 13).
+- `benchmark-results/cosmos_h100_nocache.mp4` — `--cache-mode none`,
+  wall 310.3 s, 52.5 GiB peak.
+- `benchmark-results/cosmos_h100_adaptive.mp4` — `--cache-mode
+  adaptive --cache-adaptive-threshold 0.30 --cache-force-full-every
+  16`, wall 95.8 s, 52.5 GiB peak.  (Single-run wall is below the
+  Session-16 mean 99.6 s and inside the variance band.)
 
-We have the artifacts to do this:
-`/workspace/benchmark-results/cosmos_h100_baseline.mp4` is the
-no-cache reference; `cosmos_h100_adaptive.mp4` is the cached
-candidate at thr=0.30. The MI300X-side comparison ran ~0.6 LPIPS
-across all thresholds; the H100 cache is unlikely to differ
-materially (the cache gate is FP32 latent arithmetic, vendor-
-independent), but the *FP8* path's contribution to quality could
-diverge if the e4m3fn (Hopper, 448 max) range gives the adaptive +
-FP8 path a fidelity edge over the e4m3fnuz (MI300X, 240 max) — a
-small effect, ~0.005 LPIPS at most. Session 15 measures.
+Pixel-level comparison via `scripts/verify_quality.py`:
+
+| metric | value | what it tells you |
+|---|---|---|
+| **LPIPS** vs no-cache | **0.6067 mean** (range 0.579-0.632) | "substantially different" at strict pixel level |
+| **PSNR** vs no-cache | 14.11 dB mean | low-PSNR regime; consistent with trajectory divergence, not noise |
+| **MSE** vs no-cache | 2560.7 mean | uint8 scale; same regime as MI300X |
+| no-cache mean \|Δframe\| | **9.13** | inter-frame motion in the reference |
+| adaptive mean \|Δframe\| | **6.00** | **−34 % motion** vs no-cache |
+| no-cache mean brightness | 113.65 | |
+| adaptive mean brightness | 117.78 | **+3.6 %** (preserved) |
+| no-cache pixel std | 73.80 | |
+| adaptive pixel std | 74.31 | preserved (0.7 % delta) |
+
+**How to read this — F23 framing applied to H100.**  Pixel-LPIPS at
+0.61 looks alarming, but F23 (`docs/BUILD_LOG.md` "Adaptive caching is
+trajectory-divergent, NOT 'quality-preserved'") settled the
+interpretation on MI300X: at this LPIPS level the cached output is a
+*different trajectory* (different motion path, different per-frame
+detail) of the *same valid generation* — brightness and std are
+preserved, motion is compressed ~30 %.  H100 reproduces the MI300X
+finding within a few percentage points:
+
+| | MI300X (F23) | H100 (this measurement) |
+|---|---|---|
+| LPIPS vs no-cache | 0.645 | **0.6067** |
+| Motion compression | −28 % | **−34 %** |
+| Brightness drift | preserved | preserved (+3.6 %) |
+| Pixel std drift | preserved | preserved (+0.7 %) |
+
+H100 is in the same regime as MI300X — slightly lower LPIPS, slightly
+more motion compression.  No quality cliff that's silicon-specific.
+
+**What this measurement does and doesn't close:**
+
+- ✓ The Session-15 deferred "is the cache silently degrading on H100?"
+  question.  Answer: cache behaves the same on H100 as it does on
+  MI300X.  The 99.6 s headline (and the 3.81 × claim that depends on
+  it) now rests on a measured, not assumed, quality result.
+- ✗ The "are these generations equivalent quality" question.  Strict-
+  pixel LPIPS at 0.6 is *not* "quality-preserved" — it's "trajectory-
+  divergent, same model + same prompt".  The right quality arbiter for
+  diffusion outputs at this divergence level is **FVD against a
+  held-out eval set** with N ≥ 50 prompts, which is open (this session
+  did N = 1 pixel comparison, not FVD).  Until that lands, the
+  honest framing is: "the cache produces a valid Cosmos generation
+  of the same prompt with reduced motion, not a quality-equivalent
+  generation in the strict sense."
+
+Threshold-curve sweep ({0.05, 0.10, 0.20, 0.30, 0.50}) and multi-prompt
+FVD remain open Session 18+ work; the single-pair pixel measurement is
+what was needed to retire the doc's prior placeholder.
 
 ## What we measured
 

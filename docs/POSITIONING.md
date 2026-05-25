@@ -123,17 +123,24 @@ What NVIDIA's published reference is **missing** that Mirage adds:
   underlying technique is public (TeaCache).  We should expect this gap
   to compress over time as published references catch up.
 
-### The quality caveat (the one open vouchability item)
+### The quality caveat — H100 measured this session
 
 The cache is gated by `--cache-adaptive-threshold 0.30`.  Lower
 thresholds skip more steps; higher thresholds skip fewer.  The
-*quality* of cached output vs no-cache output has been measured on
-MI300X (~0.6 LPIPS across all thresholds — minimal degradation) but
-**not yet measured on H100**.  Until that lands (the Session 15
-deferred item per `docs/COSMOS_ON_H100.md` §"Quantitative cache
-quality"), a sophisticated reader can ask "is the cached output the
-same quality?" and we don't have an H100-specific quantitative answer.
-Worth running before any external publication.
+*quality* of cached output vs no-cache output is now measured on
+**both** MI300X (LPIPS 0.645, F23) and **H100 (LPIPS 0.6067, this
+session)** — same regime on both silicon.  Reading is per F23: the
+cache is **trajectory-divergent, not pixel-preserving**, but
+brightness and per-frame std are preserved (the output is a valid
+Cosmos generation with ~30 % less inter-frame motion, not noise).
+Details + full table in `docs/COSMOS_ON_H100.md` §"Quantitative cache
+quality".
+
+What's *still* open: FVD against a held-out eval set with N ≥ 50
+prompts.  Pixel LPIPS is too strict for diffusion outputs that trade
+trajectory for compute; FVD is the right distribution-level metric.
+`scripts/compute_fvd.py` is in tree; the held-out reference set isn't.
+For an external publication, this is the next vouchability item.
 
 ---
 
@@ -233,15 +240,23 @@ rests on an unmeasured quality assertion, and that's the one thing
 
 ## What we recommend doing in the next 2 weeks if forced to choose
 
-1. **Cosmos H100 quality measurement** (~1 day).  Closes the only
-   open vouchability gap in the strongest claim.  Without this,
-   the 3.81 × headline has a soft underbelly.
-2. **F40 fix-path 1** (~half-day).  Custom `WanAttnProcessor` via
+0. **~~Cosmos H100 quality measurement~~** (done this session).
+   The 3.81 × headline now rests on a measured H100 quality result
+   matching MI300X (LPIPS 0.61 vs 0.65; motion compression −34 %
+   vs −28 %); the trajectory-divergent framing of F23 holds on
+   Hopper unchanged.  Pixel quality vouchability closed.  FVD on
+   a held-out eval set still open as an external-publication item.
+1. **F40 fix-path 1** (~half-day).  Custom `WanAttnProcessor` via
    diffusers `set_attn_processor`.  Makes the FA-3 bridge actually
    engage on Wan; without it the bridge is documented dead weight.
-3. **Wan-shaped adaptive cache** (~1-2 weeks).  The big lever.  Turns
+2. **Wan-shaped adaptive cache** (~1-2 weeks).  The big lever.  Turns
    the Wan story from honest-but-modest to "two world-model families
    served with the cache lever, on three silicon targets."
+3. **FVD with N ≥ 50 prompts on a held-out Cosmos eval set** (~1
+   week).  The "is cache quality-preserved at distribution level"
+   measurement.  Required before external publication of the 3.81 ×
+   number; the pixel-LPIPS work that landed this session is
+   necessary but not sufficient for that claim.
 
 Skip in this window:
 - Multi-GPU.  High-effort, doesn't help the single-silicon story.
