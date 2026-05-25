@@ -166,7 +166,7 @@ toolchain.  Read this when you want to know *what runs on what*.
 | Target | Wall time | Config | vs NVIDIA H100 reference (~380 s) |
 |---|---:|---|---:|
 | MI300X | **142.0 s** | Cosmos 121f/36, adaptive cache + autotuned FP8 Triton | **2.68×** |
-| H100 (FA-3 path, 2026-05-25) | **95.3 s** | Cosmos 121f/36, adaptive cache + FA-3 via bridge | **3.99×** |
+| H100 (FA-3 path, 2026-05-25) | **99.6 ± 3.9 s** (5-prompt mean ± std; min 95.2 s) | Cosmos 121f/36, adaptive cache + FA-3 via bridge | **3.81×** mean / 3.99× best |
 | H100 (FA-2 path) | **132.5 s** | Cosmos 121f/36, adaptive cache + FA-2 via bridge | 2.87× |
 | H100 (torch SDPA, prior baseline) | **138.4 s** | Cosmos 121f/36, adaptive cache alone | 2.75× |
 | H100 (FP8 Triton, current) | **343.7 s** | Cosmos 121f/36, adaptive + Mirage FP8 kernel | 1.10× (FP8 kernel needs surgery) |
