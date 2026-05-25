@@ -106,10 +106,13 @@ the AMX flash kernel is preferred when it qualifies; explicit `=amx` or
 
 ## Open work
 
-| Item | Module | Owner / ETA |
+| Item | Module | Status |
 |---|---|---|
-| AMX INT8 attention kernel | `mirage/attention/amx_int8_flash.py` | Session 16+ |
-| Weight quantization (INT8 symmetric) | `mirage/runtime/quantize.py` | Session 16+ |
-| AMX_FP16 path for Granite Rapids | `mirage/attention/amx_fp16_flash.py` | Hardware-dependent |
-| CPU Cosmos runs against the no-cache reference | `docs/COSMOS_ON_CPU.md` | After kernel lands |
-| ipex install pin in `[cpu]` extra | `pyproject.toml` | This ADR |
+| AMX INT8 attention kernel | `mirage/attention/amx_int8_flash.py` + `kernels/cpu/amx_int8_attn/` | **Code complete (Session 18, Item B).**  Build hardware-gated on `amx_int8`. |
+| Weight quantization (INT8 symmetric) | `mirage/runtime/quantize.py` | **Done (Session 18, Item A).**  `QuantizedLinear`/`QuantizedLinearModule`/`replace_linears_with_quantized` landed; CPU/CUDA bit-parity validated on real Ada (Item H). |
+| AMX_FP16 path for Granite Rapids | `mirage/attention/amx_fp16_flash.py` + `kernels/cpu/amx_fp16_attn/` | **Scaffolded (Session 18, Item C).**  Inner `_tile_dpfp16ps` loop marked `// TODO(GNR):`; awaits real Granite Rapids host. |
+| CPU Cosmos runs against the no-cache reference | `docs/COSMOS_ON_CPU.md` | **Hardware-blocked.**  Every dev VM today reports AMX masked; numbers stay TBD until bare-metal Sapphire/Emerald/Granite Rapids access. |
+| ipex install pin in `[cpu]` extra | `pyproject.toml` | **Closed (Session 18, Item D).**  PEP 508 marker `sys_platform == 'linux' and platform_machine == 'x86_64'` added so off-platform installs no longer error. |
+| Registry + capabilities wiring for INT8/FP16 ops | `mirage/attention/registry.py` + `mirage/backend/cpu.py` | **Done (Session 18, INTEG).**  New `MIRAGE_AMX_ATTENTION=int8`/`=fp16` subvalues; `capabilities()` probes `amx_int8`/`amx_fp16` flags. |
+| CPU FVD + LPIPS evaluation runner | `scripts/eval_cpu_quality.py` | **Done (Session 18, Item F).**  CPU/CUDA parity within 1.5e-5 for LPIPS, bit-identical MSE/PSNR (Item I). |
+| `--vae-tiling` refused on CPU backend | `scripts/run_wan.py` + `docs/WAN_ON_CPU.md` | **Done (Session 18, Item E).**  Hard exit with reference to Session 17 methodology miss. |
