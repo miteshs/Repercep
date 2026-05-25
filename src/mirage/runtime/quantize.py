@@ -23,7 +23,7 @@ quant cost is well below the matmul savings at the Cosmos DiT shape).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import torch
@@ -158,7 +158,9 @@ def replace_linears_with_quantized(
     """
     import torch
 
-    cls = _quantized_linear_module_class()
+    # The class is built lazily inside _quantized_linear_module_class so it
+    # isn't visible at module scope for mypy; Any here is honest, not lazy.
+    cls: Any = _quantized_linear_module_class()
     count = 0
 
     def _recurse(parent: torch.nn.Module, prefix: str) -> None:
@@ -215,6 +217,14 @@ def _quantized_linear_module_class() -> type:
         error.  Tests bound this by the per-row scale, which is the
         tightest bound achievable without changing the quant scheme.
         """
+
+        # PyTorch's nn.Module __getattr__ returns Tensor|Module for any
+        # attribute, so without these annotations mypy can't follow the
+        # buffer/parameter chain through arithmetic.  The runtime values are
+        # set by register_buffer / Parameter assignment in __init__.
+        qweight: torch.Tensor
+        scale: torch.Tensor
+        bias: torch.nn.Parameter | None
 
         def __init__(self, q: QuantizedLinear) -> None:
             super().__init__()
