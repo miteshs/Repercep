@@ -2346,3 +2346,90 @@ it's re-validated.
 session boundaries and venv resets — same diffusers, same torch,
 same `MIRAGE_FP8_ATTENTION=fa` env, same cache config, same numbers.
 
+### F47 — Cosmos H100 no-cache baseline drops 28 % vs Session 14: framework overhead gone
+
+Re-ran the *no-cache* leg of `docs/POSITIONING.md`'s 3.81 ×
+decomposition table on the same pod that produced F46.  Single-prompt,
+single-seed (the "easy win" Tier 2 sweep) — explicitly **not** a
+multi-prompt mean.
+
+Config: identical to F46 except `--cache-mode none` (cache disabled):
+
+```
+MIRAGE_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python -u \
+    scripts/run_cosmos.py --frames 121 --steps 36 --native-loop \
+    --cache-mode none
+```
+
+Result:
+
+```
+RESULT {"model": "cosmos-predict1-7b-text2world",
+  "device": "NVIDIA H100 80GB HBM3",
+  "load_seconds": 19.7, "generate_seconds": 320.9,
+  "peak_hbm_gib": 52.5, "seconds_per_step": 8.91,
+  "output": "benchmark-results/cosmos_h100_no_cache_baseline.mp4"}
+```
+
+**generate_seconds = 320.9 s.**  Session 14 measured the same config
+at **446.3 s** (`docs/BUILD_LOG.md` line 1759, also cited by
+`docs/POSITIONING.md` decomposition and `docs/COSMOS_ON_H100.md`).
+That's a Δ of **−125.4 s = −28 %** on the no-cache wall.
+
+**Likely cause: torch + diffusers upgrades.**
+
+| Stack element | Session 14 | Session 20 |
+|---|---|---|
+| torch | (per S14 close, ~2.7/2.8 era pre-cu128) | 2.11.0+cu128 |
+| diffusers | older | 0.37.1 |
+| cuDNN-FA-3 SDPA dispatch | newer dispatch may or may not have been live | live |
+| H100 SXM5 pod | session-specific | this one |
+
+Pod-to-pod variability matters but a 28 % single-config delta on the
+same SKU is hard to attribute to silicon alone; the simplest
+explanation is the cuDNN-FA-3 SDPA dispatch is now selecting better
+tiles for Cosmos's shape under the newer torch.  An ablation
+(roll torch back, repeat) would prove it; out of scope here.
+
+### Recomputed decomposition table for this pod
+
+| step | wall time | factor vs NVIDIA pub. (~380 s) | what changed |
+|---|---|---|---|
+| NVIDIA published H100 reference | ~380 s | 1.00 × | TE + Apex + NATTEN + FA-3, no cache disclosed |
+| **Mirage no-cache (Session 20, this pod)** | **320.9 s** | **1.18 × (we're faster)** | diffusers 0.37.1 + native loop + cuDNN-FA-3 SDPA, BF16, no cache |
+| Mirage + adaptive cache (thr=0.30) | 101.8 s | **3.73 ×** | + TeaCache-style step-skip in `mirage.runtime.denoise.denoise_cosmos_video` |
+
+- **Cache lever on this pod: 320.9 / 101.8 = 3.15 ×** (vs 2.75 × in
+  POSITIONING.md, based on Session 14's stack).  The cache itself is
+  doing slightly more work because the baseline floor moved down.
+- **Mirage's no-cache path is now faster than NVIDIA's published
+  reference** — the Session 14 "our framework layer costs us ~17 %"
+  framing in POSITIONING.md (lines 99-101) is no longer true on this
+  stack.  Multi-prompt re-measure would be needed before promoting
+  this to the strategic doc.
+
+**What this changes about the 3.81 × claim**
+
+Nothing in *direction*, much in *attribution*:
+
+- The headline (**~100 s on H100, ~3.8 × NVIDIA pub**) holds on both
+  Session 14's stack and Session 20's stack.  Robust.
+- POSITIONING.md's bullet "Mirage's own diffusers wrapping is slower
+  than NVIDIA's bespoke cosmos-predict1 pipeline at the no-cache
+  config (446 vs 380 s).  This is honest — our overhead at the
+  framework layer costs us ~17 %" should be revisited.  On the
+  current pod the framework layer is *not* slower than NVIDIA's
+  reference; we're 1.18 × faster even *without* the cache lever.
+- The "what NVIDIA's published reference is missing" section in
+  POSITIONING.md (lines 103-113) is unchanged — cache still
+  dominates the speedup.
+
+**What's NOT promoted to POSITIONING.md yet**
+
+Single-prompt single-seed.  Session 16's 99.6 ± 3.9 s was 5 prompts ×
+5 seeds (n=25); this no-cache delta is n=1.  Multi-prompt
+re-measure (3 prompts × 3 seeds = ~50 min GPU) would convert this
+finding into a defensible POSITIONING.md update.  Until then the
+strategic doc keeps its Session 14 numbers and this F47 entry is the
+honest "this is what we saw this pod" pointer.
+

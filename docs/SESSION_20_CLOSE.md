@@ -198,10 +198,14 @@ choice.  The A14B number remains as-is from Session 17.
 ## Quality gates
 
 - `ruff check src tests scripts` — **clean**.
-- `mypy --strict` on every file edited this session — **clean**.  Pre-
-  existing repo-wide mypy noise (3 errors in `runtime/quantize.py` line
-  171 + 250 around the lazy nn.Module class construction) is
-  unchanged.
+- `mypy --strict src/mirage` — **clean across all 49 source files**.
+  This includes the previously-pre-existing `runtime/quantize.py`
+  lines 171 + 250 errors around the lazy `nn.Module` class — fixed
+  this session with class-level annotations for the
+  `register_buffer`-backed attributes and an `Any`-typed local for the
+  lazily-built class (PyTorch-canonical pattern).  First time the
+  whole `src/mirage` tree is `mypy --strict` clean since the
+  `QuantizedLinearModule` lazy pattern landed.
 - `pytest -q` — **233 passed / 24 skipped** (was 229 / 24 at session
   start; the +4 are the new AMX capability-gate tests).
 - `MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu` — **all three kernels
