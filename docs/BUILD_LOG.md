@@ -2072,3 +2072,91 @@ edits this session are wan.py only).  Fix is a separate test
 patch — `atol=1e-2, rtol=1e-2` or convert to fp32 before the
 allclose.
 
+## Session 18 — 2026-05-25 — CUDA test sweep on RTX 2000 Ada (sm_89) — Item G
+
+Full writeup in `docs/CUDA_ON_ADA.md`.  TL;DR: the project's CUDA
+backend, attention registry, and FP8 Triton kernel were known to
+work only on H100 SXM5 (sm_90a, Sessions 14-17); this session
+adds a real-CUDA test sweep on an RTX 2000 Ada Generation laptop
+GPU (sm_89, 15.6 GiB GDDR6, 22 SMs, driver 565.57.01, torch
+2.8.0+cu128, triton 3.4.0).  11 CUDA-conditional tests that had
+no prior CI coverage now pass on Ada; the FP8 "Hopper" Triton
+kernel matches SDPA at **3.54% mean rel diff on Ada** vs the 3.4%
+F27 baseline on H100.  Two real findings worth recording for
+follow-up.
+
+### F42 — FP8 "Hopper" Triton kernel is in fact sm_89+ portable; rename / re-document is overdue
+
+`kernels/triton_kernels/fp8_flash_attn_hopper.py` and
+`src/mirage/attention/fp8_hopper_triton.py` are named "Hopper"
+because they were developed on H100 (Session 11 autotune, Session
+14 wiring) as the NVIDIA sibling of the gfx942 (MI300X) FP8
+Triton kernel.  The naming is silicon-family shorthand: nothing
+in the kernel or the dispatcher gates on `sm_90a` specifically.
+
+On Ada (sm_89) this session confirms:
+
+- `op.available` returns `True` (importable, compiles).
+- `tests/test_attention_cuda.py::test_fp8_hopper_triton_matches_
+  sdpa` passes at `(B=1, H=8, S=4096, D=128)` BF16.
+- Mean rel diff vs SDPA is **3.54%** — within 0.14 pp of the F27
+  H100 measurement (3.4%) at the same shape class.
+- `tl.float8e4nv` (the NVIDIA E4M3 dtype the kernel emits)
+  compiles on sm_89; this is consistent with NVIDIA documenting
+  hardware FP8 starting Ada / Hopper.
+
+Two follow-up items:
+
+1. **Naming.**  The file and class should at minimum carry a
+   docstring note that "Hopper" here means "any NVIDIA host with
+   hardware FP8", which is sm_89+.  Either rename to
+   `fp8_nvidia_triton.py` (cleanest) or document the broader
+   applicability.  Not a Session 18 edit (this session's `src/`
+   write surface is doc-only) — flagged for Item I or a
+   later session.
+2. **Autotune cache key.**  `~/.cache/mirage/fp8_autotune_
+   hopper.json` does not include the device's SM count or arch
+   in its cache key — only `(B, H, Sq, Skv, D, causal)`.  This
+   was fine when only H100 ran the kernel; with Ada also running
+   it, the cache would collide across hosts (mostly harmless —
+   re-autotune on first run since the JSON path is per-host
+   anyway, but worth a key extension if the project ever ships a
+   precomputed cache).  On Ada the winning tile for the test
+   shape is `BLOCK_M=64 BLOCK_N=64 num_warps=4 num_stages=3`,
+   versus H100's typical 128 × 128 / 8 warps / 2 stages — Ada's
+   smaller register file and 22 SMs prefer smaller tiles, which
+   the autotune found on its own.
+
+### F43 — `AttentionOp` Protocol does not declare `available`; some ops have it, some don't
+
+Surfaced while running the F40-style dispatch verification on Ada
+(`MIRAGE_FP8_ATTENTION=fa python3 -c "...; print('op:', op.name,
+'available:', op.available)"`).  `NaiveAttention` raises
+`AttributeError: 'NaiveAttention' object has no attribute
+'available'`; `HopperFlashAttention`, `FP8HopperTritonAttention`,
+and `TransformerEngineAttention` all expose `available: bool`.
+
+Source: `src/mirage/attention/protocol.py` declares only `name`,
+`supports`, and `__call__`.  The `available` attribute is a
+convention some ops adopted for their `supports()` short-circuits
+(an op whose backing library isn't importable returns False from
+`supports()` and exposes `available=False` as a diagnostic), but
+the floor op (`NaiveAttention`) doesn't need it because it is
+always available — and so it doesn't have it.
+
+Two ways to close:
+
+1. **Add `available: bool` to the Protocol and default `True` on
+   ops that don't need a runtime gate.**  Honest about which ops
+   can be unavailable; lets callers introspect uniformly.
+2. **Document the existing pattern.**  Callers must use
+   `getattr(op, "available", True)` — which is the cheapest fix
+   but propagates the inconsistency.
+
+Neither is a Session 18 edit (doc-only worktree).  The Cosmos and
+Wan code paths today route through `select_attention_op`'s own
+filtering rather than calling `op.available` themselves, so this
+is latent — but it would bite any future caller that tries to
+write a "which op did I get" diagnostic and starts on the wrong
+floor.
+
