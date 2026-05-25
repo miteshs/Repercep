@@ -1,4 +1,4 @@
-PY := .venv/bin/python
+PY := $(CURDIR)/.venv/bin/python
 # Resolve uv from PATH (handles both ~/.local/bin/uv from the official
 # installer and /usr/bin/uv from a system package). Falls back to the
 # common installer path if `which` fails.
