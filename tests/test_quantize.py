@@ -152,10 +152,10 @@ def test_quantized_linear_module_matches_linear_bf16() -> None:
     import torch
 
     from mirage.runtime.quantize import (
+        QuantizedLinearModule,
         dequantize_linear,
         quantize_linear_symmetric,
     )
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401 (PEP 562)
 
     torch.manual_seed(3)
     linear = torch.nn.Linear(8, 16).to(torch.bfloat16)
@@ -181,7 +181,7 @@ def test_quantized_linear_module_error_vs_original_bounded() -> None:
     """Sanity: error vs the *original* Linear is bounded by per-row scale * ||x||."""
     import torch
 
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+    from mirage.runtime.quantize import QuantizedLinearModule
 
     torch.manual_seed(4)
     linear = torch.nn.Linear(8, 16, bias=False).to(torch.bfloat16)
@@ -203,7 +203,7 @@ def test_quantized_linear_module_preserves_bias() -> None:
     """Bias passes through the swap and is reachable from ``parameters()``."""
     import torch
 
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
+    from mirage.runtime.quantize import QuantizedLinearModule
 
     linear = torch.nn.Linear(8, 4).to(torch.bfloat16)
     qmod = QuantizedLinearModule.from_linear(linear)
@@ -222,9 +222,9 @@ def test_replace_linears_with_quantized_swaps_in_place() -> None:
     import torch
 
     from mirage.runtime.quantize import (
+        QuantizedLinearModule,
         replace_linears_with_quantized,
     )
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
 
     class Toy(torch.nn.Module):
         def __init__(self) -> None:
@@ -261,9 +261,9 @@ def test_replace_linears_with_quantized_filters_by_name() -> None:
     import torch
 
     from mirage.runtime.quantize import (
+        QuantizedLinearModule,
         replace_linears_with_quantized,
     )
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
 
     class Toy(torch.nn.Module):
         def __init__(self) -> None:

@@ -165,15 +165,12 @@ def replace_linears_with_quantized(
         nonlocal count
         for child_name, child in list(parent.named_children()):
             dotted = f"{prefix}.{child_name}" if prefix else child_name
-            if isinstance(child, torch.nn.Linear):
-                if name_filter is None or name_filter in dotted:
-                    setattr(parent, child_name, cls.from_linear(child))
-                    count += 1
-                    # Don't recurse into a Linear — it has no nn.Linear
-                    # children, and the freshly-installed
-                    # QuantizedLinearModule has no nn.Linear children
-                    # either.
-                    continue
+            if isinstance(child, torch.nn.Linear) and (
+                name_filter is None or name_filter in dotted
+            ):
+                setattr(parent, child_name, cls.from_linear(child))
+                count += 1
+                continue
             _recurse(child, dotted)
 
     _recurse(module, "")

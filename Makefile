@@ -7,7 +7,8 @@ CARGO := cargo
 
 .PHONY: help install lint format typecheck test check-gpu info \
         rust-build rust-check rust-fmt rust-fmt-check rust-clippy rust-test \
-        rust-install kernels-cpu lint-all check-all
+        rust-install kernels-cpu kernels-cpu-bf16 kernels-cpu-int8 \
+        kernels-cpu-fp16 lint-all check-all
 
 help:
 	@echo "Mirage Runtime — make targets:"
@@ -127,24 +128,51 @@ else
 	@$(UV) pip install --python .venv --reinstall target/wheels/mirage_*.whl
 endif
 
-# Build the CPU AMX flash-attention kernel (Intel Sapphire Rapids+).
-# Requires gcc 13+ with AMX intrinsic support and a host with `amx_bf16`
-# in /proc/cpuinfo.  Produces `kernels/cpu/amx_attn/_native.*.so` in
-# place, which the `mirage.attention.amx_flash.AMXFlashAttention`
-# wrapper imports lazily.  See `docs/adr/0007-cpu-backend.md`.
-kernels-cpu:
+# Build the CPU AMX flash-attention kernels (Intel Sapphire Rapids+).
+# Three siblings live under kernels/cpu/, each with its own /proc/cpuinfo
+# gate so a host that lacks the relevant ISA flag skips cleanly rather than
+# failing the build.  See docs/adr/0007-cpu-backend.md.
+#
+#   amx_attn        — AMX_BF16 (Sapphire/Emerald/Granite Rapids)
+#   amx_int8_attn   — AMX_INT8 (Sapphire/Emerald/Granite Rapids)
+#   amx_fp16_attn   — AMX_FP16 (Granite Rapids ONLY)
+kernels-cpu: kernels-cpu-bf16 kernels-cpu-int8 kernels-cpu-fp16
+
+kernels-cpu-bf16:
 	@if [ ! -d kernels/cpu/amx_attn ]; then \
-	    echo "kernels/cpu/amx_attn missing — skipping CPU AMX kernel build"; \
+	    echo "kernels/cpu/amx_attn missing — skipping AMX BF16 build"; \
 	    exit 0; \
 	fi
 	@if ! grep -q amx_bf16 /proc/cpuinfo 2>/dev/null; then \
-	    echo "==> CPU lacks amx_bf16; AMX kernel build skipped"; \
-	    echo "    (the SDPA->oneDNN floor still gets AMX wins on this host"; \
-	    echo "     if amx_bf16 lights up later — recheck with `make check-gpu`)"; \
+	    echo "==> CPU lacks amx_bf16; AMX BF16 kernel build skipped"; \
 	    exit 0; \
 	fi
-	@echo "==> building CPU AMX flash kernel in kernels/cpu/amx_attn/"
+	@echo "==> building CPU AMX BF16 flash kernel in kernels/cpu/amx_attn/"
 	cd kernels/cpu/amx_attn && $(PY) setup.py build_ext --inplace
+
+kernels-cpu-int8:
+	@if [ ! -d kernels/cpu/amx_int8_attn ]; then \
+	    echo "kernels/cpu/amx_int8_attn missing — skipping AMX INT8 build"; \
+	    exit 0; \
+	fi
+	@if ! grep -q amx_int8 /proc/cpuinfo 2>/dev/null; then \
+	    echo "==> CPU lacks amx_int8; AMX INT8 kernel build skipped"; \
+	    exit 0; \
+	fi
+	@echo "==> building CPU AMX INT8 flash kernel in kernels/cpu/amx_int8_attn/"
+	cd kernels/cpu/amx_int8_attn && $(PY) setup.py build_ext --inplace
+
+kernels-cpu-fp16:
+	@if [ ! -d kernels/cpu/amx_fp16_attn ]; then \
+	    echo "kernels/cpu/amx_fp16_attn missing — skipping AMX FP16 build"; \
+	    exit 0; \
+	fi
+	@if ! grep -q amx_fp16 /proc/cpuinfo 2>/dev/null; then \
+	    echo "==> CPU lacks amx_fp16 (Granite Rapids+); AMX FP16 kernel build skipped"; \
+	    exit 0; \
+	fi
+	@echo "==> building CPU AMX FP16 flash kernel in kernels/cpu/amx_fp16_attn/"
+	cd kernels/cpu/amx_fp16_attn && $(PY) setup.py build_ext --inplace
 
 lint-all: lint rust-fmt-check rust-clippy
 

@@ -217,12 +217,33 @@ class CPUBackend:
                     ops.append("ipex-flash")
             except ImportError:
                 pass
+        if features["amx_int8"]:
+            try:
+                from mirage.attention.amx_int8_flash import AMXInt8FlashAttention
+
+                if AMXInt8FlashAttention().available:
+                    ops.append("amx-int8-flash")
+            except ImportError:
+                pass
+        if features["amx_fp16"]:
+            # Granite Rapids+ only.  SPR/EMR report amx_bf16 + amx_int8 but
+            # not amx_fp16; the FP16 op disqualifies cleanly on those.
+            try:
+                from mirage.attention.amx_fp16_flash import AMXFP16FlashAttention
+
+                if AMXFP16FlashAttention().available:
+                    ops.append("amx-fp16-flash")
+            except ImportError:
+                pass
         sdpa = AMXSDPAAttention()
         if sdpa.available:
             ops.append(sdpa.name)
         ops.append("naive-sdpa")
 
-        supports_flash = any(o in ops for o in ("amx-bf16-flash", "ipex-flash"))
+        supports_flash = any(
+            o in ops
+            for o in ("amx-bf16-flash", "amx-int8-flash", "amx-fp16-flash", "ipex-flash")
+        )
         return BackendCapabilities(
             dtypes=dtypes,
             supports_flash_attention=supports_flash,

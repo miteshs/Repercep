@@ -169,3 +169,63 @@ def test_registry_unknown_intel_arch_still_routes(monkeypatch: pytest.MonkeyPatc
     )
     op = select_attention_op(skylake_avx512, shape, DType.BF16)
     assert op.name in ("amx-sdpa", "naive-sdpa")
+
+
+def test_registry_int8_env_considers_int8_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``MIRAGE_AMX_ATTENTION=int8`` lists the INT8 op first; on a host that
+    lacks the built kernel it falls through to the SDPA floor cleanly."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    # Re-import the registry module so the env read at module load picks up
+    # the patched value (the env is captured at import time).
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, shape, DType.BF16)
+    # Either the INT8 kernel wins (only on real AMX_INT8 silicon with the
+    # extension built) or the chain falls through.  IPEX and BF16-flash are
+    # excluded from the candidate list under env=int8.
+    assert op.name in ("amx-int8-flash", "amx-sdpa", "naive-sdpa")
+
+
+def test_registry_fp16_env_on_spr_falls_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``=fp16`` on SPR (no amx_fp16): FP16 kernel disqualifies, falls through."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "fp16")
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, shape, DType.FP16)
+    # SPR has no amx_fp16 flag, so AMXFP16FlashAttention disqualifies; under
+    # env=fp16 the BF16 sibling and IPEX are also excluded.  Floor wins.
+    assert op.name in ("amx-fp16-flash", "amx-sdpa", "naive-sdpa")
+
+
+def test_registry_int8_env_routes_unsupported_dtype_to_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """INT8 kernel advertises BF16 input only; an FP32 call must still route."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    shape = AttentionShape(
+        batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+    )
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, shape, DType.FP32)
+    # INT8 disqualifies on FP32 input (supports() returns False); SDPA floor
+    # accepts FP32 and wins.
+    assert op.name in ("amx-sdpa", "naive-sdpa")

@@ -45,12 +45,20 @@ _FP8_ENABLED = _FP8_ENV in _FP8_TRUTHY
 # otherwise SDPA on CPU still gets AMX wins via oneDNN's auto-dispatch.
 #
 # Env values:
-#   1 / true / on        — auto-pick best AMX op for the host
-#   amx                  — force the Mirage AMX BF16 kernel (sibling of the
-#                          gfx942 and Hopper Triton kernels)
+#   1 / true / on        — auto-pick best AMX op for the host (BF16 wins for
+#                          BF16 calls; FP16 wins for FP16 on Granite Rapids)
+#   amx                  — force the Mirage AMX BF16 kernel (SPR/EMR)
+#   int8                 — force the Mirage AMX INT8 kernel (SPR/EMR, dynamic
+#                          per-tile activation quant; BF16 in / BF16 out)
+#   fp16                 — force the Mirage AMX FP16 kernel (Granite Rapids+)
 #   ipex                 — force the IPEX fused attention
+#
+# Note on auto-pick: INT8 is NOT in the auto-set because its per-tile dynamic
+# quantization has its own shape crossover (not yet measured on real AMX
+# silicon — Session 17 close documents the build is hardware-blocked).  It
+# stays opt-in until that crossover lands.
 _AMX_ENV = os.environ.get("MIRAGE_AMX_ATTENTION", "").lower()
-_AMX_TRUTHY = ("1", "true", "on", "amx", "ipex")
+_AMX_TRUTHY = ("1", "true", "on", "amx", "int8", "fp16", "ipex")
 _AMX_ENABLED = _AMX_ENV in _AMX_TRUTHY
 
 
@@ -91,17 +99,25 @@ def select_attention_op(arch: DeviceArch, shape: AttentionShape, dtype: DType) -
     elif arch.vendor is Vendor.INTEL:
         # Intel CPU branch.  AMX-aware ops are env-gated for the same reason
         # the GPU FP8 ops are: the perf win is shape-dependent and we don't
-        # want to surprise a smoke run.  Within the AMX env value:
-        #   "amx" — force the Mirage AMX BF16 flash kernel (best on long S)
-        #   "ipex" — force IPEX's fused attention (best when installed and
-        #            the kernel doesn't compile cleanly on this host)
-        #   "1/true/on" — auto-pick: AMX flash if available + qualifying,
-        #            else IPEX, else SDPA floor.
-        if _AMX_ENABLED and _AMX_ENV not in ("ipex",):
+        # want to surprise a smoke run.  Candidate order matters — the first
+        # op whose supports() returns True wins, so dtype-specific kernels go
+        # before the generic SDPA floor.
+        if _AMX_ENABLED and _AMX_ENV == "int8":
+            from mirage.attention.amx_int8_flash import AMXInt8FlashAttention
+
+            candidates.append(AMXInt8FlashAttention())
+        if _AMX_ENABLED and _AMX_ENV in ("1", "true", "on", "fp16"):
+            # FP16 kernel only qualifies on Granite Rapids (amx_fp16 flag).
+            # On SPR/EMR it stays disqualified, so listing it in the auto-set
+            # is harmless — supports() returns False and the chain advances.
+            from mirage.attention.amx_fp16_flash import AMXFP16FlashAttention
+
+            candidates.append(AMXFP16FlashAttention())
+        if _AMX_ENABLED and _AMX_ENV not in ("ipex", "int8", "fp16"):
             from mirage.attention.amx_flash import AMXFlashAttention
 
             candidates.append(AMXFlashAttention())
-        if _AMX_ENABLED and _AMX_ENV not in ("amx",):
+        if _AMX_ENABLED and _AMX_ENV not in ("amx", "int8", "fp16"):
             from mirage.attention.ipex_flash import IPEXFlashAttention
 
             candidates.append(IPEXFlashAttention())
