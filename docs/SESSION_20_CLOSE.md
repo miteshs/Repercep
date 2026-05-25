@@ -1,10 +1,12 @@
-# Session 20 close — F40 fix-path 1 verified on H100, headlines reproduce, AMX CI smoke
+# Session 20 close — F40 fix-path 1 verified on H100, headlines reproduce, AMX CI smoke, no-cache baseline drops 28 %
 
-**Date:** 2026-05-25 · **Working tree:** `main`, 5 commits ahead of
-`origin/main` at session start (Session 19 close).  Session 20 adds 5 more
-commits, all green: `ruff` clean, `mypy --strict` on edited files clean,
-**`pytest -q` = 233 passed / 24 skipped** (up from 229 / 24 at session
-start — the 4 new tests are the AMX capability-gate routing suite).
+**Date:** 2026-05-25 · **Working tree:** `main`, in sync with `origin/main`
+at session close.  Session 20 added **8 commits** (all pushed),
+all green: `ruff` clean, **`mypy --strict src/mirage` clean across all
+49 source files** (first time since the lazy `QuantizedLinearModule`
+pattern landed), **`pytest -q` = 233 passed / 24 skipped** (up from 229 /
+24 at session start — the 4 new tests are the AMX capability-gate
+routing suite).
 
 This session resumed from the Session 19 H100 handoff (codex session
 delta).  Goal: verify the Wan F40 fix on a real H100 stack and re-run
@@ -50,6 +52,28 @@ the kernel sources.  4 new capability-gate routing tests in
 `tests/test_attention_cpu.py` verify the registry's INTEL branch picks
 the right candidate under each `MIRAGE_AMX_ATTENTION` env value without
 needing real AMX silicon.
+
+**`mypy --strict src/mirage` now clean across all 49 source files.**
+The 3 pre-existing errors in `runtime/quantize.py` (called out as
+"pre-existing noise" in Sessions 18 + 19 close) fixed with the
+PyTorch-canonical pattern: class-level annotations for
+`register_buffer`-backed attributes (`qweight`, `scale`, `bias`) plus an
+`Any`-typed local for the lazily-built `QuantizedLinearModule` class.
+17 quantize tests still pass.  First time the whole `src/mirage` tree
+passes strict typing since the lazy pattern landed.
+
+**Cosmos H100 no-cache baseline drops 28 %.**  Re-ran the no-cache leg
+of POSITIONING.md's 3.81× decomposition table at 121f/36 with
+`MIRAGE_FP8_ATTENTION=fa --cache-mode none`.  Result: **320.9 s /
+52.5 GiB** vs Session 14's 446.3 s (Δ −125 s = −28 %).  Most likely
+cause: newer torch 2.11.0+cu128 + diffusers 0.37.1 selecting better
+cuDNN-FA-3 SDPA tiles for Cosmos shape.  **Decomposition flips:**
+Mirage's no-cache path is now **1.18 × faster than NVIDIA's published
+reference even without the cache**; cache lever is **3.15 ×** (vs
+2.75 × per POSITIONING.md).  The headline 3.73-3.81 × is unchanged.
+Single-prompt single-seed; recorded as **F47** in `docs/BUILD_LOG.md`.
+Multi-prompt re-measure (~50 min GPU) is the prerequisite for
+promoting this into POSITIONING.md.
 
 ---
 
@@ -192,6 +216,65 @@ choice.  The A14B number remains as-is from Session 17.
   went from 50 G used / 232 K free → 4.8 G used / 46 G free.
   Future Cosmos / Wan downloads land in the MooseFS-backed
   `/workspace` automatically.
+
+### 6. Mypy --strict noise cleanup (commit `ca79a5c`)
+
+End-of-session "easy win" Tier 1.  The 3 pre-existing errors in
+`src/mirage/runtime/quantize.py` (lines 171 + 250, called out as
+"pre-existing noise" in Sessions 18 + 19 close):
+
+- Line 171: `cls = _quantized_linear_module_class()` returned `type`,
+  so mypy couldn't follow `cls.from_linear(...)`.  Fixed with a local
+  `cls: Any` annotation — the class is *defined inside* the helper
+  function, so it isn't visible at module scope; `Any` here is honest,
+  not lazy.
+- Line 250: PyTorch's `nn.Module.__getattr__` returns `Tensor | Module`
+  for any attribute access, so `self.qweight * self.scale.unsqueeze(1)`
+  read as a union arithmetic.  Fixed with the PyTorch-canonical
+  pattern: class-level annotations (`qweight: torch.Tensor`,
+  `scale: torch.Tensor`, `bias: torch.nn.Parameter | None`) declared
+  before `__init__`, which lets the type-checker resolve the
+  buffer-backed attribute access correctly.
+
+Result: `mypy --strict src/mirage` is clean across all 49 files.
+17 quantize tests still pass.  No runtime change; the public API of
+`QuantizedLinearModule` and `replace_linears_with_quantized` is
+unchanged.
+
+### 7. Cosmos H100 no-cache baseline — F47 (commit `74355ea`)
+
+End-of-session "easy win" Tier 2.  Re-ran the *no-cache* leg of
+`docs/POSITIONING.md`'s 3.81 × decomposition table at the same
+config that produced F46 except `--cache-mode none`:
+
+```
+RESULT {"model": "cosmos-predict1-7b-text2world",
+  "device": "NVIDIA H100 80GB HBM3",
+  "frames": 121, "steps": 36, "resolution": "1280x704",
+  "load_seconds": 19.7, "generate_seconds": 320.9,
+  "seconds_per_step": 8.91, "peak_hbm_gib": 52.5,
+  "output": "benchmark-results/cosmos_h100_no_cache_baseline.mp4"}
+```
+
+- **320.9 s vs Session 14's 446.3 s** for the same config.  Δ −28 %.
+  Most likely cause: newer torch 2.11.0+cu128 + diffusers 0.37.1
+  selecting better cuDNN-FA-3 SDPA tiles.
+- **Recomputed decomposition on this pod:**
+
+  | step | wall | factor vs NVIDIA pub. (~380 s) |
+  |---|---|---|
+  | NVIDIA published H100 reference | ~380 s | 1.00 × |
+  | **Mirage no-cache (this pod)** | **320.9 s** | **1.18 × (we're faster)** |
+  | Mirage + adaptive cache (thr=0.30) | 101.8 s | **3.73 ×** |
+
+- Cache lever on this pod: **3.15 ×** (vs 2.75 × in POSITIONING.md
+  based on Session 14's stack).
+- **POSITIONING.md's "framework overhead costs us ~17 %" framing
+  (lines 99-101) is no longer true on this stack** — we're 1.18 ×
+  faster than NVIDIA's published reference even without the cache
+  lever.  Single-prompt single-seed though; multi-prompt re-measure
+  (~50 min GPU) is the prerequisite for promoting this finding into
+  the strategic doc.
 
 ---
 
