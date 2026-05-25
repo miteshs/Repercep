@@ -229,3 +229,112 @@ def test_registry_int8_env_routes_unsupported_dtype_to_floor(
     # INT8 disqualifies on FP32 input (supports() returns False); SDPA floor
     # accepts FP32 and wins.
     assert op.name in ("amx-sdpa", "naive-sdpa")
+
+
+# --- Capability-gate monkeypatch routing ------------------------------------
+#
+# These tests verify the registry dispatch logic *independently* of whether the
+# host CPU exposes the AMX flag or whether the C++ extension is built.  On the
+# current dev VM both are masked, so without these monkeypatches a routing
+# regression in the registry would slip through unnoticed.  The pattern: patch
+# the wrapper's two availability gates (the /proc/cpuinfo detector AND the
+# wrapper-class ``available`` property) so the wrapper claims it is callable;
+# then assert the registry actually picks it.
+
+_BF16_SHAPE = AttentionShape(
+    batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
+)
+
+
+def _force_wrapper_available(monkeypatch: pytest.MonkeyPatch, module_name: str, cls_name: str,
+                             detector_name: str) -> None:
+    """Patch both gates so ``cls`` reports ``available`` True without the .so."""
+    import importlib
+
+    mod = importlib.import_module(module_name)
+    cls = getattr(mod, cls_name)
+
+    # Gate 1: the /proc/cpuinfo probe at __init__.
+    monkeypatch.setattr(mod, detector_name, lambda: True)
+    # Gate 2: the ``available`` property reads ``self._fn is not None``.  We
+    # cannot set ``_fn`` before the instance exists, so override the property
+    # at the class level to a plain True.  ``supports()`` reads ``available``
+    # so this carries through into the registry's chain.
+    monkeypatch.setattr(cls, "available", True)
+
+
+def test_int8_routing_when_amx_int8_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AMX_INT8 detected + env=int8 -> registry picks the INT8 kernel."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    _force_wrapper_available(
+        monkeypatch,
+        "mirage.attention.amx_int8_flash",
+        "AMXInt8FlashAttention",
+        "_detect_amx_int8",
+    )
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, _BF16_SHAPE, DType.BF16)
+    assert op.name == "amx-int8-flash"
+
+
+def test_fp16_routing_when_amx_fp16_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AMX_FP16 detected + env=fp16 -> registry picks the FP16 kernel."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "fp16")
+    _force_wrapper_available(
+        monkeypatch,
+        "mirage.attention.amx_fp16_flash",
+        "AMXFP16FlashAttention",
+        "_detect_amx_fp16",
+    )
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, _BF16_SHAPE, DType.FP16)
+    assert op.name == "amx-fp16-flash"
+
+
+def test_bf16_routing_when_amx_bf16_detected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AMX_BF16 detected + env=amx -> registry picks the BF16 kernel."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "amx")
+    _force_wrapper_available(
+        monkeypatch,
+        "mirage.attention.amx_flash",
+        "AMXFlashAttention",
+        "_detect_amx_bf16",
+    )
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, _BF16_SHAPE, DType.BF16)
+    assert op.name == "amx-bf16-flash"
+
+
+def test_int8_fallthrough_when_amx_int8_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """env=int8 but AMX_INT8 absent -> chain falls through to SDPA/naive."""
+    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    # Force the detector to report False (mirrors a non-AMX_INT8 host) — this
+    # is the dev-VM state today; we make it explicit so the test is hermetic.
+    import mirage.attention.amx_int8_flash as int8_mod
+
+    monkeypatch.setattr(int8_mod, "_detect_amx_int8", lambda: False)
+    import importlib
+
+    import mirage.attention.registry as reg
+
+    importlib.reload(reg)
+
+    op = reg.select_attention_op(SAPPHIRE_RAPIDS, _BF16_SHAPE, DType.BF16)
+    # INT8 disqualifies (available False because detector returned False), so
+    # the floor wins.  IPEX is excluded from the candidate list under env=int8.
+    assert op.name in ("amx-sdpa", "naive-sdpa")
