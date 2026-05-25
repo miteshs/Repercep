@@ -146,10 +146,10 @@ class WanEngine:
 
         # diffusers ships only partial type info: from_pretrained reads as an
         # untyped call under mypy --strict. The signature is well-defined.
-        vae = AutoencoderKLWan.from_pretrained(
+        vae = AutoencoderKLWan.from_pretrained(  # type: ignore[no-untyped-call]
             self._config.repo_id, subfolder="vae", torch_dtype=vae_dtype
         )
-        pipe = WanPipeline.from_pretrained(
+        pipe = WanPipeline.from_pretrained(  # type: ignore[no-untyped-call]
             self._config.repo_id, vae=vae, torch_dtype=compute_dtype
         )
         pipe.to(device)
