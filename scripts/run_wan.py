@@ -115,6 +115,25 @@ def main() -> int:
         flush=True,
     )
 
+    # --vae-tiling exists to drop GPU HBM peak (~18 GiB on H100 at 1280x720) by
+    # decoding the VAE in spatial tiles. On CPU the same flag is actively
+    # harmful: it shreds the FP32 VAE decode into hundreds of small per-tile
+    # forwards, none of which fit oneDNN's preferred AMX/AVX512 block sizes.
+    # Session 17's TI2V-5B 17f/8 smoke ran with --vae-tiling for "parity" with
+    # the H100 invocation and cost ~30 min vs the estimated 38-45 min envelope
+    # (measured 66 min). Refuse rather than silently flip the flag — the user
+    # is making a methodology mistake and silently flipping it hides that from
+    # logs.
+    if args.vae_tiling and backend.vendor is Vendor.INTEL:
+        print(
+            "[mirage] FATAL: --vae-tiling is not supported on the CPU backend.\n"
+            "  --vae-tiling shreds the FP32 VAE decode on CPU; observed +30 min\n"
+            "  on the TI2V-5B 17f/8 smoke. See docs/WAN_ON_CPU.md \xa7\"Methodology\".\n"
+            "  Re-run without --vae-tiling.",
+            flush=True,
+        )
+        return 2
+
     config = WanConfig(
         guidance_scale_2=args.guidance_2,
         compile_transformer=args.compile,
