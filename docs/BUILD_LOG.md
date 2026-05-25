@@ -2072,18 +2072,19 @@ edits this session are wan.py only).  Fix is a separate test
 patch — `atol=1e-2, rtol=1e-2` or convert to fp32 before the
 allclose.
 
-## Session 18 — 2026-05-25 — CUDA test sweep on RTX 2000 Ada (sm_89) — Item G
+## Session 18 — 2026-05-25 — CPU port completion + opportunistic GPU sweep on RTX 2000 Ada
 
-Full writeup in `docs/CUDA_ON_ADA.md`.  TL;DR: the project's CUDA
-backend, attention registry, and FP8 Triton kernel were known to
-work only on H100 SXM5 (sm_90a, Sessions 14-17); this session
-adds a real-CUDA test sweep on an RTX 2000 Ada Generation laptop
-GPU (sm_89, 15.6 GiB GDDR6, 22 SMs, driver 565.57.01, torch
-2.8.0+cu128, triton 3.4.0).  11 CUDA-conditional tests that had
-no prior CI coverage now pass on Ada; the FP8 "Hopper" Triton
-kernel matches SDPA at **3.54% mean rel diff on Ada** vs the 3.4%
-F27 baseline on H100.  Two real findings worth recording for
-follow-up.
+Full CPU-port writeup in `docs/SESSION_18_CLOSE.md`; full GPU sweep
+in `docs/CUDA_ON_ADA.md`; Ada FP8 detail in `docs/FP8_ON_ADA.md`.
+TL;DR: the project's CUDA backend, attention registry, and FP8 Triton
+kernel were known to work only on H100 SXM5 (sm_90a, Sessions 14-17);
+this session adds a real-CUDA test sweep on an RTX 2000 Ada Generation
+laptop GPU (sm_89, 15.6 GiB GDDR6, 22 SMs, driver 565.57.01, torch
+2.8.0+cu128, triton 3.4.0).  11 CUDA-conditional tests that had no
+prior CI coverage now pass on Ada; the FP8 "Hopper" Triton kernel
+matches SDPA at **3.54% mean rel diff on Ada** vs the 3.4% F27 baseline
+on H100.  Three real findings worth recording for follow-up
+(F42 + F43 from Item G; F44 from Item J).
 
 ### F42 — FP8 "Hopper" Triton kernel is in fact sm_89+ portable; rename / re-document is overdue
 
@@ -2159,4 +2160,71 @@ filtering rather than calling `op.available` themselves, so this
 is latent — but it would bite any future caller that tries to
 write a "which op did I get" diagnostic and starts on the wrong
 floor.
+### F44 — Dedicated Ada FP8 Triton kernel lands as a separate sibling — Item J
+
+**Verdict: WORKS.**  Companion to F42 (Item G), which showed the existing
+Hopper Triton kernel happens to compile + run on Ada.  Item J went the
+other direction and wrote a purpose-built Ada sibling so the autotune
+grid and the silicon-arch gate aren't grafted onto a kernel named
+"Hopper."  Both paths produce correct output; the open question (carried
+to the next session) is whether the project wants two NVIDIA kernels or
+one re-named one (F42 favours the latter; F44 ships the former so the
+question is concrete, not abstract).
+
+Ada Lovelace's 4th-gen tensor cores have native FP8 ISA (E4M3 + E5M2,
+same dtypes as Hopper) exposed via the synchronous
+`mma.sync.aligned.m16n8k32.f32.e4m3.e4m3` PTX instruction rather than
+Hopper's asynchronous `wgmma`.  Triton 3.4's NVPTX backend dispatches
+`tl.dot` with FP8 operands to the correct instruction per arch, so
+the kernel compiles and runs once the Hopper-only intrinsics (TMA,
+warpgroup fences, `tl.async_copy`) are avoided.
+
+Files landed in this finding:
+- `kernels/triton_kernels/fp8_flash_attn_ada.py` — kernel (sibling
+  of `fp8_flash_attn_hopper.py`; ~100 KiB SMEM-tuned config grid).
+- `src/mirage/attention/fp8_ada_triton.py` — `AttentionOp` wrapper
+  with `torch.cuda.get_device_capability() == (8, 9)` silicon gate.
+- `tests/test_fp8_attention_ada.py` — 10 tests, 9 pass on Ada
+  (1 skipped on Ada because it exercises the off-Ada path).
+- `docs/FP8_ON_ADA.md` — one-page summary.
+
+Measured on RTX 2000 Ada (sm_89, 16 GiB) at the spec'd
+`(B=1, H=8, S=4096, D=128)` bf16 shape:
+
+| Metric | Value |
+|---|---|
+| Max abs err vs SDPA | 0.014 |
+| Mean rel err (significant entries) | ~5% |
+| Steady-state ms/call (autotuned) | 3.07 ms |
+| SDPA reference ms/call | 1.74 ms |
+| Autotuned config | `BLOCK_M=64 BLOCK_N=128 nw=4 ns=2` |
+
+FP8 is **1.77× slower than SDPA at this medium shape** — expected.
+The FP8 win materializes at long sequences (S~tens of thousands)
+where SDPA goes bandwidth-bound; same crossover that the Hopper
+sibling sees on Cosmos's S=109k shape (F20, F27).  RTX 2000 Ada's
+16 GiB HBM3 can't host the S=109k bench; that test would need an
+L40S (48 GiB) or RTX 6000 Ada (48 GiB) to validate the crossover.
+
+**Wiring decision deferred.**  The new wrapper is NOT yet in
+`registry.py` or `backend/cuda.py`.  Wiring is one of two choices:
+
+1. **Promote F42's path** — widen the Hopper wrapper's capability gate
+   to accept `(8, 9)` and rename the kernel to drop "hopper" from the
+   name.  Single source of truth; one autotune cache key needs the SM
+   count added.  Lower code footprint.
+2. **Promote F44's path** — import `FP8AdaTritonAttention` into the
+   NVIDIA branch of `select_attention_op` ahead of `naive-sdpa`; let
+   the wrapper self-disqualify on non-Ada hosts via the (8, 9) gate;
+   advertise `"fp8-ada-triton-flash"` in `capabilities()`.  Keeps the
+   Ada and Hopper kernels separately tunable.
+
+Strategic note.  Ada FP8 is real silicon ISA that the rest of the
+ecosystem (FA-3 FP8, TE FP8) skipped over because they were
+Hopper-first.  The wedge is consumer / workstation Ada cards (RTX 4090,
+L40S, RTX 6000 Ada) where Hopper isn't an option and FP8 unlocks long-
+sequence diffusion that would otherwise OOM.  Whether to invest further
+depends on whether anyone actually wants to deploy Cosmos / Wan on
+those cards — if yes, the next move is an L40S host to validate the
+long-S crossover and re-tune.
 
