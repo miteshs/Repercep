@@ -96,6 +96,11 @@ def _native_fallback(
     backends; SDPA wants ``(B, H, S, D)``. The native path permutes in/out;
     we do the same here for the fallback so the dispatch table semantics are
     preserved regardless of which branch we take.
+
+    When ``flash-attn`` is installed we route through
+    :class:`mirage.attention.HopperFlashAttention` first — it beats torch SDPA
+    (cuDNN backend) by ~8 % on Hopper at Cosmos shapes (bench_fp8_hopper.py).
+    Mask / dropout / GQA disqualify the wrapper and we fall through to SDPA.
     """
     import torch
 
@@ -110,6 +115,35 @@ def _native_fallback(
     q_bhsd = query.permute(0, 2, 1, 3)
     k_bhsd = key.permute(0, 2, 1, 3)
     v_bhsd = value.permute(0, 2, 1, 3)
+
+    # FA-2/FA-3 wrapper: only when no mask/dropout/GQA, BF16/FP16, on CUDA.
+    # The wrapper instance is cached on the function attribute so the import
+    # cost is paid once per process.
+    if (
+        attn_mask is None
+        and dropout_p == 0.0
+        and not enable_gqa
+        and query.dtype in (torch.bfloat16, torch.float16)
+        and query.device.type == "cuda"
+    ):
+        if not hasattr(_native_fallback, "_fa_op"):
+            try:
+                from mirage.attention.hopper_flash import HopperFlashAttention
+
+                _native_fallback._fa_op = HopperFlashAttention()  # type: ignore[attr-defined]
+            except Exception:
+                _native_fallback._fa_op = None  # type: ignore[attr-defined]
+        fa_op: Any = _native_fallback._fa_op  # type: ignore[attr-defined]
+        if fa_op is not None and getattr(fa_op, "available", False):
+            try:
+                out_fa: torch.Tensor = fa_op(
+                    q_bhsd, k_bhsd, v_bhsd, causal=is_causal, scale=scale
+                )
+                return out_fa.permute(0, 2, 1, 3)
+            except Exception:
+                # Fall through to SDPA on any error — never poison a step.
+                pass
+
     out = torch.nn.functional.scaled_dot_product_attention(
         query=q_bhsd,
         key=k_bhsd,
@@ -151,6 +185,17 @@ def _mirage_fp8_attention(
 
     if return_lse:
         raise ValueError("mirage_fp8 backend does not support return_lse=True.")
+    # FA-only mode: caller activated the bridge with MIRAGE_FP8_ATTENTION=fa
+    # to route every call through HopperFlashAttention (or fall back to SDPA),
+    # bypassing the FP8 kernel entirely.  Useful on Hopper where FP8 Triton
+    # is currently 2-3x slower than cuDNN-FA3 but the FA-2/3 wheel beats
+    # both.  See bench_fp8_hopper.py for the measured crossover.
+    if os.environ.get("MIRAGE_FP8_ATTENTION", "").lower() in ("fa", "flash"):
+        return _native_fallback(
+            query, key, value,
+            attn_mask=attn_mask, dropout_p=dropout_p,
+            is_causal=is_causal, scale=scale, enable_gqa=enable_gqa,
+        )
     if _parallel_config is not None:
         # Context parallelism is not in scope for Phase 2.5; fall back so we
         # never silently break the multi-GPU path (Mirage is single-GPU today
@@ -329,7 +374,7 @@ def maybe_activate_from_env() -> bool:
     the diffusers pipeline path (dispatcher).
     """
     fp8_env = os.environ.get("MIRAGE_FP8_ATTENTION", "").lower()
-    if fp8_env not in ("1", "true", "on", "triton", "scaled_mm"):
+    if fp8_env not in ("1", "true", "on", "triton", "scaled_mm", "fa", "flash"):
         return False
     # The diffusers dispatcher only has the fused-Triton path — the
     # ``scaled_mm`` variant lives only in ``mirage.attention.registry``. We
