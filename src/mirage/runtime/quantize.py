@@ -111,10 +111,9 @@ def quantize_module_linears(
 
     Returns a dict mapping the dotted module path to its
     :class:`QuantizedLinear`.  Does NOT modify ``module`` — the caller is
-    expected to wrap the linears with an INT8-aware forward (e.g. via a
-    ``QuantizedLinearModule`` from a future PR).  Keeping quantization
-    pure here lets the test suite assert exact values without side
-    effects.
+    expected to wrap the linears with an INT8-aware forward (e.g. via
+    :func:`replace_linears_with_quantized`).  Keeping quantization pure
+    here lets the test suite assert exact values without side effects.
 
     The ``name_filter`` is a substring match against dotted names; pass
     ``"dit"`` to quantize only the diffusion transformer blocks, leaving
@@ -131,3 +130,134 @@ def quantize_module_linears(
             continue
         out[name] = quantize_linear_symmetric(sub.weight, sub.bias)
     return out
+
+
+def replace_linears_with_quantized(
+    module: torch.nn.Module,
+    *,
+    name_filter: str | None = None,
+) -> int:
+    """In-place swap every matching ``nn.Linear`` for a :class:`QuantizedLinearModule`.
+
+    Returns the number of swaps performed.  The ``name_filter`` is a
+    substring match against dotted names, with the same semantics as
+    :func:`quantize_module_linears` — pass ``"dit"`` to quantize only the
+    DiT blocks.
+
+    This is the integration point the engine load path calls when the
+    caller asks for ``quantize="int8-symmetric"``.  We mutate in place
+    rather than returning a new module so the swap is invisible to
+    downstream code that holds references to the parent — important
+    because the DiT module graph is shared across timesteps inside the
+    denoise loop.
+
+    The traversal is parent-first so we can ``setattr`` on the immediate
+    parent; using ``module.named_modules()`` directly would give us the
+    target but not the parent.  ``named_children`` per-parent + recursion
+    is the cleanest expression of that.
+    """
+    import torch
+
+    cls = _quantized_linear_module_class()
+    count = 0
+
+    def _recurse(parent: torch.nn.Module, prefix: str) -> None:
+        nonlocal count
+        for child_name, child in list(parent.named_children()):
+            dotted = f"{prefix}.{child_name}" if prefix else child_name
+            if isinstance(child, torch.nn.Linear):
+                if name_filter is None or name_filter in dotted:
+                    setattr(parent, child_name, cls.from_linear(child))
+                    count += 1
+                    # Don't recurse into a Linear — it has no nn.Linear
+                    # children, and the freshly-installed
+                    # QuantizedLinearModule has no nn.Linear children
+                    # either.
+                    continue
+            _recurse(child, dotted)
+
+    _recurse(module, "")
+    return count
+
+
+# The QuantizedLinearModule class is built lazily on first access.  We
+# can't define it at module-import time without forcing ``import torch``
+# (the class has to inherit from ``nn.Module``), which would defeat the
+# whole point of the lazy-torch pattern the rest of this file follows.
+# PEP 562 ``__getattr__`` lets us hand out the class on demand while
+# keeping the cold import path torch-free.
+
+_QuantizedLinearModuleCls: type | None = None
+
+
+def _quantized_linear_module_class() -> type:
+    """Build (or fetch the cached) ``QuantizedLinearModule`` class."""
+    global _QuantizedLinearModuleCls
+    if _QuantizedLinearModuleCls is not None:
+        return _QuantizedLinearModuleCls
+
+    import torch
+
+    class QuantizedLinearModule(torch.nn.Module):
+        """An ``nn.Module`` wrapper around a :class:`QuantizedLinear`.
+
+        Forward is the dequant-then-matmul fallback path — correct on any
+        CPU and on GPU, but slower than the AMX_INT8 kernel that will
+        eventually replace it.  Keeping the dequant path as the *default*
+        forward (rather than calling the kernel) means the module is
+        usable on pre-Sapphire-Rapids hardware, on AMX-disabled VMs (our
+        CI today), and inside ``torch.compile`` tracing — none of which
+        can call the AMX intrinsics.  When the kernel lands, it'll
+        dispatch via the existing backend registry (see
+        ``mirage.backend.cpu``) and this forward becomes the fallback
+        branch under ``if not amx_available``.
+
+        Numerically this is *not* the same as the original ``nn.Linear``:
+        the weight has been round-tripped through INT8 symmetric
+        quantization, so each row carries up to ~scale/2 of per-element
+        error.  Tests bound this by the per-row scale, which is the
+        tightest bound achievable without changing the quant scheme.
+        """
+
+        def __init__(self, q: QuantizedLinear) -> None:
+            super().__init__()
+            # Register qweight + scale as buffers so ``.to(device)`` and
+            # state-dict roundtrips work without surprise.  Bias goes in
+            # as a Parameter when present so downstream code walking
+            # ``parameters()`` still sees it (matches ``nn.Linear``).
+            self.register_buffer("qweight", q.qweight)
+            self.register_buffer("scale", q.scale)
+            if q.bias is not None:
+                self.bias = torch.nn.Parameter(
+                    q.bias.detach().clone(), requires_grad=False
+                )
+            else:
+                self.register_parameter("bias", None)
+            self.out_features, self.in_features = q.qweight.shape
+
+        @classmethod
+        def from_linear(cls, linear: torch.nn.Linear) -> QuantizedLinearModule:
+            """Quantize an existing ``nn.Linear`` and wrap the result."""
+            q = quantize_linear_symmetric(linear.weight, linear.bias)
+            return cls(q)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            """Dequant-then-linear: the SDPA-floor fallback path.
+
+            Dequant happens in the input dtype so the matmul stays in the
+            caller's precision (BF16 in / BF16 out for the DiT blocks).
+            The AMX_INT8 kernel will replace this with an INT8 matmul
+            that fuses the scale at the accumulator stage; the math is
+            equivalent but ~2x faster on SPR.
+            """
+            w = (self.qweight.to(torch.float32) * self.scale.unsqueeze(1)).to(x.dtype)
+            return torch.nn.functional.linear(x, w, self.bias)
+
+    _QuantizedLinearModuleCls = QuantizedLinearModule
+    return QuantizedLinearModule
+
+
+def __getattr__(name: str) -> object:
+    if name == "QuantizedLinearModule":
+        return _quantized_linear_module_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
