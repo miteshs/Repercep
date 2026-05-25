@@ -268,6 +268,109 @@ Other items still open:
 
 ---
 
+## 4a. Held-out reference set for FVD
+
+This section documents the workflow that closes the §4 open item
+**"FVD against held-out references."** It also pins the directory layout
+the eval scripts expect so that "I ran the eval" reproduces what we did.
+
+### Why a held-out set, and why N ≥ 50
+
+Pixel-LPIPS on a single `(prompt, seed)` pair tells you whether two
+videos look like the same trajectory; it does **not** tell you whether
+a cache preserves distribution-level fidelity. Diffusion outputs trade
+trajectory equivalence for compute by design — see §4's note on the
+LPIPS = 0.645 result. The right arbiter is FVD over a sample of outputs.
+
+The classic FVD paper uses N ≥ 1000. We won't get there in a
+single-GPU regime, but anything below N ≈ 50 makes the empirical
+covariance over 2048-D I3D features rank-deficient and the
+`scipy.linalg.sqrtm` term numerically fragile. `scripts/compute_fvd.py`
+already documents this in its module docstring and emits a loud
+small-N warning below N = 50 (and a `feature_l2` fallback below N = 2).
+See also `docs/SESSION_17_CLOSE.md` §"What's open after today" item 3
+for the framing: FVD at N ≥ 50 is the gate we want crossed before any
+external publication of the speed-vs-quality story.
+
+### Directory layout
+
+Both the reference set and the candidate set live in flat directories,
+one mp4 per `(prompt, seed)` pair. The two directories MUST share the
+same set of `(prompt, seed)` pairs so the FVD compares like-for-like
+generations — only the cache strategy differs:
+
+```
+held_out_refs/
+  prompt000_seed000.mp4    # no-cache baseline
+  prompt000_seed042.mp4
+  prompt001_seed000.mp4
+  ...
+  prompt049_seed042.mp4    # >= 50 pairs total
+
+adaptive_cache_outputs/
+  prompt000_seed000.mp4    # same prompts + seeds, adaptive cache on
+  prompt000_seed042.mp4
+  ...
+```
+
+The filename convention is informational only — `scripts/compute_fvd.py`
+sorts by name and treats each set as an unordered bag of clips. Keep
+the naming parallel so it's diff-able by eye.
+
+### Single-pair pixel LPIPS vs distribution-level FVD
+
+The two metrics answer different questions:
+
+| Metric | Script | What it measures | When to trust it |
+|---|---|---|---|
+| MSE / PSNR / LPIPS | `scripts/verify_quality.py` | per-frame pixel + perceptual distance between two specific mp4s | when you want to know whether `(prompt, seed)` deterministically reproduces; when comparing two byte-determined trajectories |
+| FVD | `scripts/compute_fvd.py` | Fréchet distance between the I3D feature distributions of two video sets | when comparing two **generative strategies** (cache on vs off, FP8 vs BF16) over a held-out sample |
+
+A cached path that scores LPIPS = 0.6 on a single pair can still score
+low FVD if the cache preserves the output distribution; the pixel
+metric is the tighter test and is over-strict for the "did caching
+break the model?" question.
+
+### How `scripts/eval_cpu_quality.py` chains them
+
+`scripts/eval_cpu_quality.py` is the CPU-focused convenience runner
+that wraps both. It forces `--device cpu` on both inner stages (this is
+explicitly the CPU eval flow — the evaluator itself never uses GPU,
+regardless of the host) and emits one combined `RESULT` JSON line:
+
+```bash
+# Pixel-only (just verify_quality, CPU LPIPS):
+python scripts/eval_cpu_quality.py REF.mp4 CAND.mp4
+
+# Pixel + distribution FVD (the full workflow):
+python scripts/eval_cpu_quality.py REF.mp4 CAND.mp4 \
+    --fvd-reference-set held_out_refs/ \
+    --fvd-candidate-set adaptive_cache_outputs/
+```
+
+The combined JSON layout (`mode = "cpu_quality_eval"`) carries a
+`pixel` block (MSE/PSNR/LPIPS means + frame count + backbone) and a
+nullable `fvd` block (the raw `compute_fvd()` return shape — `mode`
+will be `"fvd"` at N ≥ 2 and `"feature_l2"` at N = 1). The loud small-N
+FVD warning from `compute_fvd` is forwarded verbatim to the user's
+stderr — do not silence it.
+
+### The held-out set itself is NOT in the repo
+
+The reference videos are **not committed** to this repository. They
+must be generated locally: pick ≥ 50 prompts (the project ships
+`scripts/prompts/` candidates; pick a diverse slice), run
+`scripts/run_cosmos.py` (or `run_wan.py`) with `--cache none` and
+multiple seeds, and save the outputs into one flat directory. That
+directory is then **re-used** across cache-strategy comparisons —
+generate the candidate set with the strategy under test against the
+exact same `(prompt, seed)` pairs, point `eval_cpu_quality.py` at both
+directories, and compare strategies by their FVD against the shared
+held-out reference. The cost (≥ 50 × no-cache runs) is paid once; every
+subsequent cache-strategy comparison is cheap.
+
+---
+
 ## 5. The "first publicly reported" claim — what we checked
 
 `docs/COSMOS_ON_MI300X.md` claims "first publicly reported Cosmos
