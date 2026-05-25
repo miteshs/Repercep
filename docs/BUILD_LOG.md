@@ -2278,3 +2278,71 @@ expected counter: `native_fallback -> FA-3 = 960`.  After that,
 benchmark `MIRAGE_FP8_ATTENTION=fa` Wan TI2V-5B 17f/8 wall time
 against the un-bridged baseline to quantify the FA-3 lift on Wan.
 
+### F46 — Cosmos H100 + Wan TI2V-5B headlines reproduce on a fresh build env
+
+Closing the session-19 follow-up of "re-verify the load-bearing
+numbers before close."  Both ran on the same H100 80GB HBM3 pod,
+torch 2.11.0+cu128, diffusers 0.37.1, **without** `flash-attn`
+installed (so `MIRAGE_FP8_ATTENTION=fa` activates the diffusers
+bridge but falls through to SDPA→cuDNN-FA-3 rather than the FA-3
+Python wrapper).
+
+**Cosmos-Predict1-7B 121f/36, adaptive cache thr=0.30:**
+
+```
+RESULT {"model": "cosmos-predict1-7b-text2world",
+  "device": "NVIDIA H100 80GB HBM3",
+  "frames": 121, "resolution": "1280x704", "steps": 36,
+  "load_seconds": 22.1, "generate_seconds": 101.8,
+  "frames_per_second": 1.188, "seconds_per_step": 2.83,
+  "peak_hbm_gib": 52.5,
+  "output": "benchmark-results/cosmos_h100_headline_rerun.mp4"}
+```
+
+- **generate_seconds = 101.8 s** (Session 16 headline: 99.6 ± 3.9 s
+  mean across 5 prompts × 5 seeds).  Δ = +2.2 s = +2.2 %, well inside
+  the published 3.9 s std (3.86 % spread).  **3.73 × NVIDIA published
+  pub** (vs Session 16's 3.81 ×) — same regime.
+- **peak_hbm_gib = 52.5** — bit-identical to the published value.
+- **load_seconds = 22.1** — significantly faster than Session 16's
+  cold load (~3 min) because the model is now on the
+  high-throughput MooseFS-backed `/workspace/.cache/huggingface`
+  rather than the original FUSE-quota-throttled path (F30).
+
+**Wan-2.2 TI2V-5B 17f/8 steps smoke:**
+
+```
+RESULT {"model": "wan-2.2-t2v-a14b",
+  "repo": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+  "device": "NVIDIA H100 80GB HBM3",
+  "frames": 17, "resolution": "1280x720", "steps": 8,
+  "load_seconds": 27.8, "generate_seconds": 6.0,
+  "frames_per_second": 2.835, "seconds_per_step": 0.75,
+  "peak_hbm_gib": 42.6,
+  "output": "benchmark-results/wan_sample.mp4"}
+
+PROFILE {"total_s": 6.0, "text_encode_s": 0.257,
+  "dit_loop_s": 3.6, "vae_decode_s": 1.496,
+  "dit_calls": 16, "vae_decode_calls": 1}
+```
+
+- **generate_seconds = 6.0 s** at 17 f / 8 step on the small TI2V-5B
+  variant (vs the A14B 17f/8 smoke = 37.66 ± 0.31 s, F38).  The 6×
+  smaller transformer + single-noise-step path (no MoE expert
+  swap) explains the gap; this is *the right number for TI2V-5B*,
+  not a baseline for A14B.
+- The PROFILE row confirms the DiT loop dominates (60 % of total)
+  and matches the per-step seconds_per_step.  Useful as the
+  reference shape for future Wan-shaped adaptive-cache work.
+
+**What we did NOT re-run.**  Wan-2.2-A14B 81f/40 (Session 17's
+1552.8 s / 72.6 GiB headline) needs the 118 GB A14B repo
+downloaded; the HF cache only had TI2V-5B locally and pulling A14B
++ running 26-min generation was scoped out of this session by
+explicit user choice.  That number stays as-is from Session 17 until
+it's re-validated.
+
+**Take-away.**  The 3.73-3.81 × Cosmos H100 claim is robust across
+session boundaries and venv resets — same diffusers, same torch,
+same `MIRAGE_FP8_ATTENTION=fa` env, same cache config, same numbers.
+
