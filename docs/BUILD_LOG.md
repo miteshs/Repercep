@@ -2072,3 +2072,64 @@ edits this session are wan.py only).  Fix is a separate test
 patch — `atol=1e-2, rtol=1e-2` or convert to fp32 before the
 allclose.
 
+### F42 — FP8 Triton flash attention works on Ada Lovelace (sm_89) — fourth silicon target
+
+**Verdict: WORKS.**  The time-boxed half-day Ada port (Item J) landed
+clean.  Ada Lovelace's 4th-gen tensor cores have native FP8 ISA
+(E4M3 + E5M2, same dtypes as Hopper) exposed via the synchronous
+`mma.sync.aligned.m16n8k32.f32.e4m3.e4m3` PTX instruction rather than
+Hopper's asynchronous `wgmma`.  Triton 3.4's NVPTX backend dispatches
+`tl.dot` with FP8 operands to the correct instruction per arch, so
+the kernel compiles and runs once the Hopper-only intrinsics (TMA,
+warpgroup fences, `tl.async_copy`) are avoided.
+
+Files landed in this finding:
+- `kernels/triton_kernels/fp8_flash_attn_ada.py` — kernel (sibling
+  of `fp8_flash_attn_hopper.py`; ~100 KiB SMEM-tuned config grid).
+- `src/mirage/attention/fp8_ada_triton.py` — `AttentionOp` wrapper
+  with `torch.cuda.get_device_capability() == (8, 9)` silicon gate.
+- `tests/test_fp8_attention_ada.py` — 10 tests, 9 pass on Ada
+  (1 skipped on Ada because it exercises the off-Ada path).
+- `docs/FP8_ON_ADA.md` — one-page summary.
+
+Measured on RTX 2000 Ada (sm_89, 16 GiB) at the spec'd
+`(B=1, H=8, S=4096, D=128)` bf16 shape:
+
+| Metric | Value |
+|---|---|
+| Max abs err vs SDPA | 0.014 |
+| Mean rel err (significant entries) | ~5% |
+| Steady-state ms/call (autotuned) | 3.07 ms |
+| SDPA reference ms/call | 1.74 ms |
+| Autotuned config | `BLOCK_M=64 BLOCK_N=128 nw=4 ns=2` |
+
+FP8 is **1.77× slower than SDPA at this medium shape** — expected.
+The FP8 win materializes at long sequences (S~tens of thousands)
+where SDPA goes bandwidth-bound; same crossover that the Hopper
+sibling sees on Cosmos's S=109k shape (F20, F27).  RTX 2000 Ada's
+16 GiB HBM3 can't host the S=109k bench; that test would need an
+L40S (48 GiB) or RTX 6000 Ada (48 GiB) to validate the crossover.
+
+**INTEG agent follow-up.**  The wrapper is NOT wired into
+`registry.py` or `backend/cuda.py` yet — those files are owned by
+the INTEG agent.  Suggested wiring:
+1. Import `FP8AdaTritonAttention` in the NVIDIA branch of the
+   attention-op selector, ahead of `naive-sdpa`.
+2. The op self-disqualifies on non-Ada hosts (capability != (8, 9))
+   so it is safe to import unconditionally in the NVIDIA branch.
+3. Update `BackendCapabilities.attention_ops` on sm_89 hosts to
+   advertise `"fp8-ada-triton-flash"` and set `supports_fp8=True`.
+4. Promote ahead of `nvidia-flash` only when the `MIRAGE_FP8_ATTENTION`
+   env-var bridge is set, mirroring the Hopper wiring pattern.
+
+Strategic note.  Ada FP8 is real silicon ISA that the rest of the
+ecosystem (FA-3 FP8, TE FP8) skipped over because they were
+Hopper-first.  Mirage now exposes it through the same `AttentionOp`
+seam as Hopper and CDNA3 — a real fourth silicon target for the FP8
+lever.  The wedge is consumer / workstation Ada cards (RTX 4090,
+L40S) where Hopper isn't an option and FP8 unlocks long-sequence
+diffusion that would otherwise OOM.  Whether to invest further
+depends on whether anyone actually wants to deploy Cosmos / Wan on
+L40S — if yes, the next move is an L40S host to validate the
+long-S crossover and to autotune the grid for the larger SM count.
+
