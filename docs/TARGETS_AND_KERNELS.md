@@ -166,12 +166,57 @@ toolchain.  Read this when you want to know *what runs on what*.
 | Target | Wall time | Config | vs NVIDIA H100 reference (~380 s) |
 |---|---:|---|---:|
 | MI300X | **142.0 s** | Cosmos 121f/36, adaptive cache + autotuned FP8 Triton | **2.68×** |
-| H100 | **138.4 s** | Cosmos 121f/36, adaptive cache alone (BF16) | **2.75×** |
-| Intel CPU SPR | **875.6 s** (this run) | Cosmos 17f/8, AMX-aware path, 48 threads | substrate |
+| H100 (FA-3 path, 2026-05-25) | **95.3 s** | Cosmos 121f/36, adaptive cache + FA-3 via bridge | **3.99×** |
+| H100 (FA-2 path) | **132.5 s** | Cosmos 121f/36, adaptive cache + FA-2 via bridge | 2.87× |
+| H100 (torch SDPA, prior baseline) | **138.4 s** | Cosmos 121f/36, adaptive cache alone | 2.75× |
+| H100 (FP8 Triton, current) | **343.7 s** | Cosmos 121f/36, adaptive + Mirage FP8 kernel | 1.10× (FP8 kernel needs surgery) |
+| Intel CPU SPR | **875.6 s** | Cosmos 17f/8, AMX-aware path, 48 threads | substrate |
+
+The 95.3 s headline requires FA-3 built from source (the PyPI flash-attn
+wheel ships FA-2 only) and `MIRAGE_FP8_ATTENTION=fa` set to activate the
+bridge:
+
+```bash
+# One-time: build FA-3 minimal for sm_90 (~5 min)
+cd /tmp && git clone --depth 1 https://github.com/Dao-AILab/flash-attention
+cd flash-attention/hopper && \
+  FLASH_ATTENTION_DISABLE_BACKWARD=TRUE FLASH_ATTENTION_DISABLE_SPLIT=TRUE \
+  FLASH_ATTENTION_DISABLE_PAGEDKV=TRUE FLASH_ATTENTION_DISABLE_APPENDKV=TRUE \
+  FLASH_ATTENTION_DISABLE_LOCAL=TRUE FLASH_ATTENTION_DISABLE_SOFTCAP=TRUE \
+  FLASH_ATTENTION_DISABLE_PACKGQA=TRUE FLASH_ATTENTION_DISABLE_FP16=TRUE \
+  FLASH_ATTENTION_DISABLE_FP8=TRUE \
+  FLASH_ATTENTION_DISABLE_HDIM64=TRUE FLASH_ATTENTION_DISABLE_HDIM96=TRUE \
+  FLASH_ATTENTION_DISABLE_HDIM192=TRUE FLASH_ATTENTION_DISABLE_HDIM256=TRUE \
+  FLASH_ATTENTION_DISABLE_HDIMDIFF64=TRUE FLASH_ATTENTION_DISABLE_HDIMDIFF192=TRUE \
+  MAX_JOBS=8 uv pip install --python /path/to/.venv --no-build-isolation .
+
+# Headline reproducer
+MIRAGE_FP8_ATTENTION=fa .venv/bin/python scripts/run_cosmos.py --backend cuda \
+    --frames 121 --steps 36 --native-loop \
+    --cache-mode adaptive --cache-adaptive-threshold 0.30 \
+    --cache-force-full-every 16
+# expect: generate_seconds ≈ 95 s
+```
 
 CPU per-step extrapolation to 121 f / 36 steps: ~430 s/step × 36 ≈ 4–5 hours
 without caching / kernel optimization.  See `docs/COSMOS_ON_CPU.md` for the
 optimization plan.
+
+### Why FA-3 beats cuDNN-via-SDPA by 2× on Hopper
+
+`bench_fp8_hopper.py` measured the gap at the Cosmos shapes:
+
+| seq_len | torch SDPA (cuDNN) | HopperFlashAttention (FA-3) | speedup |
+|--------:|------------------:|---------------------------:|--------:|
+| 8 192   | 6.06 ms           | 2.95 ms                    | 2.05×   |
+| 16 384  | 23.94 ms          | 13.14 ms                   | 1.82×   |
+| 32 768  | 101.23 ms         | 51.43 ms                   | 1.97×   |
+
+torch 2.8.0+cu128's SDPA dispatches BF16 on sm_90 to cuDNN, but the
+cuDNN path it chooses is not the same WGMMA-based FA-3 kernel that the
+Dao-AILab wheel ships.  The standalone FA-3 wheel runs the
+hand-tuned-for-Hopper kernel from the FA-3 paper directly, which
+explains the consistent 1.8–2.0× margin and the 31 % end-to-end win.
 
 ## Language / toolchain summary
 
