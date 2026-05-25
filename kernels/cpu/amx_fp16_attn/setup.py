@@ -19,6 +19,7 @@ Hard requirements:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -34,6 +35,14 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 # only valid on hardware that ships TDPFP16PS.
 # ---------------------------------------------------------------------------
 def _require_amx_fp16() -> None:
+    if os.environ.get("MIRAGE_AMX_FORCE_BUILD") == "1":
+        print(
+            "[amx-fp16] MIRAGE_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
+            "(compile-only smoke).",
+            file=sys.stderr,
+        )
+        return
+
     cpuinfo = Path("/proc/cpuinfo")
     if not cpuinfo.exists():
         # Non-Linux build host - allow it through; the runtime check in

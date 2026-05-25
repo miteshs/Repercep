@@ -27,6 +27,14 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 # Fail fast on CPUs that cannot run the kernel at all.
 # ---------------------------------------------------------------------------
 def _require_amx_bf16() -> None:
+    if os.environ.get("MIRAGE_AMX_FORCE_BUILD") == "1":
+        print(
+            "[amx-bf16] MIRAGE_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
+            "(compile-only smoke).",
+            file=sys.stderr,
+        )
+        return
+
     cpuinfo = Path("/proc/cpuinfo")
     if not cpuinfo.exists():
         # Non-Linux build host - allow it through; the runtime check in
