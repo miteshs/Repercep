@@ -3,6 +3,8 @@
 **Status:** Architecture landed (Session 15); end-to-end run pending FUSE
 recovery + kernel build.  See ADR-0007.
 
+See also `docs/WAN_ON_CPU.md` for the Wan-2.2-TI2V-5B CPU sibling.
+
 This is the CPU sibling of `docs/COSMOS_ON_MI300X.md` and
 `docs/COSMOS_ON_H100.md`.  Honest framing: Cosmos-Predict-7B on CPU is
 **not a production latency target** — even on an Intel Sapphire Rapids
