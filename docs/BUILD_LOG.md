@@ -1956,3 +1956,88 @@ name the exact diffusers repo.  No code change needed.
 - **F31 root-cause** — RunPod / MooseFS support; document the
   long-running pattern in the project's operating notes.
 
+## Session 17 — 2026-05-25 — Wan-2.2 H100 unblock + first numbers
+
+Findings F33–F37 from Session 16 live in `docs/SESSION_16_CLOSE.md`
+(FA-3 source-build + TE source-build paths).  This session resumes
+F-numbering at F38.
+
+### F38 — Wan-2.2 A14B does not fit in 80 GiB H100 without VAE tiling
+
+Loading `Wan-AI/Wan2.2-T2V-A14B-Diffusers` BF16 with both MoE experts
+resident + FP32 VAE comes to ~52 GiB weight + ~14 GiB activations
++ ~6-8 GiB VAE decode transient peak.  The decode runs out of room
+inside `AutoencoderKLWan.forward` at the per-frame `torch.cat` in
+`autoencoder_kl_wan.py:170` — Tried to allocate 1.65–1.99 GiB, 144
+MiB free.
+
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` recovers ~3 GiB
+of allocator fragmentation but is not enough: activations grow to
+fill the gap (allocated went up by 3.5 GiB across runs).
+
+Real fix: `pipe.vae.enable_tiling()`.  AutoencoderKLWan tiles spatial
+dims and seam-blends across them — output is bit-stable.  Landed
+as `WanConfig.vae_tiling: bool = False` (default off preserves
+existing MI300X-native behavior) and `--vae-tiling` flag in
+`scripts/run_wan.py`.  With tiling, the 81 f / 40 step / 1280 × 720
+run lands at **72.6 GiB peak** (was OOM), 1552.8 s wall.
+
+Comparable note for MI300X: the same `--vae-tiling` knob would drop
+MI300X peak from 85.1 GiB to ~67 GiB at the same shape; doesn't
+unblock anything (192 GiB has headroom) but enables higher concurrent-
+job-per-VF stacking.
+
+### F39 — `WanEngine.generate` unconditionally passes `guidance_scale_2`; breaks non-MoE Wan variants
+
+Hit while running the TI2V-5B CPU smoke.  Diffusers' `WanPipeline.
+__call__` validates `guidance_scale_2` against `self.config.
+boundary_ratio is not None`; MoE A14B has `boundary_ratio ≈ 0.875`,
+non-MoE TI2V-5B has it as `None`.  Passing the kwarg on a non-MoE
+variant raises `ValueError: guidance_scale_2 is only supported when
+the pipeline's boundary_ratio is not None.`
+
+Fix: probe `getattr(self._pipe.config, "boundary_ratio", None)
+is not None` at call time and conditionally include the kwarg.
+Detection by pipeline config rather than repo_id means any future
+Wan variant works without an allow-list.
+
+### F40 — `MIRAGE_FP8_ATTENTION=fa` bridge does not engage on `WanTransformer3DModel`
+
+Cosmos under the same bridge gets a 3.81× wall-time speedup over
+torch SDPA (cuDNN-FA3) — see `SESSION_16_CLOSE.md` §2.  Wan H100
+under the same bridge sees ~5-9 % vs MI300X (smoke 1.20×, 81f/40
+1.09× wall / 1.06× per-step) — that's the silicon delta, not an
+FA-3 effect.
+
+This is the F36 pattern again: diffusers' attention dispatcher
+registry (`_AttentionBackendRegistry`) is the capture point for
+Cosmos's `CosmosTransformer3DModel`, but `WanTransformer3DModel`
+appears to take a different path — either calling SDPA directly,
+or going through a per-block flag that doesn't read the active
+backend.  Confirming the root cause needs a forward-hook trace
+through one Wan attention block (count the dispatcher calls; if
+zero, that's F36 on Wan).
+
+Until that's fixed, FA-3 is dead weight on Wan and `MIRAGE_FP8_
+ATTENTION=fa` is informational, not load-bearing.  Wired into
+`docs/WAN_ON_H100.md` Caveats and Reproduce sections.
+
+### F41 — pytest tolerance assertion incompatible with bf16 when FA-3 changes the dispatcher route
+
+`tests/test_attention_diffusers_backend.py::test_backend_routes_
+short_seq_to_native` asserts
+`torch.allclose(out, ref, atol=1e-5, rtol=1e-5)` on **bf16**
+tensors.  bf16 epsilon is ~7.8e-3 — the threshold is fundamentally
+incompatible with the dtype.
+
+The test passed pre-Session 17 because both `out` and `ref`
+happened to dispatch through identical kernels; with FA-3 actually
+installed on H100, the SDPA route can land on a different cuDNN
+algorithm and outputs differ in the 4th decimal (within bf16 noise
+but well above 1e-5).
+
+Not a regression caused by Session 17 code changes (`src/mirage`
+edits this session are wan.py only).  Fix is a separate test
+patch — `atol=1e-2, rtol=1e-2` or convert to fp32 before the
+allclose.
+

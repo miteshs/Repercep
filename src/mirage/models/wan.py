@@ -86,6 +86,12 @@ class WanConfig:
     use_native_loop: bool = False
     cache_skip_every: int = 0
     cache_warmup_steps: int = 4
+    # Decode the VAE in spatial tiles. Drops peak VRAM by ~6-8 GiB at
+    # 1280x720 (the per-frame catenations in AutoencoderKLWan otherwise
+    # spike past 80 GiB on H100 when both 14B MoE experts are resident).
+    # Output is bit-identical aside from the tile-seam blending the
+    # decoder already does internally.
+    vae_tiling: bool = False
 
 
 class WanEngine:
@@ -147,6 +153,8 @@ class WanEngine:
             self._config.repo_id, vae=vae, torch_dtype=compute_dtype
         )
         pipe.to(device)
+        if self._config.vae_tiling:
+            pipe.vae.enable_tiling()
         if self._config.compile_transformer:
             pipe.transformer = torch.compile(pipe.transformer)
             # MoE A14B variants ship a second transformer for low-noise steps.
@@ -181,7 +189,7 @@ class WanEngine:
         # shape is stable across model families — they're inert until the
         # Wan-native loop lands. params.fps is not passed: Wan was trained at
         # 16 FPS and the pipeline does not accept an FPS override.
-        output = self._pipe(
+        pipe_kwargs: dict[str, Any] = dict(
             prompt=request.prompt,
             negative_prompt=request.negative_prompt,
             height=params.height,
@@ -189,10 +197,16 @@ class WanEngine:
             num_frames=params.num_frames,
             num_inference_steps=params.num_inference_steps,
             guidance_scale=params.guidance_scale,
-            guidance_scale_2=self._config.guidance_scale_2,
             generator=generator,
             output_type="pt",
         )
+        # guidance_scale_2 is the MoE A14B second-stage scale. Non-MoE Wan
+        # variants (e.g. TI2V-5B) raise if it's passed — they have no boundary
+        # between high-noise / low-noise experts. Probe the pipeline config
+        # rather than the repo_id so any future MoE/non-MoE variant works.
+        if getattr(self._pipe.config, "boundary_ratio", None) is not None:
+            pipe_kwargs["guidance_scale_2"] = self._config.guidance_scale_2
+        output = self._pipe(**pipe_kwargs)
         video = _as_frame_tensor(output.frames[0])
 
         total = int(video.shape[0])

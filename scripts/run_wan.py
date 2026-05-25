@@ -63,6 +63,20 @@ def main() -> int:
         help="torch.compile the DiT transformer(s) — slow first run, faster steady-state",
     )
     parser.add_argument(
+        "--vae-tiling",
+        action="store_true",
+        help=(
+            "decode the VAE in spatial tiles — drops peak VRAM by ~6-8 GiB at "
+            "1280x720 so the A14B both-experts-resident path fits in 80 GiB H100"
+        ),
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("rocm", "cuda", "cpu", "auto"),
+        default="auto",
+        help="compute backend. 'auto' picks the first available (GPU wins on a GPU host).",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help=(
@@ -89,10 +103,11 @@ def main() -> int:
 
     from mirage.backend.registry import select_backend
     from mirage.bench.profile import _Probe, profile_wan
+    from mirage.hardware import Vendor
     from mirage.models.wan import NATIVE_FPS, SMALL_REPO, WanConfig, WanEngine
     from mirage.runtime.types import GenerationParams, GenerationRequest
 
-    backend = select_backend()
+    backend = select_backend(prefer=None if args.backend == "auto" else args.backend)
     device = backend.devices()[0]
     print(
         f"[mirage] backend={backend.name}  device={device.name}  "
@@ -103,6 +118,7 @@ def main() -> int:
     config = WanConfig(
         guidance_scale_2=args.guidance_2,
         compile_transformer=args.compile,
+        vae_tiling=args.vae_tiling,
     )
     if args.small:
         config.repo_id = SMALL_REPO
@@ -133,7 +149,13 @@ def main() -> int:
         f"{args.steps} steps, seed {args.seed} ...",
         flush=True,
     )
-    torch.cuda.reset_peak_memory_stats()
+    cpu_run = backend.vendor is Vendor.INTEL
+    rss_before = 0
+    if cpu_run:
+        import resource
+        rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    else:
+        torch.cuda.reset_peak_memory_stats()
 
     # Inline per-stage probe — forward hooks fire outside any compiled graph,
     # so the breakdown is valid whether or not the DiT is torch.compile'd.
@@ -169,7 +191,12 @@ def main() -> int:
             "vae_decode_calls": probe.vae.calls,
         }
 
-    peak_gib = torch.cuda.max_memory_allocated() / 1024**3
+    if cpu_run:
+        import resource
+        rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        peak_gib = (rss_after - rss_before) / 1024**3
+    else:
+        peak_gib = torch.cuda.max_memory_allocated() / 1024**3
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
