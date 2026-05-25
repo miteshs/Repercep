@@ -1,16 +1,36 @@
 # Mirage Runtime — Handoff
 
-**Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
-**HEAD:** *(post-Session-15: see branches `session-14-cuda-port` and
-`cpu-amx-port`)* · **Status:** pre-alpha, working on MI300X **and** H100,
-results publishable + **independently verified on a clean GPU**. Polyglot
-scaffold + Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching) +
-Phase 2.5 FP8 wiring + autotuned FP8 kernel + **NVIDIA H100 port (Session
-14)** + **F29 FP8 autotune grid expansion + Intel CPU AMX substrate
-(Session 15)** all landed. Headlines: **142 s / 2.68× H100 reference** on
-MI300X at Cosmos 121 f / 36 steps; **138.4 s / 2.75× NVIDIA's published
-H100 reference** with Mirage's adaptive cache on H100 itself; CPU AMX
-substrate per ADR-0007 (perf TBD, see `docs/COSMOS_ON_CPU.md`).
+**Date:** 2026-05-25 · **Repo:** https://github.com/miteshs/Mirage ·
+**HEAD:** `main`, in sync with `origin/main` (4 commits past Session-16
+close) · **Status:** pre-alpha, working on MI300X **and** H100 **and**
+CPU, results publishable + **independently verified on a clean GPU**
++ **H100 cache quality now measured** (Session 17).  Polyglot
+scaffold + Rust core + Stage-4 v2 serving + Phase 2 (adaptive caching)
++ Phase 2.5 FP8 wiring + autotuned FP8 kernel + **NVIDIA H100 port
+(Session 14)** + **F29 FP8 autotune grid + Intel CPU AMX substrate
+(Session 15)** + **FA-3 source build + bridge wiring + V-JEPA 2
+(Session 16)** + **Wan-2.2 H100 first numbers + F40 confirmed +
+H100 cache quality measured + POSITIONING.md (Session 17)** all landed.
+
+**Headlines (post-Session-17):**
+
+- **Cosmos H100 = 99.6 ± 3.9 s / 3.81× NVIDIA's published reference
+  (~380 s)** at 121 f / 36 steps; cache quality measured (LPIPS 0.61,
+  trajectory-divergent per F23, brightness/std preserved).  3.81 ×
+  decomposes as cache 2.75 × × FA-3 1.39 × — see
+  `docs/POSITIONING.md` for the honest source-of-speedup.
+- **Wan-2.2 H100 = 1552.8 s / 72.6 GiB** at 81 f / 40 steps /
+  1280 × 720 (both 14 B MoE experts BF16-resident, no offload — the
+  Wan team's 1041 s requires CPU offload + FP8 weight convert which
+  we do not yet replicate).  Smoke 17 f / 8 step is
+  **37.66 ± 0.31 s** across 5 prompts × 5 seeds (1.59 % spread).
+- **Cosmos MI300X = 142 s / 2.68× NVIDIA reference** unchanged from
+  Session 13.
+- **Wan-2.2 MI300X = ~1700 s projected steady-state** at the same
+  shape; H100 is ~9 % faster, silicon delta only.
+- **CPU AMX substrate** per ADR-0007 (cannot be exercised on this VM
+  — hypervisor masks `amx_bf16`; see Session 16 close for the
+  bare-metal numbers).
 
 This is the single doc to read first if you are picking the project up. It
 distills `docs/BUILD_LOG.md` (the full chronological log) into the
@@ -18,21 +38,45 @@ distills `docs/BUILD_LOG.md` (the full chronological log) into the
 
 ## TL;DR for a new session
 
-**If you're picking up from Session 14 close (2026-05-24):** read
-`docs/SESSION_14_CLOSE.md` first — focused "what happened today, what
-to do next" cut that supersedes the rankings below. Headline: the
-NVIDIA H100 backend landed AND was benchmarked end-to-end on the same
-day. **Mirage on H100 with adaptive cache alone = 138.4 s** at
-121 f / 36 steps — **2.75× faster than NVIDIA's published H100
-reference (~380 s)**. The MI300X 142 s / 2.68× headline is unchanged
-and now *strengthened* by the stack-vs-stack measurement on the same
-silicon: silicon delta is **only 5–11 %**, not 24 % — the 2.68× win is
-overwhelmingly *stack*, not silicon. Three open items the H100 sweep
-exposed: (a) FP8 Hopper Triton kernel is correct but slower than
-cuDNN-FA3 on Hopper (F29 — needs WGMMA-shaped autotune); (b) TE
-install hits a cu13 / cu12 ABI hazard (F28); (c) Wan-A14B download
-trips the FUSE quota under HF's parallel writer (F30, Session 16
-recoverable via `hf download --max-workers 1`).
+**If you're picking up from Session 17 close (2026-05-25):** read
+`docs/SESSION_17_CLOSE.md` first — focused "what happened today,
+what to do next" cut that supersedes the rankings below.  Then skim
+`docs/POSITIONING.md` (strategic framing, what's defensible to
+claim).  Headlines from Session 17:
+
+- Wan-2.2-T2V-A14B end-to-end on H100 for the first time: smoke
+  **37.66 ± 0.31 s / 66.4 GiB** (5 prompts × 5 seeds, 1.59 %
+  spread), quality reference **1552.8 s / 72.6 GiB** at the
+  canonical 81 f / 40 / 1280 × 720 shape.  Session-14 F30 (FUSE
+  quota under HF parallel downloader) sidestepped with
+  `HF_HUB_ENABLE_HF_TRANSFER=0 --max-workers 4`; 118 GB landed in
+  ~8 min.
+- **`WanConfig.vae_tiling`** added — required to fit A14B in 80 GiB
+  H100 (without it, OOMs in `AutoencoderKLWan.forward` per-frame
+  `torch.cat`).  Output bit-stable; F38 in BUILD_LOG.
+- **F40 confirmed empirically** via counter-based trace
+  (`scripts/trace_wan_attention.py`).  `MIRAGE_FP8_ATTENTION=fa`
+  bridge engages 0 times on Wan; `WanTransformer3DModel` bypasses
+  `_AttentionBackendRegistry` and calls `torch.F.scaled_dot_
+  product_attention` directly.  Three fix paths ranked in BUILD_LOG
+  F40; path 1 (custom `WanAttnProcessor` via
+  `set_attn_processor`) is the right starting point — the
+  highest-leverage Wan move per POSITIONING.md.
+- **Cosmos H100 cache quality measured** — closes the Session-15
+  deferred item.  LPIPS 0.6067 vs no-cache, motion −34 %,
+  brightness/std preserved.  Matches MI300X regime (F23: LPIPS
+  0.645, motion −28 %).  The 3.81 × headline now rests on a
+  measured H100 quality result, not an assumed one.
+- **`docs/POSITIONING.md` created** — strategic-framing doc: what's
+  defensible to claim, where the 3.81 × actually comes from (cache
+  2.75 × × FA-3 1.39 ×), what is and isn't a moat, options matrix.
+
+**If you're picking up from Session 16 close (2026-05-25 early
+morning):** read `docs/SESSION_16_CLOSE.md` first.  Headline:
+**Cosmos H100 = 99.6 ± 3.9 s / 3.81× NVIDIA's published reference**
+across 5 prompts at 121 f / 36 steps, FA-3 source build + diffusers
+bridge wired (`MIRAGE_FP8_ATTENTION=fa`), V-JEPA 2 served end-to-end
+on all three targets.
 
 **If you're picking up from Session 13 close (2026-05-24):** read
 `docs/SESSION_13_CLOSE.md` first — it's the focused "what happened
@@ -424,8 +468,10 @@ strategy-driven rather than tactical.
 | 13 (2026-05-24) | Threshold sweep + multi-prompt variance + 5-pair FVD | Adaptive 154.48 ± 5.96 s across 5 prompts; FVD 166.3 (small-N preliminary); F24 (FVD harness) |
 | 14 (2026-05-24) | **NVIDIA H100 port — architecture + kernels** | CUDABackend lands; Hopper FA-3 + FP8 Triton + TE optional; ADR-0006 closes the "Revisit if" of ADR-0001; F25 + F26 |
 | 15 (2026-05-24) | **CPU AMX substrate + H100 follow-ups** | CPUBackend (Vendor.INTEL) + AMX BF16 flash kernel + ADR-0007; F29 FP8 Hopper autotune grid expansion (BLOCK_M=192, num_stages=5, num_warps=12 on 256x256); FA-3 wheel built from source on Hopper; F31 (MooseFS write-quota incident) + F32 (HF Hub offline-mode metadata writes) recorded |
+| 16 (2026-05-25 early) | **FA-3 source build + bridge + V-JEPA 2** | Cosmos H100 = **99.6 ± 3.9 s / 3.81× NVIDIA pub** (5 prompts × 5 seeds); FA-3 minimal-config wheel wired via `MIRAGE_FP8_ATTENTION=fa`; TE source-build path validated; V-JEPA 2 served end-to-end on all 3 targets; F33–F37 |
+| 17 (2026-05-25) | **Wan-2.2 H100 + F40 confirmed + quality measured** | Wan smoke = 37.66 ± 0.31 s; Wan 81f/40 = **1552.8 s / 72.6 GiB**; `WanConfig.vae_tiling` added; **F40 confirmed empirically** via counter-based trace (FA-3 bridge engages 0× on Wan); Cosmos H100 cache quality measured (LPIPS 0.61, trajectory-divergent per F23); `docs/POSITIONING.md` created; F38–F41 |
 
-Findings (F1–F32) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
+Findings (F1–F41) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
 0001–0007 cover the structural decisions (MI300X-first, attention
 primitive, vendor-neutral Backend, polyglot tooling scaffold, Rust-core
 fork resolved, NVIDIA H100 parallel target, Intel CPU AMX substrate).
