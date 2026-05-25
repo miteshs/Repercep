@@ -59,7 +59,7 @@ def test_quantize_cpu_cuda_bitwise_qweight_and_scale_ulp() -> None:
 @skip_no_cuda
 def test_quantized_linear_module_forward_cpu_cuda_parity_bf16() -> None:
     """``QuantizedLinearModule.forward`` on CPU and CUDA agree within BF16 floor."""
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401 (PEP 562)
+    from mirage.runtime.quantize import QuantizedLinearModule
 
     torch.manual_seed(1)
     linear = torch.nn.Linear(8, 16).to(torch.bfloat16)
@@ -83,9 +83,9 @@ def test_quantized_linear_module_forward_cpu_cuda_parity_bf16() -> None:
 def test_replace_linears_with_quantized_on_cuda_module() -> None:
     """Replacing Linears on a module that's already on CUDA keeps state on CUDA."""
     from mirage.runtime.quantize import (
+        QuantizedLinearModule,
         replace_linears_with_quantized,
     )
-    from mirage.runtime.quantize import QuantizedLinearModule  # noqa: F401
 
     torch.manual_seed(2)
     m = torch.nn.Sequential(
