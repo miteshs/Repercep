@@ -91,8 +91,10 @@ New wire types live in `mirage.runtime.types`: `Action`, `RolloutParams`,
    encoder + AC-predictor *weight loading* and image/video URI decode — they
    need the real checkpoints + a GPU and raise `NotImplementedError` with the
    intended body in their docstrings.
-2. Bidirectional WebSocket serving session over the existing `create_app` /
-   `EngineDriver`.
+2. Bidirectional WebSocket serving session (`/v2/world/session`) over the
+   existing `create_app`; engine calls run in a threadpool (same rationale as
+   the v2 driver thread). **Done** — reset/step loop tested end-to-end via the
+   FastAPI TestClient against a stub engine.
 3. AVID adapter on Cosmos/Wan for the pixel path that reuses the cache.
 
 Phases 0–2 are CPU-runnable; the V-JEPA 2 ViT-L encoder is 0.3B.

@@ -27,9 +27,10 @@ import uuid
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from mirage import __version__
 from mirage.runtime.engine import EngineInfo
@@ -37,15 +38,24 @@ from mirage.runtime.router import Router, RouterError
 from mirage.runtime.scheduler import Scheduler
 from mirage.runtime.stub_engine import StubEngine
 
-# EngineInfo and GenerationRequest must stay runtime imports: FastAPI resolves
-# route annotations at startup via get_type_hints (see per-file ruff ignore).
-from mirage.runtime.types import FrameChunk, GenerationRequest
+# These must stay runtime imports: FastAPI resolves route annotations at startup
+# via get_type_hints, and the WebSocket session validates Action/ResetRequest
+# and emits LatentStep at runtime (see per-file ruff ignore).
+from mirage.runtime.types import (
+    Action,
+    FrameChunk,
+    GenerationRequest,
+    LatentStep,
+    ResetRequest,
+)
 from mirage.serving.driver import EngineDriver, _SchedulerAdapter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
     from mirage.runtime.engine import WorldModelEngine
+    from mirage.runtime.interactive import InteractiveWorldModel
+    from mirage.runtime.types import WorldState
 
 
 # Default scheduler capacity for the v2 path. Sized so a single-engine driver
@@ -135,6 +145,7 @@ def _build_v2_state(
 def create_app(
     engine: WorldModelEngine | None = None,
     *,
+    interactive_engine: InteractiveWorldModel | None = None,
     scheduler_capacity: int = _DEFAULT_SCHEDULER_CAPACITY,
     frame_queue_depth: int = _DEFAULT_FRAME_QUEUE_DEPTH,
 ) -> FastAPI:
@@ -144,12 +155,15 @@ def create_app(
         engine: the world-model engine to serve. Defaults to ``StubEngine`` so
             the API is runnable and testable before the Cosmos-Predict-7B
             engine lands.
+        interactive_engine: optional action-conditioned world model served over
+            the ``/v2/world/session`` WebSocket (ADR-0008). ``None`` disables it.
         scheduler_capacity: max in-flight requests on the v2 path before
             ``submit`` raises ``QueueFull`` (surfaces as HTTP 503).
         frame_queue_depth: per-request frame channel depth. Backpressure
             within the router fires when a client TCP-stalls beyond this.
     """
     active_engine: WorldModelEngine = engine if engine is not None else StubEngine()
+    active_interactive = interactive_engine
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -281,5 +295,51 @@ def create_app(
         """Look up the router's current state for a request. ``None`` if unknown."""
         state: _V2State = app.state.v2
         return {"request_id": request_id, "state": state.router.state(request_id)}
+
+    # -----------------------------------------------------------------------
+    # v2 interactive world-model session (action-conditioned, closed-loop)
+    # -----------------------------------------------------------------------
+
+    @app.websocket("/v2/world/session")
+    async def world_session(ws: WebSocket) -> None:
+        """Bidirectional interactive world-model session.
+
+        Protocol: the client sends a ``ResetRequest`` JSON to open the session,
+        then one ``Action`` JSON per step; the server replies with a
+        ``LatentStep`` JSON per step (``step_index`` 0 acknowledges the reset).
+        State persists for the life of the connection. Engine calls run in a
+        threadpool so the event loop stays free — the same rationale as the v2
+        driver thread. See ADR-0008.
+        """
+        await ws.accept()
+        engine = active_interactive
+        if engine is None:
+            await ws.send_json({"error": "no interactive engine configured"})
+            await ws.close(code=1008)
+            return
+        try:
+            reset = ResetRequest.model_validate_json(await ws.receive_text())
+        except ValidationError:
+            await ws.send_json({"error": "first message must be a ResetRequest"})
+            await ws.close(code=1008)
+            return
+        except WebSocketDisconnect:
+            return
+        state: WorldState = await run_in_threadpool(
+            engine.reset, reset.conditioning, reset.params
+        )
+        await ws.send_text(LatentStep(step_index=0).model_dump_json())
+        try:
+            while True:
+                raw = await ws.receive_text()
+                try:
+                    action = Action.model_validate_json(raw)
+                except ValidationError:
+                    await ws.send_json({"error": "invalid action"})
+                    continue
+                state, latent_step = await run_in_threadpool(engine.step, state, action)
+                await ws.send_text(latent_step.model_dump_json())
+        except WebSocketDisconnect:
+            return
 
     return app
