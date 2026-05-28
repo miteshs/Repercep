@@ -25,8 +25,8 @@ snippets are marked.
 | 1 | [Model + weights](01-model-and-weights.md) | `from_pretrained`, the HuggingFace cache, safetensors sharding, what's *inside* the pipeline (T5 / DiT / VAE / scheduler) |
 | 2 | [Architecture, layer by layer](02-architecture.md) | The Cosmos DiT (`CosmosTransformer3DModel`): patch embed → adaLN/timestep → blocks (self-attn, cross-attn, FF) → unpatchify, with exact tensor shapes |
 | 3 | [The denoise loop](03-denoise-loop.md) | `runtime/denoise.py` line by line — timesteps, latents, the CFG two-call + rewind, the adaptive-cache state machine, VAE decode |
-| 4 | Dispatch + lowering *(coming)* | How a block's attention call goes `processor → diffusers dispatch → SDPA→aotriton` (default) **or** the Mirage FP8 bridge → Triton |
-| 5 | The kernel *(coming)* | The FP8 Triton flash-attention kernel line by line (tiling, online softmax, FP8 `tl.dot`, autotune), and how Triton lowers to MFMA |
+| 4 | [Dispatch + lowering](04-dispatch-and-lowering.md) | How a block's attention call goes `processor → diffusers dispatch → SDPA→aotriton` (default) **or** the Mirage FP8 bridge → Triton |
+| 5 | [The kernel](05-the-kernel.md) | The FP8 Triton flash-attention kernel line by line (tiling, online softmax, FP8 `tl.dot`, autotune), and how Triton lowers to MFMA |
 | 6 | Execution + output *(coming)* | What runs per step, HBM/timing, VAE → pixels → mp4; the final tensor shape/dtype |
 
 Read in order. Each part is self-contained enough to revisit.
@@ -49,6 +49,6 @@ and `AutoencoderKLCosmos`, while the denoise loop, the attention
 dispatch/kernels, the backend seam, and the serving layer (Parts 3–6) are
 Mirage's own code. The tour spans both and always says which is which.
 
-> Status: Parts 0–3 are written (grounded in the real diffusers Cosmos source, a
-> verified tiny-DiT CPU run, and Mirage's own `denoise.py`); Parts 4–6 are in
-> progress. See `docs/SESSION_24_HANDOFF.md` for session context.
+> Status: Parts 0–5 are written (grounded in the real diffusers Cosmos source, a
+> verified tiny-DiT CPU run, Mirage's `denoise.py`, the FP8 dispatch bridge, and
+> the Triton kernel); Part 6 is in progress. See `docs/SESSION_24_HANDOFF.md`.
