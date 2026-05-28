@@ -115,3 +115,82 @@ class GenerationResult(BaseModel):
     backend: str
     device: str
     attention_op: str
+
+
+class Action(BaseModel):
+    """One control input to an interactive (action-conditioned) world model.
+
+    Actions live in a latent/continuous control space — a robot end-effector
+    delta, a steering command, a discrete game input encoded as a vector —
+    never pixels. ``space`` tags the interpretation so an engine can validate
+    dimensionality at the edge, the same way every other request type fails
+    fast on malformed input.
+    """
+
+    model_config = _STRICT
+
+    values: list[float] = Field(..., min_length=1)
+    space: str = Field("raw", description="Control-space tag, e.g. 'ee_delta_7d'.")
+
+
+class RolloutParams(BaseModel):
+    """Knobs for an interactive rollout.
+
+    ``horizon`` is the interactive analogue of ``GenerationParams.num_frames``:
+    how many latent steps a planning rollout looks ahead. ``decode_pixels`` is
+    off by default — a latent world model (V-JEPA 2-AC) has no decoder, so its
+    steps carry embeddings, not frames; an action-conditioned video-diffusion
+    engine can flip it on.
+    """
+
+    model_config = _STRICT
+
+    horizon: int = Field(16, ge=1, le=512)
+    decode_pixels: bool = False
+    return_energy: bool = True
+
+
+class ResetRequest(BaseModel):
+    """Open or re-seed an interactive world-model session.
+
+    The world is seeded from an observation via the same ``ConditioningInput``
+    the one-shot path uses (``kind=image|video`` + ``uri``); ``NONE`` seeds an
+    unconditioned rollout from the model's learned prior.
+    """
+
+    model_config = _STRICT
+
+    conditioning: ConditioningInput = Field(default_factory=ConditioningInput)
+    params: RolloutParams = Field(default_factory=RolloutParams)
+
+
+@dataclass(slots=True)
+class WorldState:
+    """The rolling latent context of an interactive world model, in-process.
+
+    Internal type, like :class:`Frame`: ``context`` is a live tensor — the
+    recent window of state embeddings the predictor attends over (block-causal)
+    — so ``WorldState`` never crosses the wire. The serving layer holds it per
+    session and streams only :class:`LatentStep` envelopes back to the client.
+    """
+
+    context: torch.Tensor  # (T_ctx, D) recent state embeddings
+    step_index: int
+    session_id: str
+
+
+class LatentStep(BaseModel):
+    """One interactive step as it streams to a client — the metadata envelope.
+
+    Like :class:`FrameChunk`, no tensor crosses the wire. ``energy`` is the
+    latent-space cost of the step relative to a goal — the scalar an
+    energy-based planner minimizes; ``frame`` is populated only when the engine
+    has a pixel decoder attached and ``decode_pixels`` was requested (the
+    AVID-style path), and is ``None`` for a pure latent world model.
+    """
+
+    model_config = _STRICT
+
+    step_index: int
+    energy: float | None = None
+    frame: FrameChunk | None = None

@@ -12,12 +12,18 @@ from mirage.models.cosmos import (
     CosmosEngine,
     GuardrailError,
 )
+from mirage.models.vjepa2_ac import (
+    DEFAULT_ENCODER_REPO,
+    VJepa2ACConfig,
+    VJepa2ACEngine,
+)
 from mirage.models.wan import DEFAULT_REPO as WAN_DEFAULT_REPO
 from mirage.models.wan import NATIVE_FPS as WAN_NATIVE_FPS
 from mirage.models.wan import SMALL_REPO as WAN_SMALL_REPO
 from mirage.models.wan import WanConfig, WanEngine
 
 __all__ = [
+    "DEFAULT_ENCODER_REPO",
     "DEFAULT_REPO",
     "WAN_DEFAULT_REPO",
     "WAN_NATIVE_FPS",
@@ -25,6 +31,8 @@ __all__ = [
     "CosmosConfig",
     "CosmosEngine",
     "GuardrailError",
+    "VJepa2ACConfig",
+    "VJepa2ACEngine",
     "WanConfig",
     "WanEngine",
 ]
