@@ -3,6 +3,10 @@
 A guided tour of how a generation request becomes video frames, from the
 outermost API call all the way down to the GPU kernel.
 
+> **Companion series:** for the interactive, energy-based path (V-JEPA 2-AC) —
+> the closed-loop world model, not the one-shot generator — see
+> [`../walkthroughs-vjepa2-ac/`](../walkthroughs-vjepa2-ac/).
+
 **Who this is for / how it's pitched.** Someone who wants *every detail* on
 **both axes**:
 
