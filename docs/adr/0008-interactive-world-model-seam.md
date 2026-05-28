@@ -84,9 +84,13 @@ New wire types live in `mirage.runtime.types`: `Action`, `RolloutParams`,
 
 0. Promote `scripts/run_vjepa2.py`'s encoder into a real engine (encode →
    embeddings) with CPU tests. *(proven path)*
-1. Port the AC predictor + wire the `InteractiveWorldModel` seam + `plan()`
-   energy-MPC; unit-test the loop with a stub predictor. *(this commit scaffolds
-   the seam, the wire types, and the tests)*
+1. Wire the `InteractiveWorldModel` seam + the latent rollout + the `plan()`
+   energy-MPC, unit-tested against a stub predictor. **Done** — the
+   model-agnostic loop and CEM/energy planner are implemented and green on CPU
+   (`VJepa2ACEngine` takes an injectable encoder + predictor). Remaining: the
+   encoder + AC-predictor *weight loading* and image/video URI decode — they
+   need the real checkpoints + a GPU and raise `NotImplementedError` with the
+   intended body in their docstrings.
 2. Bidirectional WebSocket serving session over the existing `create_app` /
    `EngineDriver`.
 3. AVID adapter on Cosmos/Wan for the pixel path that reuses the cache.
