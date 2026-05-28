@@ -22,8 +22,8 @@ snippets are marked.
 | # | Part | What you'll understand |
 |---|------|------------------------|
 | 0 | [Orientation](00-orientation.md) | The whole request→frames skeleton, one diagram, the fundamentals in a page |
-| 1 | Model + weights *(coming)* | `from_pretrained`, the HuggingFace cache, safetensors sharding, what's *inside* the pipeline (T5 / DiT / VAE / scheduler) |
-| 2 | Architecture, layer by layer *(coming)* | The Cosmos DiT (`CosmosTransformer3DModel`): patch embed → adaLN/timestep → blocks (self-attn, cross-attn, FF) → unpatchify, with exact tensor shapes |
+| 1 | [Model + weights](01-model-and-weights.md) | `from_pretrained`, the HuggingFace cache, safetensors sharding, what's *inside* the pipeline (T5 / DiT / VAE / scheduler) |
+| 2 | [Architecture, layer by layer](02-architecture.md) | The Cosmos DiT (`CosmosTransformer3DModel`): patch embed → adaLN/timestep → blocks (self-attn, cross-attn, FF) → unpatchify, with exact tensor shapes |
 | 3 | The denoise loop *(coming)* | `runtime/denoise.py` line by line — timesteps, latents, the CFG two-call + rewind, the adaptive-cache state machine, VAE decode |
 | 4 | Dispatch + lowering *(coming)* | How a block's attention call goes `processor → diffusers dispatch → SDPA→aotriton` (default) **or** the Mirage FP8 bridge → Triton |
 | 5 | The kernel *(coming)* | The FP8 Triton flash-attention kernel line by line (tiling, online softmax, FP8 `tl.dot`, autotune), and how Triton lowers to MFMA |
@@ -49,6 +49,6 @@ and `AutoencoderKLCosmos`, while the denoise loop, the attention
 dispatch/kernels, the backend seam, and the serving layer (Parts 3–6) are
 Mirage's own code. The tour spans both and always says which is which.
 
-> Status: Part 0 is written; Parts 1–6 are being authored (the deepest ones
-> require reading the actual diffusers Cosmos source, which Mirage wraps rather
-> than vendors). See `docs/SESSION_24_HANDOFF.md` for session context.
+> Status: Parts 0–2 are written (grounded in the real diffusers Cosmos source +
+> a verified tiny-DiT CPU run); Parts 3–6 are in progress. See
+> `docs/SESSION_24_HANDOFF.md` for session context.
