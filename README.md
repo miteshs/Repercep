@@ -24,20 +24,55 @@ NVIDIA backend is a zero-rewrite fast-follow.
 
 ## Status
 
-**Pre-alpha, and running.** Cosmos-Predict-7B generates video end-to-end on the
-MI300X through the Mirage runtime, with the Cosmos safety guardrail integrated.
-Landed: the vendor-neutral backend layer, attention abstraction, Runtime types +
-frame-streaming serving API, the Cosmos-Predict-7B engine, a per-stage profiler
-and benchmark harness, and the first optimization (`torch.compile` on the DiT).
+**Pre-alpha, and running on three silicon targets.** Cosmos-Predict-7B,
+Wan-2.2-T2V-A14B, and V-JEPA 2 all run end-to-end through the Mirage runtime on
+**AMD MI300X**, **NVIDIA H100**, and **Intel CPU (AMX)** — one engine behind one
+vendor-neutral backend Protocol (ADR-0003).
 
-**👉 Picking up the project? Start with [`docs/HANDOFF.md`](docs/HANDOFF.md).**
+Headline numbers (system-vs-system against each vendor's *published* reference —
+read [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) for the honest apples-to-apples
+accounting before trusting any of these):
+
+- **Cosmos H100 — 99.6 s, 3.81× NVIDIA's published reference** (5 prompts × 5
+  seeds). Decomposes honestly as adaptive cache 2.75× × FA-3 1.39×.
+- **Cosmos MI300X — 142 s, 2.68×** — to our knowledge the first publicly
+  reported Cosmos benchmark on any AMD GPU.
+- **Wan-2.2-A14B** runs both 14B MoE experts resident in the MI300X's 192 GiB —
+  a config an 80 GiB H100 cannot hold without offload or VAE tiling.
+
+Landed: the vendor-neutral backend layer (ROCm/CUDA/CPU), the attention
+abstraction + autotuned FP8 Triton flash kernels (gfx942/Hopper/Ada) + CPU AMX
+kernels, the Mirage-native denoise loop with TeaCache-style adaptive caching, the
+Cosmos and Wan engines (+ the Cosmos guardrail), a Rust+PyO3 core
+(cache/scheduler/router), and a FastAPI frame-streaming serving API (v1 sync +
+v2 router path).
+
+**Newest direction (Session 24):** an independent strategic assessment
+([`docs/STRATEGIC_ASSESSMENT.md`](docs/STRATEGIC_ASSESSMENT.md)) argued the
+defensible moat is the **interactive, action-conditioned, closed-loop** regime —
+the energy-based / JEPA world model — not the (public) cache. That seam now
+exists: an `InteractiveWorldModel` Protocol + a V-JEPA 2-AC engine with
+energy-MPC planning + a `/v2/world/session` WebSocket
+([ADR-0008](docs/adr/0008-interactive-world-model-seam.md)). The algorithmic
+layer is implemented and CPU-tested; loading the real V-JEPA 2-AC weights is the
+remaining GPU port.
+
+**👉 Picking up the project?** Read
+[`docs/SESSION_24_HANDOFF.md`](docs/SESSION_24_HANDOFF.md) first (latest state),
+then [`docs/HANDOFF.md`](docs/HANDOFF.md) for the deeper orientation. New to how
+inference actually works here? Start the line-by-line tour at
+[`docs/walkthroughs/`](docs/walkthroughs/).
 
 Other docs:
+- [`docs/STRATEGIC_ASSESSMENT.md`](docs/STRATEGIC_ASSESSMENT.md) — moat analysis, competitive scan, next-steps fork
+- [`docs/POSITIONING.md`](docs/POSITIONING.md) — what's defensible to claim, and what isn't
+- [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) — how the numbers are measured (read before trusting a benchmark)
+- [`docs/walkthroughs/`](docs/walkthroughs/) — line-by-line tour of inference, outermost → kernel
 - [`docs/architecture.md`](docs/architecture.md) — the component map
-- [`docs/COSMOS_ON_MI300X.md`](docs/COSMOS_ON_MI300X.md) — publish-ready writeup with measured numbers
+- [`docs/COSMOS_ON_MI300X.md`](docs/COSMOS_ON_MI300X.md) / [`docs/COSMOS_ON_H100.md`](docs/COSMOS_ON_H100.md) — measured writeups
 - [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) — strategy + measured ledger
-- [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) — chronological log of work, decisions, findings
-- [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md) — chronological log of work, decisions, findings (F1–F47)
+- [`docs/adr/`](docs/adr/) — architecture decision records (0001–0008)
 
 ## Requirements
 
@@ -90,14 +125,18 @@ it lands, is a separate codebase with different review standards.
 src/mirage/
   hardware.py      framework-agnostic device/dtype domain types
   config.py        runtime configuration (MIRAGE_* env vars)
-  backend/         vendor-neutral compute backends — ROCmBackend is the lead
-  attention/       attention ops behind the AttentionOp Protocol
-  runtime/         (next) inference engine, latent cache, scheduler
-  models/          (next) Cosmos-Predict-7B loader + model code
-  serving/         (next) frame-streaming HTTP/gRPC API
-  bench/           (next) benchmark harness vs naive PyTorch + Diffusers
+  backend/         vendor-neutral compute backends (rocm / cuda / cpu)
+  attention/       attention ops behind the AttentionOp Protocol (+ FP8/AMX bridges)
+  runtime/         denoise loop + adaptive cache, scheduler, router, types,
+                   and the interactive (action-conditioned) seam
+  models/          Cosmos-Predict-7B, Wan-2.2, and the V-JEPA 2-AC engine
+  serving/         frame-streaming HTTP (v1/v2) + the /v2/world/session WebSocket
+  bench/           benchmark harness + per-stage profiler
+crates/            Rust+PyO3 core — paged latent cache, scheduler, request router
+kernels/           Triton (FP8 flash), HIP (FP8 GEMM), CPU AMX kernels
+scripts/           runners (run_cosmos / run_wan / run_vjepa2 / run_vjepa2_ac) + diagnostics
 docs/adr/          architecture decision records
-scripts/           standalone diagnostics
+docs/walkthroughs/ line-by-line inference tour
 ```
 
 ## License
