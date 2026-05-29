@@ -42,8 +42,8 @@ what's reused, what it costs). Every reference to *existing* Mirage code is a re
 |---|------|----------------|
 | 0 | [Orientation](00-orientation.md) | what AVID is, why it fits the seam, the 10k-ft design + the honest real-vs-unbuilt split |
 | 1 | [The method](01-the-method.md) | action-conditioned video diffusion via a frozen-base **adapter** — the ML, vs. V-JEPA (latent) and vs. full fine-tune |
-| 2 | Mapping onto Mirage *(coming)* | the `AvidEngine` design: `step` as a cached conditioned denoise reusing `denoise_cosmos_video` + the adaptive cache; populating `LatentStep.frame`; serving reuse |
-| 3 | Cost, training, build order *(coming)* | what's reused (cache/loop/seam/serving) vs. the real work (training the adapter); planning over pixels; the Phase-3 build order; open questions |
+| 2 | [Mapping onto Mirage](02-mapping-onto-mirage.md) | the `AvidEngine` design: `step` as a cached conditioned denoise reusing `denoise_cosmos_video` + the adaptive cache; populating `LatentStep.frame`; serving reuse |
+| 3 | [Cost, training, build order](03-cost-training-build-order.md) | what's reused (cache/loop/seam/serving) vs. the real work (training the adapter); planning over pixels; the Phase-3 build order; open questions |
 
 ## What's real vs. design
 
@@ -62,4 +62,5 @@ what's reused, what it costs). Every reference to *existing* Mirage code is a re
 > indexed in the diffusion-for-robotics literature cited in
 > `docs/STRATEGIC_ASSESSMENT.md` Appendix A).
 >
-> Status: Parts 0–1 written; Parts 2–3 in progress.
+> Status: **Parts 0–3 complete** — the full AVID design / ADR-0008 Phase-3 plan
+> (a design walkthrough, not a code tour; AVID is not yet built).
