@@ -69,6 +69,7 @@ Other docs:
 - [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) — how the numbers are measured (read before trusting a benchmark)
 - [`docs/walkthroughs/`](docs/walkthroughs/) — line-by-line tour of Cosmos inference, outermost → kernel
 - [`docs/walkthroughs-vjepa2-ac/`](docs/walkthroughs-vjepa2-ac/) — the same, for the interactive / energy-based path (V-JEPA 2-AC)
+- [`docs/walkthroughs-avid/`](docs/walkthroughs-avid/) — **design** walkthrough for the AVID pixel world-model path (ADR-0008 Phase 3; not yet built)
 - [`docs/architecture.md`](docs/architecture.md) — the component map
 - [`docs/COSMOS_ON_MI300X.md`](docs/COSMOS_ON_MI300X.md) / [`docs/COSMOS_ON_H100.md`](docs/COSMOS_ON_H100.md) — measured writeups
 - [`docs/OPTIMIZATION.md`](docs/OPTIMIZATION.md) — strategy + measured ledger
