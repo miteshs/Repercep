@@ -9,12 +9,17 @@ fail). The model-specific weight load remains a port and is asserted to raise.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from pydantic import ValidationError
 
-from mirage.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine
+from mirage.models.vjepa2_ac import (
+    VJepa2ACConfig,
+    VJepa2ACEngine,
+    _AcPredictorAdapter,
+    _infer_tokens_per_frame,
+)
 from mirage.runtime.engine import EngineInfo
 from mirage.runtime.interactive import InteractiveWorldModel
 from mirage.runtime.types import (
@@ -141,14 +146,70 @@ def test_stub_is_interactive_instance() -> None:
     assert isinstance(_StubInteractive(), InteractiveWorldModel)
 
 
-def test_predictor_port_is_scaffolded() -> None:
-    # Inject only the encoder; the predictor weight load is the remaining port.
+def test_engine_not_ready_without_predictor() -> None:
+    # Inject only the encoder; the predictor still needs its (GPU/network) load,
+    # so the engine reports not-ready until both halves are present.
     engine = VJepa2ACEngine(
         cast("Backend", _NamedBackend("fake")), VJepa2ACConfig(), encoder=object()
     )
     assert engine.info().ready is False
-    with pytest.raises(NotImplementedError):
-        engine.load()
+
+
+def test_infer_tokens_per_frame() -> None:
+    # Real encoder: (crop/patch)**2 spatial patch tokens per frame; stub: 1.
+    class _Cfg:
+        crop_size = 256
+        patch_size = 16
+
+    class _Enc:
+        config = _Cfg()
+
+    assert _infer_tokens_per_frame(_Enc()) == 256
+    assert _infer_tokens_per_frame(object()) == 1
+
+
+def test_ac_predictor_adapter_returns_next_frame_block() -> None:
+    torch = pytest.importorskip("torch")
+
+    class _RawPredictor:
+        """Mimics the research predictor: (x, actions, states) -> (B, N, D).
+
+        Asserts the per-frame action/state shape the real predictor requires.
+        """
+
+        def __call__(self, x: Any, actions: Any, states: Any) -> Any:
+            assert x.shape[0] == 1 and actions.shape == states.shape
+            assert actions.shape == (1, 3, 7)  # (B, T frames, action_dim)
+            return x + actions.sum()
+
+    adapter = _AcPredictorAdapter(_RawPredictor(), tokens_per_frame=4, action_dim=7)
+    context = torch.zeros(12, 8)  # 3 frames x P=4 patch tokens, D=8
+    nxt = adapter(context, torch.ones(7))
+    assert tuple(nxt.shape) == (4, 8)  # the trailing P rows = predicted next frame
+
+
+def test_step_appends_patch_token_frame_block() -> None:
+    torch = pytest.importorskip("torch")
+    # The real path emits P>1 patch tokens per frame; step must append the block
+    # and cap the window by frames (not rows).
+    p, d = 3, 4
+    ctx0 = torch.zeros(2 * p, d)  # 2 frames
+
+    class _BlockPredictor:
+        def __call__(self, context: Any, action: Any) -> Any:
+            return torch.ones(p, d) * action.sum()
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=d, context_frames=2),
+        encoder=_FakeEncoder(ctx0),
+        predictor=_BlockPredictor(),
+    )
+    engine._tokens_per_frame = p  # real path sets this from the encoder config
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    assert tuple(state.context.shape) == (2 * p, d)  # 2 frames kept
+    nxt, _ = engine.step(state, Action(values=[1.0, 1.0, 1.0, 1.0]))
+    assert tuple(nxt.context.shape) == (2 * p, d)  # appended P, capped to 2 frames
 
 
 # --- seam loop contract (needs torch for the latent tensors) ---

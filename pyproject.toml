@@ -138,6 +138,7 @@ files = ["src/mirage", "tests"]
 module = [
   "torch.*",
   "transformers.*",
+  "torchvision.*",
   "diffusers.*",
   "triton.*",
   "triton_kernels.*",

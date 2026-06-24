@@ -79,10 +79,13 @@ def main() -> int:
 
     backend = select_backend(prefer=None if args.backend == "auto" else args.backend)
     torch.manual_seed(args.seed)
-    cfg = VJepa2ACConfig(action_dim=args.action_dim, context_frames=8, dtype=_DTYPES[args.dtype])
+    # The real V-JEPA 2-AC is a 7-DoF action-conditioned model; the stub may use
+    # any control dim.
+    action_dim = args.action_dim if args.stub else 7
+    cfg = VJepa2ACConfig(action_dim=action_dim, context_frames=8, dtype=_DTYPES[args.dtype])
 
     if args.stub:
-        ctx0 = torch.zeros(2, args.action_dim)
+        ctx0 = torch.zeros(2, cfg.action_dim)
         engine = VJepa2ACEngine(
             backend, cfg, encoder=_StubEncoder(ctx0), predictor=_StubPredictor()
         )
@@ -95,7 +98,7 @@ def main() -> int:
     print(f"[mirage] reset: step={state.step_index} context={tuple(state.context.shape)}")
 
     for _ in range(args.steps):
-        action = Action(values=torch.randn(args.action_dim).tolist())
+        action = Action(values=torch.randn(cfg.action_dim).tolist())
         state, step = engine.step(state, action)
         print(f"[mirage] step {step.step_index}: context={tuple(state.context.shape)}")
 
@@ -107,8 +110,15 @@ def main() -> int:
     }
 
     if args.plan:
-        goal = state.context[-1] + torch.randn(args.action_dim)
-        zeros = torch.zeros(args.horizon, args.action_dim)
+        # Build a *reachable* goal: the frame one known action takes us to, then
+        # plan back toward it. The goal is frame-shaped (tokens_per_frame x D),
+        # matching what `_rollout_energy` compares against — for both the stub
+        # (tokens_per_frame=1) and the real model (tokens_per_frame=P).
+        tpf = engine._tokens_per_frame
+        goal_action = Action(values=torch.randn(cfg.action_dim).tolist())
+        goal_state, _ = engine.step(state, goal_action)
+        goal = goal_state.context[-tpf:]
+        zeros = torch.zeros(args.horizon, cfg.action_dim)
         e_zero = float(engine._rollout_energy(state, zeros, goal))
         sequence = engine._plan_sequence(state, goal, horizon=args.horizon)
         e_planned = float(engine._rollout_energy(state, sequence, goal))
