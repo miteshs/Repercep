@@ -153,3 +153,23 @@ redirects the optimization roadmap:
   a wiring demo.
 - `scripts/bench_cem_batched.py` — sequential-vs-candidate-batched CEM, with the
   energy-parity check.
+
+## Raw measured results (provenance)
+
+Verbatim JSON `RESULT` lines from the harnesses, RunPod 2026-06-26.
+
+```jsonl
+# V-JEPA 2-AC (scripts/bench_vjepa2_ac.py)
+{"model": "vjepa2-ac-300m", "device": "NVIDIA H100 80GB HBM3", "dtype": "bf16", "load_seconds": 798.7, "reset_seconds": 0.552, "step_ms": 70.8, "steps_per_sec": 14.1, "cem_config": {"samples": 64, "iters": 3}, "plans": {"4": {"plan_seconds": 55.622, "predictor_forwards": 768, "ms_per_forward": 72.42}, "8": {"plan_seconds": 110.874, "predictor_forwards": 1536, "ms_per_forward": 72.18}}, "peak_hbm_gib": 3.4, "context_shape": [2048, 1408]}
+{"model": "vjepa2-ac-300m", "device": "AMD Instinct MI300X", "dtype": "bf16", "load_seconds": 65.7, "reset_seconds": 0.412, "step_ms": 75.8, "steps_per_sec": 13.2, "cem_config": {"samples": 64, "iters": 3}, "plans": {"4": {"plan_seconds": 67.171, "predictor_forwards": 768, "ms_per_forward": 87.46}, "8": {"plan_seconds": 129.653, "predictor_forwards": 1536, "ms_per_forward": 84.41}}, "peak_hbm_gib": 3.7, "context_shape": [2048, 1408]}
+# Cosmos-Predict-7B (scripts/run_cosmos.py; 17f/8 smoke, 121f/36 baseline, 121f/36 adaptive)
+{"model": "cosmos-predict1-7b-text2world", "device": "NVIDIA H100 80GB HBM3", "frames": 17, "steps": 8, "generate_seconds": 10.0, "peak_hbm_gib": 28.4}
+{"model": "cosmos-predict1-7b-text2world", "device": "NVIDIA H100 80GB HBM3", "frames": 121, "steps": 36, "generate_seconds": 449.9, "seconds_per_step": 12.5, "peak_hbm_gib": 52.5}
+{"model": "cosmos-predict1-7b-text2world", "device": "NVIDIA H100 80GB HBM3", "frames": 121, "steps": 36, "generate_seconds": 139.4, "seconds_per_step": 3.87, "peak_hbm_gib": 52.5}
+{"model": "cosmos-predict1-7b-text2world", "device": "AMD Instinct MI300X", "frames": 17, "steps": 8, "generate_seconds": 55.5, "peak_hbm_gib": 28.4}
+{"model": "cosmos-predict1-7b-text2world", "device": "AMD Instinct MI300X", "frames": 121, "steps": 36, "generate_seconds": 578.2, "seconds_per_step": 16.06, "peak_hbm_gib": 52.5}
+{"model": "cosmos-predict1-7b-text2world", "device": "AMD Instinct MI300X", "frames": 121, "steps": 36, "generate_seconds": 154.0, "seconds_per_step": 4.28, "peak_hbm_gib": 52.5}
+# CEM-candidate batching (scripts/bench_cem_batched.py)
+{"model": "vjepa2-ac-300m", "device": "NVIDIA H100 80GB HBM3", "cem": {"samples": 64, "elites": 8, "iters": 3}, "results": {"4": {"sequential_s": 54.458, "batched_s": 35.073, "speedup": 1.6, "energy_sequential": 110.0, "energy_batched": 117.0}, "8": {"sequential_s": 110.094, "batched_s": 70.187, "speedup": 1.6, "energy_sequential": 146.0, "energy_batched": 148.0}}, "peak_hbm_gib": 11.4}
+{"model": "vjepa2-ac-300m", "device": "AMD Instinct MI300X", "cem": {"samples": 64, "elites": 8, "iters": 3}, "results": {"4": {"sequential_s": 68.442, "batched_s": 32.066, "speedup": 2.1, "energy_sequential": 106.0, "energy_batched": 104.0}, "8": {"sequential_s": 129.677, "batched_s": 60.846, "speedup": 2.1, "energy_sequential": 146.0, "energy_batched": 140.0}}, "peak_hbm_gib": 43.9}
+```
