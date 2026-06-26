@@ -20,21 +20,29 @@ names as the core serving mechanism.
 | RunPod cost | $3.29/hr | $2.19/hr |
 | Base image | `runpod/pytorch:…cu1281-torch280-ubuntu2404` | `runpod/pytorch:2.4.0-…rocm6.1.0` |
 | Python | 3.12 | 3.12 (conda base) |
-| torch | 2.8.0+cu128 | **2.3.1+rocm6.0** (see gotcha 2) |
+| torch | 2.8.0+cu128 | **2.9.1+rocm6.3** (Cosmos), 2.3.1+rocm6.0 (V-JEPA) — see gotcha 2 |
 | transformers / diffusers | 4.56.2 / 0.38.0 | 4.56.2 / 0.38.0 |
 
 ## Cosmos-Predict-7B (121 frames @ 1280×704, 36 steps)
 
 | config | H100 (this run) | H100 (prior doc) | MI300X (this run) | MI300X (prior doc) |
 |---|---|---|---|---|
-| baseline, no cache | **449.9 s** | 446.3 s | _measuring_ | 470 s |
-| adaptive cache (thr 0.30) | **139.4 s** (3.23×) | 138.4 s | _measuring_ | 154 s |
-| peak HBM | 52.5 GiB | 52.5 GiB | _measuring_ | 52.5 GiB |
+| baseline, no cache | **449.9 s** | 446.3 s | **578.2 s** | 470 s |
+| adaptive cache (thr 0.30) | **139.4 s** (3.23×) | 138.4 s | **154.0 s** (3.75×) | 154 s |
+| peak HBM | 52.5 GiB | 52.5 GiB | 52.5 GiB | 52.5 GiB |
 
-Smoke (17 f / 8 step): H100 10.0 s gen, 28.4 GiB peak. The adaptive-cache
-speedup and peak HBM reproduce the prior H100 doc within run-to-run variance —
-the TeaCache-style loop-level cache is still the dominant Cosmos optimization
-and is vendor-neutral by construction.
+Smoke (17 f / 8 step): H100 10.0 s gen / 28.4 GiB; MI300X 55.5 s (cold MIOpen
+kernel compile on first generation). The adaptive-cache result reproduces the
+prior docs within variance on **both** vendors — the MI300X adaptive 154.0 s
+matches the prior 154 s exactly. The TeaCache-style loop-level cache is still
+the dominant Cosmos optimization and is vendor-neutral by construction.
+
+**Cross-silicon:** the H100/MI300X gap is **1.10× on the deployable adaptive
+path** and 1.29× on the untuned baseline. The wider baseline gap is *stack*, not
+silicon — the prior MI300X 470 s used a tuned rocm7.2 / FP8 aotriton path; this
+run is untuned rocm6.3 SDPA. The cache-dominated adaptive path is where the two
+converge, consistent with `docs/METHODOLOGY.md` §3. MI300X also gets a *bigger*
+cache speedup (3.75× vs 3.23×) because its uncached baseline is slower.
 
 ## V-JEPA 2-AC (300M AC predictor, ViT-g encoder, 8-frame context = 2048 tokens)
 
@@ -70,17 +78,23 @@ batch=1**, with only **3.4 GiB of 80 used**.
 `scripts/bench_cem_batched.py` rolls all 64 candidates out in **one batched
 predictor forward per timestep** (768 → 12 forwards), identical CEM math:
 
-| horizon | sequential | batched | speedup | forwards | energy (seq/bat) |
+| horizon | GPU | sequential | batched | speedup | energy (seq/bat) |
 |---|---|---|---|---|---|
-| H=4 | 54.5 s | 35.1 s | **1.6×** | 768 → 12 | 110 / 117 |
-| H=8 | 110.1 s | 70.2 s | **1.6×** | 1536 → 24 | 146 / 148 |
+| H=4 | H100 | 54.5 s | 35.1 s | **1.6×** | 110 / 117 |
+| H=8 | H100 | 110.1 s | 70.2 s | **1.6×** | 146 / 148 |
+| H=4 | MI300X | 68.4 s | 32.1 s | **2.1×** | 106 / 104 |
+| H=8 | MI300X | 129.7 s | 60.8 s | **2.1×** | 146 / 140 |
+
+(768 → 12 forwards at H=4, 1536 → 24 at H=8; energy parity preserved everywhere.)
 
 **The surprise — and the most important finding:** 64× fewer forwards yields only
-**1.6× wall-time**, with energy parity. The per-candidate forward over the
-2048-token context is **already compute-bound**, so candidate-batching buys GPU
-efficiency, not launch-overhead elimination. The naive "batch the candidates and
-get Nx" intuition is wrong at this context size. This redirects the optimization
-roadmap:
+**1.6× (H100) / 2.1× (MI300X)** wall-time, with energy parity. The per-candidate
+forward over the 2048-token context is **already compute-bound**, so
+candidate-batching buys GPU efficiency, not launch-overhead elimination. The
+naive "batch the candidates and get Nx" intuition is wrong at this context size.
+MI300X gains more (2.1×) because its batch=1 forward was further from saturating
+the device — i.e. the optimization is *more* valuable on the AMD part. This
+redirects the optimization roadmap:
 
 ### 2. Where the real wins are (next, un-measured)
 
@@ -108,11 +122,25 @@ roadmap:
    extra resolves a CUDA torch from PyPI, silently replacing the HIP build (the
    backend then falls back to CPU). Install the package deps, then
    `--force-reinstall --no-deps` the ROCm `torch`/`torchvision`.
-2. **MIOpen Conv3d is broken on torch 2.6+rocm6.1.** The V-JEPA 2 encoder's
-   tubelet patch-embed (`Conv3d`) hard-crashes with
-   `munmap_chunk(): invalid pointer → Aborted` (heap corruption in MIOpen's algo
-   search) — even an isolated tiny Conv3d. **torch 2.3.1+rocm6.0 runs it fine.**
-   Pin the rocm6.0 wheel on MI300X until a newer ROCm fixes MIOpen Conv3d.
+2. **MI300X torch/ROCm version matrix — the central setup trap.** The two models
+   have opposite needs, and only one ROCm version satisfies both:
+   - V-JEPA 2 encoder uses `Conv3d` (tubelet patch-embed). **MIOpen Conv3d is
+     broken on torch 2.6+rocm6.1** — hard-crashes with
+     `munmap_chunk(): invalid pointer → Aborted` (heap corruption in MIOpen's
+     algo search), even an isolated tiny Conv3d.
+   - Cosmos's DiT calls SDPA with `enable_gqa=True`, which needs **torch ≥2.5**;
+     its VAE decode *also* uses `Conv3d`, so it hits the same MIOpen bug on
+     rocm6.1.
+
+   | torch / ROCm | MIOpen Conv3d | `enable_gqa` SDPA | runs |
+   |---|---|---|---|
+   | 2.3.1 + rocm6.0 | ✅ | ❌ | V-JEPA only |
+   | 2.6.0 + rocm6.1 | ❌ (crash) | ✅ | neither fully |
+   | **2.9.1 + rocm6.3** | ✅ | ✅ | **both** |
+
+   **Use torch 2.9.1+rocm6.3 on MI300X** — MIOpen Conv3d is fixed by rocm6.3 and
+   `enable_gqa` is present. (The V-JEPA numbers above were taken on 2.3.1+rocm6.0
+   before this was found; re-running them on 6.3 is a minor follow-up.)
 3. **First ROCm predictor forward is ~3× the warm cost** (MIOpen kernel compile);
    benchmark with warmup or the cold number misleads (222 ms cold → 75.8 ms warm).
 4. Cosmos is a **gated** HF repo; a **fine-grained** token needs the
