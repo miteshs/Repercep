@@ -15,7 +15,7 @@ name = "mirage-router"
 version = "0.0.1"
 description = "Per-request orchestration and frame ordering for the Mirage serving layer."
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "LicenseRef-Proprietary" }
 authors = [{ name = "Mirage" }]
 classifiers = [
   "Programming Language :: Rust",

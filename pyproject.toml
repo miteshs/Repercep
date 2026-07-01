@@ -8,12 +8,12 @@ version = "0.0.1"
 description = "Mirage Runtime — a world-model-native inference engine. MI300x-first."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "LicenseRef-Proprietary" }
 authors = [{ name = "Mirage" }]
 keywords = ["world-models", "inference", "diffusion", "rocm", "mi300x", "cosmos"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]

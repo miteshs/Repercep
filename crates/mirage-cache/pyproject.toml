@@ -15,11 +15,11 @@ name = "mirage-cache"
 version = "0.0.1"
 description = "Paged latent cache for world-model serving — Rust core with PyO3 bindings."
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "LicenseRef-Proprietary" }
 authors = [{ name = "Mirage" }]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]

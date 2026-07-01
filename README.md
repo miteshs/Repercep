@@ -143,6 +143,6 @@ docs/walkthroughs/ line-by-line inference tour
 
 ## License
 
-Apache-2.0. The OSS core carries no field-of-use restrictions — see
-[ADR-0001](docs/adr/0001-mi300x-first-hardware-target.md) and the
-implementation plan's OSS-first GTM section.
+Proprietary — Copyright (c) 2026 Mitesh Shah. All rights reserved. See
+[LICENSE](LICENSE). No rights are granted to use, copy, modify, or distribute
+this software without prior written permission.
