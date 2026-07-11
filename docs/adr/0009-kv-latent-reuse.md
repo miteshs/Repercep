@@ -1,14 +1,16 @@
 # ADR-0009 — KV/latent reuse across rollout steps (the structural latency lever)
 
-- **Status:** Design accepted for both reuse dimensions (§"the two reuse
-  opportunities"). The `step()` (persistent-session, temporal) path's
-  engine-side seam is **implemented + CPU-tested** this session. The
-  CEM-batched-candidate path's engine-side seam is **design-only, not yet
-  implemented** — reconciling per-candidate cache divergence with the
-  existing batched-SDPA call needs a paged/per-candidate-block cache design
-  (§"scope note" below), a bigger lift than `step()`'s single-session case.
-  Wrapping the real torch-hub predictor (either path) is a GPU-verify
-  follow-up.
+- **Status:** Design accepted for the *growing*-window regime; the *sliding*-
+  window (eviction) regime is **not achievable as an exact operation** for
+  this model — GPU-verified 2026-07-11 against the real pretrained weights
+  (not assumed; see §"GPU verify: two real findings" below). The `step()`
+  engine-side seam (§"Decision") is implemented + CPU-tested against a fake
+  predictor. Wrapping the *real* torch-hub predictor was attempted this
+  session: the growing-window case is verified bit-close-correct on real
+  weights; the eviction case is verified **incorrect by construction**, not
+  merely unbuilt. The CEM-batched-candidate path remains design-only (a
+  separate, harder lift — §"scope note" below), now doubly so since it would
+  inherit the same eviction problem for horizons that exceed the window.
 - **Date:** 2026-07-11
 - **Relates to:** ADR-0008 (interactive world-model seam),
   `docs/LEVERS_2026_07_H100.md` (batching + bf16, GPU-verified same day),
@@ -70,25 +72,31 @@ Fetched from `facebookresearch/vjepa2` (`src/models/ac_predictor.py`,
       y = torch.stack((-y2, y1), dim=-1).flatten(-2)
       return x * emb_cos + y * emb_sin
   ```
-  This is the standard complex-rotation form: `RoPE(x, pos) = R(pos) x` where
-  `R(pos)` is a block-diagonal rotation by angle `pos * ω_i` per frequency
-  band `i`. Rotations compose: `R(pos - 1) = R(-1) · R(pos)`. **A rotated key
-  computed at position `pos` can be re-expressed at position `pos - 1` by
-  applying the fixed, position-independent `R(-1)` rotation — without
-  recomputing the pre-RoPE linear projection.** This is the mechanism that
-  makes a *sliding* window cache-compatible, not just a *growing* one.
+  This *would be* the standard complex-rotation form — `RoPE(x, pos) = R(pos) x`
+  with `R(pos)` a block-diagonal rotation by angle `pos * ω_i` per frequency
+  band `i`, composable as `R(pos - 1) = R(-1) · R(pos)` — **if the code above
+  paired frequencies correctly. It does not (see §"GPU verify" below,
+  Finding 1): the real model's `.repeat(...,2)` tiles rather than interleaves
+  the per-pair frequencies, so `R(a)·R(b) ≠ R(a+b)` in general here.** This
+  section's original claim — that a rotated key can be cheaply re-expressed
+  at a shifted position via a fixed `R(-1)` — is **wrong for this model** and
+  is kept here (struck through in spirit, not in text) to show the reasoning
+  that GPU verification overturned; do not reuse the `R(-1)`-shift idea
+  without re-deriving it against the actual RoPE implementation in hand.
 
 ## The two reuse opportunities (both real, both grounded in the mask above)
 
 1. **Temporal (within/across `step()` calls):** while the window is *growing*
    (session hasn't hit `context_frames` yet), each already-processed frame's
-   K/V is exactly reusable — nothing shifted. Once the window is *full* and
-   FIFO-evicts the oldest frame, every retained frame's relative position
-   decreases by one — but per the RoPE composition fact above, this is a
-   cheap **shift** (`R(-1)` applied to every cached K), not a recompute.
-   Net cost per step: **one forward over the new frame's tokens** (query
-   against the full cached-and-shifted window) instead of a full window
-   forward — O(window) instead of O(window²) in the attention term.
+   K/V is exactly reusable — nothing shifted. Net cost per step: **one
+   forward over the new frame's tokens** (query against the full cached
+   window) instead of a full window forward — O(window) instead of O(window²)
+   in the attention term. **GPU-verified real, real weights.** Once the
+   window is *full* and would need to FIFO-evict the oldest frame, this stops
+   being free — see §"GPU verify" Finding 2: eviction is not recoverable from
+   the K/V cache alone for a full-depth causal transformer, regardless of the
+   RoPE question. The growing-window win and the eviction problem are
+   separate facts; the original draft of this section conflated them.
 2. **Across CEM candidates (within one `plan()`'s batched rollout):** because
    frame `t`'s K/V cannot depend on frame `t+1`'s action token (causal mask,
    confirmed above), the **pre-rollout context window's K/V is identical
@@ -119,9 +127,14 @@ class _CachedPredictor(Protocol):
         cache with that frame appended."""
 
     def evict(self, cache: Any) -> Any:
-        """Drop the oldest frame, applying the `R(-1)`-equivalent shift to
-        every remaining cached key (the rotation-composition fact above) so
-        their baked-in RoPE positions stay correct after the window slides."""
+        """Drop the oldest frame. NOT a free operation for a full-depth
+        causal transformer: retained frames' deeper-layer hidden states are
+        already contaminated by having attended to the evicted frame,
+        irrecoverably from K/V alone — GPU-verified (§"GPU verify" Finding 2:
+        layer 0 matches a fresh recompute exactly, layer 1+ diverges ~11x
+        immediately). Do not implement this against real weights without
+        first deciding how to handle that (approximate-and-measure,
+        attention-sinks, or full-recompute-on-evict)."""
 ```
 
 `branch(cache) -> Any` (a cheap independent fork, for the CEM-batched case) is
@@ -139,7 +152,13 @@ bookkeeping (growth vs. eviction) produces results **identical** to the
 existing full-recompute path across many steps, including past the
 `context_frames` cap where eviction kicks in — the parity test that matters,
 same discipline as the June `_rollout_energy_batched` vs. `_rollout_energy`
-parity test.
+parity test. **Caveat added post-GPU-verify:** this test validates that the
+*engine* calls `init_cache`/`step_cached`/`evict` correctly *given a
+predictor whose `evict` is exact* — the fake predictor's toy `evict` (drop
+one entry from a list) trivially is exact, by construction. It does **not**
+demonstrate that a real predictor's `evict` can be exact — §"GPU verify"
+Finding 2 shows it cannot, for this model. The engine seam is sound; the
+assumption that any predictor could satisfy it exactly was not.
 
 **Scope note — why `_rollout_energy_batched` (CEM) is design-only for now:**
 that path calls the predictor once per rollout timestep with **all S
@@ -158,38 +177,106 @@ matters more for real serving anyway** — it's what metric #1 of
 directly measures, and is the online robot-control-loop cost, not just the
 offline-planning cost.
 
-**What is explicitly NOT done here (GPU-verify follow-up, tracked
-separately):** wrapping the *real* torch-hub predictor's actual
-`ACRoPEAttention` blocks to implement `step_cached` — this needs the real
-model's internals patched or vendored (its attention/RoPE code is not part of
-a stable public API we can import against blind), and correctness there can
-only be established by comparing cached-rollout energies against the existing
-full-recompute rollout on the real weights, live. Marked `VERIFY ON GPU` at
-the seam, matching the file's existing convention.
+## GPU verify: two real findings (2026-07-11, real pretrained weights, H100)
+
+Wrapped the real torch-hub predictor (`facebookresearch/vjepa2`,
+`vjepa2-ac-vitg.pt` checkpoint) directly, using its own verbatim source (a
+temporary `F.scaled_dot_product_attention` monkeypatch confirmed a
+hand-written replica of `ACRoPEAttention`'s pre-SDPA Q/K/V computation is
+bit-exact against the live module — `q/k/v` match to `0.0` max abs diff — so
+the incremental adapter below reuses provably-correct building blocks, not
+guesses). Full end-to-end multi-layer replica of `predictor.forward()` also
+matches the real forward exactly (`0.0` diff). Two findings from there:
+
+**Finding 1 — the model's own RoPE is not a composable rotation.** The
+source carries a maintainer comment: *"This expansion has a subtle bug where
+frequencies are duplicated across the vector pair... fixing it would break
+compatibility with the pretrained model."* Concretely, `rotate_queries_or_keys`
+tiles (not interleaves) its per-pair frequencies, so the two components of
+each rotated pair get *different* angles — `M(pos)` is linear in `pos` but is
+**not** `R(pos)` for any single rotation `R`, so `M(a)·M(b) ≠ M(a+b)` in
+general. The `R(-1)`-composition shift this ADR's "Decision" section
+originally specified is therefore invalid for the real model (it was derived
+from how a *textbook* RoPE would behave, not this one). **Fix:** cache the
+*pre-rotation* K (and V, which was never rotated) instead of the rotated K,
+and re-derive the rotation fresh at the correct window position on every use.
+This is still O(window) per step (an elementwise op, not a matmul) — the
+asymptotic win survives. Verified bit-exact (`0.0` diff) against a fresh
+subwindow recompute, in isolation, at every layer.
+
+**Finding 2 — eviction is not recoverable at the K/V level, at any layer
+depth, for a full-depth causal transformer.** This is the one that actually
+breaks the design. Comparing frame 1's *raw* (pre-rotation) K — sliced out of
+a full 4-frame forward pass vs. independently recomputed as the first frame
+of a fresh 3-frame window — layer by layer: **layer 0 matches exactly (`0.0`
+diff)**, but **layer 1 diverges immediately (~11× relative error) and stays
+divergent through layer 23** (sampled at layers 0, 1, 2, 5, 10, 15, 20, 23 —
+all of 1+ show large, non-decaying error). The reason: layer 0's raw K is a
+pure per-token linear projection (no cross-token mixing yet), so it's
+identical either way. But frame 1's *hidden state* going into layer 1 is
+layer 0's *output* — and in the full 4-frame run, frame 1's tokens were
+causally allowed to attend to frame 0 at layer 0, mixing frame-0 information
+into frame 1's residual stream. Once frame 0 is evicted, there is no way to
+recover "what frame 1's layer-1 input would have been if frame 0 had never
+existed" from anything stored in a K/V cache — the contamination happened in
+the *residual stream*, not in an attention key. **This is not a bug to fix;
+it is the well-known hard problem sliding-window LLM serving (StreamingLLM,
+attention-sinks, etc.) exists to work around, encountered here freshly.**
+
+**Net effect on this ADR's design:** the `step()` seam's *growing*-window
+case (§"Decision", `init_cache` → `step_cached`, no `evict`) is real, GPU-
+verified end-to-end on pretrained weights (grow-only multi-step test:
+`3.8e-4` max abs diff against a from-scratch recompute — within fp32
+tolerance, confirmed via the SAME bit-exact-verified building blocks). The
+*sliding*-window case (`evict`, triggered once a session exceeds
+`context_frames`) is **not** a free, exact operation — implementing it would
+mean picking an explicit approximation (e.g., accept the drift and measure
+its effect on planning quality; keep an attention-sink prefix per StreamingLLM;
+or simply full-recompute on every eviction, forfeiting the speedup for that
+regime) — a real design decision requiring its own validation, not a
+mechanical follow-up. **`evict()` in the engine-side `_CachedPredictor`
+Protocol (§"Decision") should not be wired to a real implementation until
+that decision is made explicitly** — until then, `use_kv_cache` only helps
+sessions that stay within `context_frames`, and the config should size
+`context_frames` to the expected session/plan horizon to get the win without
+silently hitting the un-implemented, unsound eviction path.
 
 ## Consequences
 
-- The dominant remaining serving cost — O(window²) attention recomputed every
-  step — drops to O(window) per step plus a cheap per-eviction shift, which is
-  the only lever left that changes the *asymptotic* shape of the cost curve
-  (batching and bf16 are constant-factor wins on top of the existing shape).
+- The growing-window case genuinely changes the *asymptotic* shape of the
+  attention cost from O(window²) to O(window) per step, GPU-verified on real
+  weights — a real, usable win for any session/plan whose length fits inside
+  `context_frames` (batching and bf16, by contrast, are constant-factor wins
+  on top of the existing O(window²) shape).
+- The sliding-window (eviction) case does **not** get this win for free; it
+  requires a separate, explicit design decision (approximate-and-measure,
+  attention-sinks, or accept full-recompute-on-evict) that this ADR does not
+  make. Long-running sessions beyond `context_frames` are the primary
+  real-world use case this ADR originally targeted (a robot control loop
+  running indefinitely) — so the *practical* value of this lever today is
+  narrower than the "GPU-verify follow-up" framing this doc previously used
+  implied. Sizing `context_frames` to the task's bounded horizon (viable for
+  fixed-length manipulation episodes, not for indefinite operation) is the
+  only zero-approximation way to use it as designed.
 - Session `WorldState.context` (the wire-safe embedding window) is unchanged;
   the cache is engine-held state keyed by `session_id`, mirroring the pattern
-  `LingBotVAPipeline` already established for its own named KV cache — the two
-  ports converge on the same session-state shape, which is a good sign for a
-  future shared serving-layer abstraction (multi-session resident state,
-  `docs/CONTROL_LOOP_BENCH.md` metric 4).
-- Risk: if the real predictor's RoPE band-splitting (d/h/w/r axes) doesn't
-  cleanly separate for a flattened `(context_frames * tokens_per_frame, D)`
-  context the way assumed here, the shift trick may need per-axis handling
-  the adapter doesn't currently expose (`_tokens_per_frame` already tracks the
-  patch-grid size needed for this). Flagged for the GPU-verify pass.
+  `LingBotVAPipeline` already established for its own named KV cache.
 
 ## Revisit if
 
-The real predictor wrapping proves the shift math doesn't hold exactly (e.g.
-if positions are NOT purely window-relative-from-zero in some edge case, or a
-band split doesn't compose as assumed) — in which case the fallback is
-"cache the growing-window phase only, full-recompute after first eviction",
-which still captures most of a session's early-step savings and is a much
-smaller, safer change.
+*(Original text, kept for the record — its prediction is exactly what
+happened):* "The real predictor wrapping proves the shift math doesn't hold
+exactly... in which case the fallback is 'cache the growing-window phase
+only, full-recompute after first eviction', which still captures most of a
+session's early-step savings and is a much smaller, safer change." **This is
+now the adopted design** (§"GPU verify"), for a different reason than
+anticipated (not a band-split edge case, but the deeper structural fact that
+eviction can't be exact for a full-depth causal model at all).
+
+Genuinely revisit the sliding-window (eviction) case if: (a) a design partner
+needs sessions longer than a bounded-horizon episode can accommodate inside
+`context_frames`, making "just grow the window" impractical (memory or
+latency cost of a very large `context_frames`), or (b) there's appetite to
+implement and *validate* an explicit approximation (attention-sinks-style
+kept prefix, or measured-acceptable drift) rather than treat this as a free
+lunch — that is real, separate design + evaluation work, not a bug fix.
