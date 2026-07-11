@@ -18,7 +18,8 @@ Emits one verbatim ``RESULT`` JSON line (repo provenance convention).
 
     python scripts/bench_control_loop.py --engine vjepa2-ac          # real weights, GPU
     python scripts/bench_control_loop.py --engine vjepa2-ac --fake   # CPU toy weights (CI)
-    python scripts/bench_control_loop.py --engine lingbot-va         # after the Phase-1 port
+    python scripts/bench_control_loop.py --engine lingbot-va \
+        --obs-dir /workspace/lingbot-va/example/demo                # real weights, GPU
 """
 
 from __future__ import annotations
@@ -44,7 +45,12 @@ import torch  # noqa: E402
 from mirage.backend.registry import select_backend  # noqa: E402
 from mirage.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
 from mirage.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
-from mirage.runtime.types import Action, ConditioningInput, RolloutParams  # noqa: E402
+from mirage.runtime.types import (  # noqa: E402
+    Action,
+    ConditioningInput,
+    ConditioningKind,
+    RolloutParams,
+)
 
 _DTYPES = {"bf16": "bfloat16", "fp16": "float16", "fp32": "float32"}
 
@@ -92,9 +98,13 @@ def build_engine(args: argparse.Namespace) -> Any:
                 predictor=_ToyPredictor(),
             )
         return VJepa2ACEngine(backend, cfg)
-    # LingBot-VA: measurable once the Phase-1 pipeline lands
-    # (docs/LINGBOT_VA_PORT_PLAN.md §4); until then load() raises with the recipe.
-    return LingBotVAEngine(backend, LingBotVAConfig())
+    # LingBot-VA: policy-regime engine (Phase-1 pipeline, docs/LINGBOT_VA_PORT_PLAN.md
+    # §4). Needs a real prompt + seed-observation directory (--prompt/--obs-dir);
+    # the fake path is unsupported (its rollout is a real chunked denoise loop,
+    # not a toy-weights CPU stand-in).
+    if args.fake:
+        raise NotImplementedError("--fake is not supported for --engine lingbot-va")
+    return LingBotVAEngine(backend, LingBotVAConfig(prompt=args.prompt))
 
 
 def bench_control_loop(
@@ -105,11 +115,22 @@ def bench_control_loop(
     plan_calls: int = 1,
     horizon: int = 4,
     action_dim: int = 7,
+    obs_dir: str | None = None,
     seed: int = 0,
 ) -> dict[str, Any]:
-    """Measure the four leaderboard metrics on one persistent session."""
+    """Measure the four leaderboard metrics on one persistent session.
+
+    ``action_dim``/random-action generation is V-JEPA-shaped (one control
+    vector per ``step()``, advancing one latent frame). LingBot-VA's ``step()``
+    is chunk-shaped instead (a full executed chunk — frame_chunk_size x
+    action_per_frame rows of its wire action width — advances one denoise
+    chunk); detected via ``_wire_action_dim`` (see ``mirage.models.lingbot_va``)
+    so one harness drives both regimes without an engine-kind flag threaded
+    through every call site.
+    """
     torch.manual_seed(seed)
     on_gpu = torch.cuda.is_available()
+    is_chunked = hasattr(engine, "_wire_action_dim")
 
     t = time.perf_counter()
     loader = getattr(engine, "load", None)
@@ -122,11 +143,19 @@ def bench_control_loop(
     if on_gpu:
         torch.cuda.reset_peak_memory_stats()
     t = time.perf_counter()
-    state = engine.reset(ConditioningInput(), RolloutParams(horizon=horizon))
+    conditioning = (
+        ConditioningInput(kind=ConditioningKind.IMAGE, uri=obs_dir)
+        if is_chunked
+        else ConditioningInput()
+    )
+    state = engine.reset(conditioning, RolloutParams(horizon=horizon))
     _sync()
     reset_s = time.perf_counter() - t
 
     def rand_action() -> Action:
+        if is_chunked:
+            n = engine._config.frame_chunk_size * engine._config.action_per_frame
+            return Action(values=torch.randn(n * engine._wire_action_dim()).tolist())
         return Action(values=torch.randn(action_dim).tolist())
 
     # 1. closed-loop step latency under state carryover (warm).
@@ -145,10 +174,19 @@ def bench_control_loop(
     tokens_per_frame = int(getattr(engine, "_tokens_per_frame", 1))
     goal_state, _ = engine.step(state, rand_action())
     goal = goal_state.context[-tokens_per_frame:]
+    if is_chunked:
+        # LingBot-VA's plan() reuses a chunk step() already parked
+        # (session.pending_actions) instead of recomputing — correct for real
+        # closed-loop use, but the step() above just parked one, which would
+        # make the timed plan() below a free cache hit. Clear it so each timed
+        # call does the real chunk denoise it's measuring.
+        engine._sessions[state.session_id].pending_actions = None
     _sync()
     t = time.perf_counter()
     for _ in range(plan_calls):
         engine.plan(state, goal, horizon)
+        if is_chunked:
+            engine._sessions[state.session_id].pending_actions = None
     _sync()
     plan_s = (time.perf_counter() - t) / plan_calls
 
@@ -211,8 +249,19 @@ def main() -> int:
     ap.add_argument("--action-dim", type=int, default=7)
     ap.add_argument("--plan-samples", type=int, default=64)
     ap.add_argument("--plan-cem-iters", type=int, default=3)
+    ap.add_argument(
+        "--obs-dir", default=None, help="lingbot-va: dir with <cam_key>.png seed images"
+    )
+    ap.add_argument(
+        "--prompt",
+        default="Pick the green cube and place it inside the blue box",
+        help="lingbot-va: the goal instruction (text-conditioned policy)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+
+    if args.engine == "lingbot-va" and not args.obs_dir:
+        ap.error("--engine lingbot-va requires --obs-dir")
 
     engine = build_engine(args)
     print(f"[clb] engine={args.engine} fake={args.fake}", flush=True)
@@ -223,6 +272,7 @@ def main() -> int:
         plan_calls=args.plan_calls,
         horizon=args.horizon,
         action_dim=args.action_dim,
+        obs_dir=args.obs_dir,
         seed=args.seed,
     )
     print("[clb] RESULT " + json.dumps(result), flush=True)
