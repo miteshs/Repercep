@@ -52,25 +52,46 @@ upcast; the bf16 path is the active optimization workstream).
 | session marginal HBM | ~3.4 GiB | ~3.7 GiB |
 | resident sessions/GPU (est.) | ~20 | **~50** |
 
-The 55→32 s plan numbers are the honest state of energy-MPC serving today —
-far from a 10–100 ms control budget. That gap **is the roadmap** (KV/latent
-reuse across rollout steps, bf16 predictor, CEM warm-start), and this
-leaderboard is where each lever's gain lands as a measured row.
+**Lever ladder, same box** (`docs/LEVERS_2026_07_H100.md`, 2026-07-11 — a
+different H100 rental/stack than the row above, so its own sequential-fp32
+baseline (68.84 s) differs in absolute terms; the *ratios* are the result):
+sequential fp32 68.84 s → **+batching** 40.58 s (1.7×) → **+bf16** (parity
+exact to bf16 resolution) **9.42 s (7.3×)**. Warm-start (1-iter steady-state
+replan) reaches lower energy (30.25) than a cold 3-iter plan (45.0) at ⅓ the
+per-plan work, ≈3.1 s/replan estimated. MI300X pending; bf16 parity is
+architecture-general so the ROCm run is expected to land the same multiplier.
+
+The remaining gap to a 10–100 ms control budget is the context-window
+recompute every rollout step — **KV/latent reuse across rollout steps**
+(design in `docs/adr/0009-kv-latent-reuse.md`, engine-side seam CPU-tested;
+wrapping the real predictor is the next GPU-verify item). This leaderboard is
+where that lever's measured row lands next.
 
 ### LingBot-VA 2.0 base (MoT DiT over Wan2.2 latents, 32 actions/chunk) — policy regime
 
-Source: `docs/LINGBOT_VA_ON_H100.md` (2026-07-11, reference `wan_va` stack
-through our timed driver; Mirage-seam rows land with the Phase-1 port).
-"Step" for a chunked video-action model = one chunk (4 latent frames).
+Two sources, both H100, both 2026-07-11: the reference `wan_va` stack through
+our own timed driver (`docs/LINGBOT_VA_ON_H100.md`) and — since the Phase-1
+port landed same day — the **shared `bench_control_loop.py` harness** driving
+the real weights through the Mirage seam (`docs/LINGBOT_VA_SEAM_VERIFY.md` has
+the raw imagination-mode rollout this corroborates). "Step" for a chunked
+video-action model = one chunk (4 latent frames, 32 actions).
 
-| metric | H100 | MI300X |
-|---|---|---|
-| chunk latency (warm, CFG 5.0, SDPA) | **1384.7 ms** | *pending (RunPod MI300X stock)* |
-| synchronous actions/sec | 23.1 | *pending* |
-| planning-decisions/sec (1 chunk = 1 decision) | 0.72 | *pending* |
-| energy-evals/sec | n/a (policy regime) | — |
-| session HBM (30-chunk KV window, CFG batch 2) | **38.8 GiB** | *pending* |
-| resident sessions/GPU (est.) | **1** | ~4 (extrapolated from H100; unverified) |
+| metric | H100 (reference stack) | H100 (Mirage seam, shared harness) | MI300X |
+|---|---|---|---|
+| chunk latency (warm) | 1384.7 ms (CFG 5.0, SDPA) | **754.6 ms** (1.3/s) | *pending (RunPod stock)* |
+| planning-decisions/sec (1 chunk = 1 decision) | 0.72 (derived) | **1.09** (0.92 s/plan, measured) | *pending* |
+| energy-evals/sec | n/a (policy regime) | n/a | — |
+| one-time weight load | — | 9.48 GiB | *pending* |
+| session marginal HBM | 38.8 GiB (undifferentiated) | **6.01 GiB** | *pending* |
+| resident sessions/GPU | **1** (est., undifferentiated) | **11** (measured: `(79.2 − 9.48) // 6.01`) | *pending* |
+
+The seam column isn't "faster because different work" — same imagination-mode
+rollout, matching action-magnitude distribution (`LINGBOT_VA_SEAM_VERIFY.md`
+§"why"). The gap is a design choice (T5/VAE kept CPU-resident, no reference-
+server debug I/O in the hot loop) that also **separates one-time weight cost
+from marginal session cost** — which is *why* resident-sessions jumps from an
+undifferentiated "1" to a measured "11": the reference number conflated
+weights (9.5 GiB) with session state into one 38.8 GiB blob per session.
 
 ---
 
@@ -109,10 +130,15 @@ project exists to fill — roughly a 10× window on this model.**
 
 ## 5. Open items
 
-- MI300X LingBot-VA rows (blocked on RunPod MI300X availability, 2026-07-11).
-- V-JEPA rows re-measured on the bf16 predictor path + KV-reuse when those
-  levers land (the workstream this leaderboard exists to score).
-- LingBot-VA through the Mirage seam (Phase-1 port) so both regimes run under
-  the same harness binary.
-- Multi-session concurrency measurements (metric 4 is extrapolated today;
-  measure N live sessions when the serving layer exposes it).
+- MI300X LingBot-VA rows (blocked on RunPod MI300X availability, 2026-07-11;
+  a persistent stock watcher is armed).
+- V-JEPA rows re-measured on the batched+bf16 path (done —
+  `docs/LEVERS_2026_07_H100.md`, 7.3x combined) and on KV-reuse
+  (design done — `docs/adr/0009-kv-latent-reuse.md`; real-predictor GPU-verify
+  still open) — update this leaderboard's V-JEPA table with those rows next.
+- ~~LingBot-VA through the Mirage seam~~ — done 2026-07-11
+  (`docs/LINGBOT_VA_SEAM_VERIFY.md`); both regimes now run under the same
+  `bench_control_loop.py` binary (§2 table above).
+- Multi-session concurrency measurements (metric 4 is extrapolated from a
+  single session's marginal HBM today; measure N live sessions when the
+  serving layer exposes it).

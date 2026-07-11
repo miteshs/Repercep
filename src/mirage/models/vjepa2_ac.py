@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from mirage.runtime.engine import EngineInfo
 from mirage.runtime.types import Action, ConditioningKind, LatentStep, WorldState
@@ -71,6 +71,55 @@ class _Predictor(Protocol):
     """
 
     def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor: ...
+
+
+class _CachedPredictor(Protocol):
+    """Optional incremental (KV-cache) mode for :class:`_Predictor`.
+
+    ``cache`` is opaque to the engine (predictor-owned per-layer K/V, however
+    it wants to represent them); the engine only bootstraps it, advances it,
+    and evicts from it. See ``docs/adr/0009-kv-latent-reuse.md`` for why this
+    is valid for this model's block-causal, window-relative-RoPE predictor
+    (a frame's K/V never depend on later frames, and RoPE rotations compose,
+    so a sliding-window evict is a cheap shift, not a recompute).
+    """
+
+    supports_kv_cache: bool
+
+    def init_cache(self, context: torch.Tensor) -> Any:
+        """Bootstrap a cache from a full context window (pays the full-window
+        forward cost once; every subsequent :meth:`step_cached` call doesn't)."""
+        ...
+
+    def step_cached(self, cache: Any, action: torch.Tensor) -> tuple[torch.Tensor, Any]:
+        """Attend one new action-conditioned frame against ``cache``; return
+        the predicted next frame (same contract as ``_Predictor.__call__``'s
+        return) and the cache with that frame appended."""
+        ...
+
+    def evict(self, cache: Any) -> Any:
+        """Drop the oldest cached frame, RoPE-position-shifting the rest."""
+        ...
+
+
+@dataclass(slots=True)
+class _CacheEntry:
+    """A session's KV cache plus the context it is synchronized to.
+
+    ``last_context`` is what makes cache reuse safe: :meth:`VJepa2ACEngine.step`
+    only trusts ``cache`` when the incoming ``WorldState.context`` matches it
+    exactly. A CEM rollout (:meth:`VJepa2ACEngine._rollout_energy`) restarts
+    every candidate from the *same* starting ``state`` under the *same*
+    ``session_id`` — without this check, candidate 2+ would silently resume
+    from candidate 1's cache (wrong context, corrupted energies). A mismatch
+    means "this call didn't continue the last cached step" and falls back to
+    a fresh :meth:`_CachedPredictor.init_cache` — the same cost as no cache,
+    never a wrong answer, and (since a rollout's steps *after* the first one
+    within one candidate DO match) still a real speedup for that path.
+    """
+
+    cache: Any
+    last_context: torch.Tensor
 
 
 @dataclass(slots=True)
@@ -110,6 +159,12 @@ class VJepa2ACConfig:
     # parity with fp32 to bf16 resolution, 4.3x on the batched plan
     # (``docs/LEVERS_2026_07_H100.md``).
     predictor_compute_dtype: str = "float32"
+    # Incremental KV-cache path for step() (docs/adr/0009-kv-latent-reuse.md):
+    # only new-frame tokens attend against a persisted cache instead of
+    # re-encoding the whole context window every step. Used only when the
+    # predictor advertises ``supports_kv_cache``; the engine-side bookkeeping
+    # is CPU-tested, the real predictor wrapper is a GPU-verify follow-up.
+    use_kv_cache: bool = True
 
 
 class VJepa2ACEngine:
@@ -150,6 +205,8 @@ class VJepa2ACEngine:
         self._normalize_reps = False
         # Per-session previous plan solution, for receding-horizon warm start.
         self._plan_mean: dict[str, torch.Tensor] = {}
+        # Per-session incremental predictor cache (see _CacheEntry / step()).
+        self._kv_cache: dict[str, _CacheEntry] = {}
 
     @property
     def is_loaded(self) -> bool:
@@ -228,7 +285,10 @@ class VJepa2ACEngine:
             vec = torch.tensor(
                 action.values, dtype=state.context.dtype, device=state.context.device
             )
-            nxt = self._predictor(state.context, vec)
+            if self._config.use_kv_cache and getattr(self._predictor, "supports_kv_cache", False):
+                nxt = self._step_cached(state, vec)
+            else:
+                nxt = self._predictor(state.context, vec)
             # The predictor returns the next frame: a single embedding ``(D,)`` on
             # the stub path, or a ``(P, D)`` block of patch tokens on the real
             # path. Shape to a 2-D block, (real-path) layer-norm it like the
@@ -240,7 +300,51 @@ class VJepa2ACEngine:
         new_state = WorldState(
             context=context, step_index=state.step_index + 1, session_id=state.session_id
         )
+        if self._config.use_kv_cache and getattr(self._predictor, "supports_kv_cache", False):
+            self._sync_kv_cache(new_state.session_id, context)
         return new_state, LatentStep(step_index=new_state.step_index)
+
+    def _step_cached(self, state: WorldState, vec: torch.Tensor) -> torch.Tensor:
+        """The incremental path: reuse the session's cache when it's in sync.
+
+        "In sync" means the incoming ``state.context`` is exactly what the
+        cache last produced (see :class:`_CacheEntry`) — true for real
+        sequential advancement (the common case) and for every step after the
+        first within one CEM candidate's rollout; false (falls back to a full
+        :meth:`_CachedPredictor.init_cache`, same cost as no cache) whenever a
+        rollout branches to a different starting state under the same session.
+        """
+
+        # Only reached when getattr(..., "supports_kv_cache", False) is true
+        # (checked by both call sites), so the real object satisfies
+        # _CachedPredictor even though the injected-callable _Predictor type
+        # doesn't declare it.
+        predictor = cast("_CachedPredictor", self._predictor)
+        entry = self._kv_cache.get(state.session_id)
+        if entry is not None and _same_tensor(entry.last_context, state.context):
+            cache = entry.cache
+        else:
+            cache = predictor.init_cache(state.context)
+        next_frame, cache = predictor.step_cached(cache, vec)
+        frames_now = int(state.context.shape[0]) // self._tokens_per_frame
+        if frames_now >= self._config.context_frames:
+            cache = predictor.evict(cache)
+        # ``last_context`` is finalized in :meth:`_sync_kv_cache` once ``step()``
+        # has built the new (normalized, windowed) context — this method only
+        # has ``next_frame``, not that.
+        self._kv_cache[state.session_id] = _CacheEntry(cache=cache, last_context=state.context)
+        return next_frame
+
+    def _sync_kv_cache(self, session_id: str, new_context: torch.Tensor) -> None:
+        """Point the session's cache entry at the context it now matches.
+
+        Split from :meth:`_step_cached` because the final context (after
+        norm/append/window-cap) is only known back in ``step()``; this is
+        what the *next* call's sync check compares against.
+        """
+        entry = self._kv_cache.get(session_id)
+        if entry is not None:
+            self._kv_cache[session_id] = _CacheEntry(cache=entry.cache, last_context=new_context)
 
     def plan(self, state: WorldState, goal: torch.Tensor, horizon: int) -> Action:
         """Energy-minimizing MPC (CEM): the next action toward ``goal``.
@@ -562,6 +666,20 @@ def _sdpa_dtype_harmonizer() -> Any:
             F.scaled_dot_product_attention = orig
 
     return _guard()
+
+
+def _same_tensor(a: torch.Tensor, b: torch.Tensor) -> bool:
+    """Whether ``b`` is exactly the context a cache entry was last synced to.
+
+    Value equality, not identity — a reconstructed ``WorldState`` with
+    identical content but a different tensor object should still count as
+    "in sync" (see :class:`_CacheEntry`). Cheap relative to a predictor
+    forward; a shape check short-circuits the common branch-mismatch case
+    without the ``torch.equal`` pass.
+    """
+    import torch
+
+    return a.shape == b.shape and bool(torch.equal(a, b))
 
 
 def _infer_tokens_per_frame(encoder: Any) -> int:

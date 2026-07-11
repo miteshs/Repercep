@@ -368,3 +368,136 @@ def test_plan_reduces_energy_toward_goal() -> None:
     action = engine.plan(state, goal, horizon=3)
     assert len(action.values) == 4
     assert action.space == "ee_delta"
+
+
+# --- KV/latent reuse (ADR-0009): engine-side seam, step() path ---
+
+
+class _KVCacheFakePredictor:
+    """Toy dynamics for the KV-cache seam: next frame = sum(live frames) + action.
+
+    Implements both the full-context call (the parity baseline) and the
+    incremental ``_CachedPredictor`` methods. Sensitive to exactly which
+    frames are "live" — dropping, duplicating, or staling a frame changes the
+    sum, so a bookkeeping bug (bad eviction, cache leaking across a branch)
+    produces a numerically WRONG result, not merely a slower one.
+    """
+
+    supports_kv_cache = True
+
+    def __init__(self) -> None:
+        self.init_cache_calls = 0
+        self.step_cached_calls = 0
+        self.evict_calls = 0
+
+    def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        return context.sum(dim=0) + action
+
+    def init_cache(self, context: torch.Tensor) -> list[torch.Tensor]:
+        self.init_cache_calls += 1
+        return list(context.unbind(0))
+
+    def step_cached(
+        self, cache: list[torch.Tensor], action: torch.Tensor
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        import torch
+
+        self.step_cached_calls += 1
+        total = torch.stack(cache, dim=0).sum(dim=0) if cache else torch.zeros_like(action)
+        next_frame = total + action
+        return next_frame, [*cache, next_frame]
+
+    def evict(self, cache: list[torch.Tensor]) -> list[torch.Tensor]:
+        self.evict_calls += 1
+        return cache[1:]
+
+
+def test_kv_cache_matches_full_recompute_across_eviction() -> None:
+    """Cached step() must match full-recompute step() exactly, including
+    after the window fills and starts evicting — the case a naive
+    append-only cache would get wrong (ADR-0009's RoPE-shift discussion);
+    this fake's toy dynamics make a wrong eviction numerically visible.
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+
+    cached_pred = _KVCacheFakePredictor()
+    cached_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=True),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=cached_pred,
+    )
+    full_pred = _KVCacheFakePredictor()
+    full_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=full_pred,
+    )
+    cached_state = cached_engine.reset(ConditioningInput(), RolloutParams())
+    full_state = full_engine.reset(ConditioningInput(), RolloutParams())
+
+    torch.manual_seed(1)
+    for _ in range(6):  # crosses the context_frames=3 cap (window fills at step 1)
+        action = Action(values=torch.randn(4).tolist())
+        cached_state, _ = cached_engine.step(cached_state, action)
+        full_state, _ = full_engine.step(full_state, action)
+        assert torch.allclose(cached_state.context, full_state.context)
+
+    # Real incremental work happened, not a silent full-recompute every call.
+    assert cached_pred.step_cached_calls == 6
+    assert cached_pred.init_cache_calls == 1  # bootstrapped once, then reused
+    assert cached_pred.evict_calls == 5  # every step once the window is full
+
+
+def test_kv_cache_does_not_leak_across_branches() -> None:
+    """A rollout that restarts from the SAME state under the SAME session —
+    exactly what CEM's sequential ``_rollout_energy`` does per candidate —
+    must not let a later candidate silently resume an earlier candidate's
+    cache. Without the context-sync check this fake's sum-of-frames output
+    would come out wrong for the second candidate; compared against a
+    caching-disabled reference to prove it doesn't.
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+    goal = torch.randn(4)
+    seq_a = torch.randn(3, 4)
+    seq_b = torch.randn(3, 4)
+
+    cached = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=True),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_KVCacheFakePredictor(),
+    )
+    state = cached.reset(ConditioningInput(), RolloutParams())
+    energy_a = cached._rollout_energy(state, seq_a, goal)
+    energy_b = cached._rollout_energy(state, seq_b, goal)  # same `state` — a branch
+
+    reference = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_KVCacheFakePredictor(),
+    )
+    ref_state = reference.reset(ConditioningInput(), RolloutParams())
+    ref_a = reference._rollout_energy(ref_state, seq_a, goal)
+    ref_b = reference._rollout_energy(ref_state, seq_b, goal)
+
+    assert torch.allclose(energy_a, ref_a)
+    assert torch.allclose(energy_b, ref_b)
+
+
+def test_kv_cache_disabled_when_predictor_lacks_support() -> None:
+    """A predictor without ``supports_kv_cache`` keeps using the existing
+    full-recompute path — no behavior change for today's real predictor
+    until the GPU-verified cache wrapper lands (ADR-0009)."""
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.zeros(2, 4)
+    engine = _toy_engine(ctx0, context_frames=4)  # _FakePredictor: no cache support
+    assert getattr(engine._predictor, "supports_kv_cache", False) is False
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    nxt, _ = engine.step(state, Action(values=[1.0, 1.0, 1.0, 1.0]))
+    assert engine._kv_cache == {}  # never touched
+    assert torch.allclose(nxt.context[-1], state.context[-1] + torch.ones(4))
