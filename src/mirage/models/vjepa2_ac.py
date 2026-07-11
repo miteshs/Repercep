@@ -102,11 +102,13 @@ class VJepa2ACConfig:
     # MI300X in scripts/bench_cem_batched.py). Used only when the predictor
     # advertises ``supports_batch``; injected single-sample stubs keep the loop.
     plan_batched: bool = True
-    # Dtype the AC predictor computes in. ``float32`` is the GPU-verified
+    # Dtype the AC predictor computes in. ``float32`` is the conservative
     # default (the upstream RoPE attention upcasts q/k to fp32, so bf16 weights
-    # hit an SDPA dtype mismatch). ``bfloat16`` is the opt-in fast path: the
-    # adapter harmonizes q/k back to v.dtype at the SDPA boundary
-    # (:func:`_sdpa_dtype_harmonizer`) — VERIFY ON GPU before benching.
+    # hit an SDPA dtype mismatch). ``bfloat16`` is the fast path: the adapter
+    # harmonizes q/k back to v.dtype at the SDPA boundary
+    # (:func:`_sdpa_dtype_harmonizer`). GPU-verified 2026-07-11 (H100): energy
+    # parity with fp32 to bf16 resolution, 4.3x on the batched plan
+    # (``docs/LEVERS_2026_07_H100.md``).
     predictor_compute_dtype: str = "float32"
 
 
@@ -534,8 +536,9 @@ def _sdpa_dtype_harmonizer() -> Any:
     dominant per-forward cost). Under this guard a bf16 predictor computes bf16
     SDPA: q/k are cast back down where they meet v. Process-global while
     active (the adapter scopes it to a single forward; serving is
-    single-threaded per engine). VERIFY ON GPU: energy-parity vs the fp32 path
-    before benching (latency lever (a)/(b) prerequisite for flash-attn on ROCm).
+    single-threaded per engine). GPU-verified 2026-07-11 on H100: energy parity
+    with fp32 to bf16 resolution and 4.3x on the batched plan
+    (``docs/LEVERS_2026_07_H100.md``); prerequisite for flash-attn on ROCm.
     """
     import contextlib
 

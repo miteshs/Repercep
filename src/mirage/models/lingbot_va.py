@@ -175,20 +175,19 @@ class LingBotVAEngine:
     # --- loading (the model-specific port, Phase 1) ---
 
     def load(self) -> None:
-        """Build the real :class:`_VAPipeline` from the HF bundle.
+        """Build the real pipeline (GPU: needs ``wan_va`` importable + the bundle).
 
-        NOT YET PORTED (Phase 1, GPU): load ``vae/`` (streaming wrapper),
-        ``tokenizer/`` + ``text_encoder/`` (T5, CPU-offloadable), and
-        ``transformer/`` with ``attn_mode=self._config.attn_mode``; drive the
-        named-KV-cache protocol (``create_empty_cache`` at reset,
-        ``update_cache=1`` on the last denoise step, ``update_cache=2`` +
-        ``clear_pred_cache`` on recondition) and the two ``FlowMatchScheduler``
-        loops. Recipe + dependency pins (torch 2.9 / transformers 5.0 /
-        diffusers 0.36, own venv) in ``docs/LINGBOT_VA_PORT_PLAN.md`` §4.
+        The model-specific half lives in
+        :mod:`mirage.models.lingbot_va_pipeline` (Phase 1): the Wan2.2 bundle
+        loaders, the named-KV-cache protocol keyed by session, and the two
+        flow-matching loops. It raises with the setup recipe when the research
+        dependency or checkpoints are missing. Idempotent.
         """
-        raise NotImplementedError(
-            "LingBot-VA weight load is the Phase-1 GPU port — see docs/LINGBOT_VA_PORT_PLAN.md §4"
-        )
+        if self._pipeline is not None:
+            return
+        from mirage.models.lingbot_va_pipeline import build_pipeline
+
+        self._pipeline = build_pipeline(self._backend, self._config)
 
     # --- the interactive seam ---
 

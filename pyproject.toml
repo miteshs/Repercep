@@ -150,6 +150,10 @@ module = [
   "cosmos_guardrail.*",
   "nltk.*",
   "pytorchvideo.*",
+  # LingBot-VA research repo (Phase-1 dependency, GPU box only) + its imports.
+  "wan_va.*",
+  "einops.*",
+  "huggingface_hub.*",
   # PyO3-built extensions ship `py.typed` markers but no .pyi stubs, so mypy
   # treats them as Any. Stubs are a future-Stage-3.5 item; for now treat the
   # compiled `_native` submodules like other untyped third-party imports.

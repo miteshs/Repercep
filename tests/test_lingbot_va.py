@@ -95,8 +95,10 @@ def test_engine_not_ready_without_pipeline() -> None:
     assert engine.info().ready is False
 
 
-def test_load_is_the_phase1_port() -> None:
-    with pytest.raises(NotImplementedError, match="LINGBOT_VA_PORT_PLAN"):
+def test_load_requires_research_repo() -> None:
+    # Without the wan_va research package the real-pipeline build fails with
+    # the setup recipe (the GPU box installs it per the port plan).
+    with pytest.raises(RuntimeError, match="LINGBOT_VA_PORT_PLAN"):
         _toy_engine(pipeline=None).load()
 
 
