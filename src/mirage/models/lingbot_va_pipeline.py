@@ -59,7 +59,14 @@ def _ensure_flash_attn_stub() -> None:
     try:
         import flash_attn  # noqa: F401
     except ImportError:
+        import importlib.machinery
+
         stub = types.ModuleType("flash_attn")
+        # A bare ``ModuleType`` has ``__spec__ is None``, which trips code that
+        # checks module validity via importlib machinery (diffusers' lazy
+        # submodule loader does, surfacing as "flash_attn.__spec__ is None").
+        # A real (loader-less) spec satisfies that check without a real loader.
+        stub.__spec__ = importlib.machinery.ModuleSpec("flash_attn", loader=None)
 
         def flash_attn_func(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("flash_attn stub: attn_mode='torch' should never reach here")
@@ -247,6 +254,10 @@ def _task_config(config: LingBotVAConfig) -> Any:
             f"config: {config.frame_chunk_size}x{config.action_dim} vs "
             f"{task.frame_chunk_size}x{task.action_dim}"
         )
+    # The executed action-chunk width (wire format) is the task's *used*
+    # channel subset (e.g. 6 for the demo task: 5 arm dims + 1 gripper), not
+    # the model's full padded action_dim — see LingBotVAConfig.used_action_dim.
+    config.used_action_dim = len(task.used_action_channel_ids)
     return task
 
 

@@ -114,7 +114,18 @@ class LingBotVAConfig:
     prompt: str | None = None
     # Chunked generation geometry (va_demo_cfg names kept for greppability).
     frame_chunk_size: int = 4
+    # The model's internal (padded) action channel count — sizes the cache and
+    # the zero-padded tensor the transformer denoises. NOT the wire-facing
+    # width; a task masks this down to the channels it actually controls (see
+    # ``used_action_dim``).
     action_dim: int = 30
+    # The *executed* action-chunk width: what ``plan()`` returns and ``step()``
+    # expects in ``Action.values`` (e.g. 6 for the demo task: 5 arm dims + 1
+    # gripper, from ``used_action_channel_ids``). ``None`` until the pipeline
+    # loads the task config and sets it (Phase-1 GPU path); the model-agnostic
+    # unit tests set it explicitly since there is no task config to derive it
+    # from. Falls back to ``action_dim`` when unset.
+    used_action_dim: int | None = None
     action_per_frame: int = 8
     attn_window: int = 30
     # Flow-matching denoise budgets per chunk.
@@ -244,7 +255,7 @@ class LingBotVAEngine:
                 state.session_id, session.frame_st_id, state.context
             )
             session.pending_actions = proposed
-        return Action(values=proposed[0].tolist(), space="lingbot_va_30d")
+        return Action(values=proposed[0].tolist(), space=f"lingbot_va_{self._wire_action_dim()}d")
 
     # --- internals ---
 
@@ -261,11 +272,15 @@ class LingBotVAEngine:
             )
         return session
 
+    def _wire_action_dim(self) -> int:
+        """The executed-action-chunk width (see ``LingBotVAConfig.used_action_dim``)."""
+        return self._config.used_action_dim or self._config.action_dim
+
     def _parse_action_chunk(self, action: Action, *, like: torch.Tensor) -> torch.Tensor:
-        """Validate + shape a flat executed chunk to ``(k, action_dim)``."""
+        """Validate + shape a flat executed chunk to ``(k, wire_action_dim)``."""
         import torch
 
-        a_dim = self._config.action_dim
+        a_dim = self._wire_action_dim()
         if len(action.values) % a_dim != 0:
             raise ValueError(
                 f"action chunk length {len(action.values)} is not a multiple "
