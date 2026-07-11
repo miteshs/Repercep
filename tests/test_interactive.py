@@ -9,7 +9,7 @@ fail). The model-specific weight load remains a port and is asserted to raise.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from pydantic import ValidationError
@@ -252,6 +252,104 @@ def test_context_window_is_capped() -> None:
     for _ in range(5):
         state, _ = engine.step(state, Action(values=[0.0, 0.0, 0.0]))
     assert tuple(state.context.shape) == (2, 3)  # capped at context_frames
+
+
+class _BatchedFakePredictor:
+    """Linear toy dynamics that also accepts a candidate batch.
+
+    Single: ``(N, D) + (A,) -> (D,)``; batched: ``(S, N, D) + (S, A) -> (S, 1, D)``
+    (one "patch token" per frame, matching ``tokens_per_frame == 1``).
+    """
+
+    supports_batch = True
+
+    def __call__(self, context: Any, action: Any) -> Any:
+        if context.ndim == 3:
+            return (context[:, -1] + action).unsqueeze(1)
+        return context[-1] + action
+
+
+def test_batched_candidate_energies_match_loop() -> None:
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(0)
+    ctx0 = torch.randn(2, 4)
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=4),
+        encoder=_FakeEncoder(ctx0),
+        predictor=_BatchedFakePredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    goal = torch.randn(4)
+    seqs = torch.randn(5, 3, 4)  # S=5 candidates, H=3, A=4
+
+    batched = engine._rollout_energy_batched(state, seqs, goal)
+    looped = torch.stack([engine._rollout_energy(state, seqs[i], goal) for i in range(5)])
+    assert tuple(batched.shape) == (5,)
+    assert torch.allclose(batched, looped, atol=1e-5)
+
+
+def test_plan_dispatches_to_batched_path() -> None:
+    torch = pytest.importorskip("torch")
+
+    class _CountingPredictor(_BatchedFakePredictor):
+        calls: ClassVar[list[int]] = []
+
+        def __call__(self, context: Any, action: Any) -> Any:
+            self.calls.append(int(context.shape[0]) if context.ndim == 3 else 1)
+            return super().__call__(context, action)
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=4, plan_samples=6, plan_elites=2, plan_iters=1),
+        encoder=_FakeEncoder(torch.zeros(2, 4)),
+        predictor=_CountingPredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    engine.plan(state, torch.zeros(4), horizon=2)
+    # One batched forward of all 6 candidates per rollout timestep (H=2),
+    # not 6 x 2 single forwards.
+    assert _CountingPredictor.calls == [6, 6]
+
+
+def test_warm_start_shifts_previous_plan() -> None:
+    torch = pytest.importorskip("torch")
+    engine = _toy_engine(torch.zeros(2, 4), context_frames=8)
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    goal = torch.zeros(4)
+
+    prev = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    engine._plan_mean[state.session_id] = prev
+    mean = engine._warm_start_mean(state, goal, horizon=3)
+    # Receding horizon: drop the executed first action, repeat the last row.
+    assert torch.equal(mean, torch.cat([prev[1:], prev[-1:]], dim=0))
+    # Horizon mismatch and unknown sessions fall back to the zero mean.
+    assert torch.all(engine._warm_start_mean(state, goal, horizon=5) == 0)
+
+    torch.manual_seed(0)
+    engine.plan(state, goal, horizon=3)
+    assert state.session_id in engine._plan_mean  # solution recorded for reuse
+
+    engine._config.plan_warm_start = False
+    assert torch.all(engine._warm_start_mean(state, goal, horizon=3) == 0)
+
+
+def test_sdpa_dtype_harmonizer_casts_qk_to_v() -> None:
+    torch = pytest.importorskip("torch")
+    import torch.nn.functional as F  # noqa: N812
+
+    from mirage.models.vjepa2_ac import _sdpa_dtype_harmonizer
+
+    q = torch.randn(1, 2, 3, 4, dtype=torch.float32)
+    k = torch.randn(1, 2, 3, 4, dtype=torch.float32)
+    v = torch.randn(1, 2, 3, 4, dtype=torch.bfloat16)
+    with _sdpa_dtype_harmonizer():
+        out = F.scaled_dot_product_attention(q, k, v)
+    assert out.dtype == torch.bfloat16
+    # The patch is scoped: outside the guard the original op (and its dtype
+    # strictness) is restored.
+    with pytest.raises(Exception, match=r"dtype|scalar type"):
+        F.scaled_dot_product_attention(q, k, v)
 
 
 def test_plan_reduces_energy_toward_goal() -> None:

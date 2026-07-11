@@ -92,6 +92,22 @@ class VJepa2ACConfig:
     plan_elites: int = 8  # top-k by lowest energy, refit each iteration
     plan_iters: int = 3  # CEM refit iterations
     action_dim: int = 7  # control dimensionality (e.g. 7-DoF end-effector delta)
+    # Receding-horizon warm start: seed each plan() from the previous solution
+    # for the session, shifted one step (standard MPC shift-reuse). First call
+    # and horizon changes fall back to the zero mean, so cold behavior is
+    # unchanged. Latency lever (c) of the 2026-07 plan.
+    plan_warm_start: bool = True
+    # Batch all CEM candidates through the predictor as one forward per rollout
+    # timestep instead of the per-candidate loop (measured 1.6x H100 / 2.1x
+    # MI300X in scripts/bench_cem_batched.py). Used only when the predictor
+    # advertises ``supports_batch``; injected single-sample stubs keep the loop.
+    plan_batched: bool = True
+    # Dtype the AC predictor computes in. ``float32`` is the GPU-verified
+    # default (the upstream RoPE attention upcasts q/k to fp32, so bf16 weights
+    # hit an SDPA dtype mismatch). ``bfloat16`` is the opt-in fast path: the
+    # adapter harmonizes q/k back to v.dtype at the SDPA boundary
+    # (:func:`_sdpa_dtype_harmonizer`) — VERIFY ON GPU before benching.
+    predictor_compute_dtype: str = "float32"
 
 
 class VJepa2ACEngine:
@@ -130,6 +146,8 @@ class VJepa2ACEngine:
         # (``normalize_reps=True`` in the reference wrapper). Enabled on the real
         # path in :meth:`_ensure_encoder`; left off for the model-agnostic stub.
         self._normalize_reps = False
+        # Per-session previous plan solution, for receding-horizon warm start.
+        self._plan_mean: dict[str, torch.Tensor] = {}
 
     @property
     def is_loaded(self) -> bool:
@@ -258,22 +276,88 @@ class VJepa2ACEngine:
         """Cross-entropy-method search for the energy-minimizing action sequence."""
         import torch
 
-        a_dim = self._config.action_dim
-        mean = torch.zeros(horizon, a_dim, dtype=goal.dtype, device=goal.device)
+        mean = self._warm_start_mean(state, goal, horizon)
         std = torch.ones_like(mean)
         for _ in range(self._config.plan_iters):
             noise = torch.randn(
-                self._config.plan_samples, horizon, a_dim, dtype=goal.dtype, device=goal.device
+                self._config.plan_samples,
+                horizon,
+                self._config.action_dim,
+                dtype=goal.dtype,
+                device=goal.device,
             )
             seqs = mean.unsqueeze(0) + std.unsqueeze(0) * noise
-            energies = torch.stack(
-                [self._rollout_energy(state, seqs[i], goal) for i in range(int(seqs.shape[0]))]
-            )
+            energies = self._candidate_energies(state, seqs, goal)
             elite_idx = torch.topk(energies, self._config.plan_elites, largest=False).indices
             elite = seqs[elite_idx]
             mean = elite.mean(dim=0)
             std = elite.std(dim=0).clamp_min(1e-6)
+        if self._config.plan_warm_start:
+            self._plan_mean[state.session_id] = mean.detach()
         return mean
+
+    def _warm_start_mean(self, state: WorldState, goal: torch.Tensor, horizon: int) -> torch.Tensor:
+        """Initial CEM mean: the previous solution shifted one step, else zeros.
+
+        Receding-horizon shift-reuse: after executing the first action of the
+        last plan, its remaining tail is the best-known guess for this step's
+        prefix (the final row is repeated to fill the horizon). Falls back to
+        the zero mean on the first call for a session or a horizon change.
+        """
+        import torch
+
+        prev = self._plan_mean.get(state.session_id) if self._config.plan_warm_start else None
+        if prev is not None and tuple(prev.shape) == (horizon, self._config.action_dim):
+            shifted = torch.cat([prev[1:], prev[-1:]], dim=0)
+            return shifted.to(dtype=goal.dtype, device=goal.device)
+        return torch.zeros(horizon, self._config.action_dim, dtype=goal.dtype, device=goal.device)
+
+    def _candidate_energies(
+        self, state: WorldState, seqs: torch.Tensor, goal: torch.Tensor
+    ) -> torch.Tensor:
+        """Energies of ``(S, H, A)`` candidate sequences, batched when possible.
+
+        The batched path rolls all candidates through the predictor as one
+        forward per timestep (latency lever (b), measured 1.6-2.1x); it needs a
+        predictor that accepts a batch, which the real
+        :class:`_AcPredictorAdapter` advertises via ``supports_batch``.
+        Injected single-sample stubs (and ``plan_batched=False``) keep the
+        per-candidate loop, so the model-agnostic tests are unaffected.
+        """
+        import torch
+
+        if self._config.plan_batched and getattr(self._predictor, "supports_batch", False):
+            return self._rollout_energy_batched(state, seqs, goal)
+        return torch.stack(
+            [self._rollout_energy(state, seqs[i], goal) for i in range(int(seqs.shape[0]))]
+        )
+
+    def _rollout_energy_batched(
+        self, state: WorldState, seqs: torch.Tensor, goal: torch.Tensor
+    ) -> torch.Tensor:
+        """Terminal energies of all ``(S, H, A)`` candidates in one rollout.
+
+        Shares the context prefix across candidates: the window is expanded to
+        the batch and each timestep is a single batched predictor forward,
+        numerically identical to looping :meth:`_rollout_energy` per candidate
+        (same append-and-cap window, same norm — asserted by the parity test).
+        """
+        import torch
+
+        self._ensure_predictor()
+        assert self._predictor is not None
+        n_candidates = int(seqs.shape[0])
+        keep = self._config.context_frames * self._tokens_per_frame
+        with torch.inference_mode():
+            ctx = state.context.unsqueeze(0).expand(n_candidates, -1, -1).contiguous()
+            for t in range(int(seqs.shape[1])):
+                blocks = self._predictor(ctx, seqs[:, t])  # (S, P, D)
+                ctx = torch.cat([ctx, self._maybe_norm(blocks)], dim=1)[:, -keep:]
+            terminal = ctx[:, -self._tokens_per_frame :]
+            energies: torch.Tensor = torch.linalg.vector_norm(
+                terminal - goal, dim=tuple(range(1, terminal.ndim))
+            )
+        return energies
 
     def _resolve_frames(self, conditioning: ConditioningInput) -> torch.Tensor:
         """Resolve a conditioning observation to a ``(1, T, C, H, W)`` pixel clip.
@@ -366,23 +450,40 @@ class _AcPredictorAdapter:
         # dtype-mismatch). ``None`` (the stub/unit-test path) does no casting.
         self._cdtype = compute_dtype
 
+    #: The engine's batched CEM path (``_rollout_energy_batched``) keys off this.
+    supports_batch = True
+
     def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         import torch
 
         in_dtype = context.dtype
-        x = context.unsqueeze(0)  # (1, N_ctxt, D)
+        # Single sample ``(N, D) + (A,)`` or a candidate batch ``(S, N, D) + (S, A)``.
+        batched = context.ndim == 3
+        x = context if batched else context.unsqueeze(0)
         if self._cdtype is not None:
             x = x.to(self._cdtype)
         n_frames = int(x.shape[1]) // self._p
         # Per-frame action/state tokens (B, T, action_dim); drive the next frame
         # with `action` at the last position, no-op (zero) for past frames.
-        actions = x.new_zeros(1, n_frames, self._adim)
+        actions = x.new_zeros(int(x.shape[0]), n_frames, self._adim)
         actions[:, -1] = action.to(actions.dtype)
         states = torch.zeros_like(actions)
-        out = self._predictor(x, actions, states)
+        with self._sdpa_guard():
+            out = self._predictor(x, actions, states)
         tokens = out if isinstance(out, torch.Tensor) else out.last_hidden_state
-        next_frame: torch.Tensor = tokens[0, -self._p :]  # predicted next frame
-        return next_frame.to(in_dtype)
+        next_frames: torch.Tensor = tokens[:, -self._p :]  # predicted next frame(s)
+        result = next_frames if batched else next_frames[0]
+        return result.to(in_dtype)
+
+    def _sdpa_guard(self) -> Any:
+        """The bf16 SDPA harmonizer when computing in bf16; a no-op otherwise."""
+        import contextlib
+
+        import torch
+
+        if self._cdtype is torch.bfloat16:
+            return _sdpa_dtype_harmonizer()
+        return contextlib.nullcontext()
 
 
 #: The published V-JEPA 2-AC checkpoint (encoder + predictor weights). NOTE: the
@@ -412,15 +513,52 @@ def _load_ac_predictor(config: VJepa2ACConfig, tokens_per_frame: int) -> _Predic
     )
     ckpt = torch.hub.load_state_dict_from_url(_AC_CHECKPOINT_URL, map_location="cpu")
     state_dict = {
-        k.replace("module.", "").replace("backbone.", ""): v
-        for k, v in ckpt["predictor"].items()
+        k.replace("module.", "").replace("backbone.", ""): v for k, v in ckpt["predictor"].items()
     }
     predictor.load_state_dict(state_dict)
-    # Run the predictor in float32: its RoPE attention upcasts q/k to float32, so
-    # bf16 weights hit an SDPA dtype mismatch. It's only ~300M params; the adapter
-    # casts the (bf16) context in and the next frame back out.
-    predictor = predictor.to(f"cuda:{device}", dtype=torch.float32).eval()
-    return _AcPredictorAdapter(predictor, tokens_per_frame, config.action_dim, torch.float32)
+    # ``float32`` (default) is the GPU-verified path: the upstream RoPE attention
+    # upcasts q/k to float32, so bf16 weights hit an SDPA dtype mismatch.
+    # ``bfloat16`` (opt-in, latency lever) relies on the adapter's SDPA dtype
+    # harmonizer to cast q/k back down at the boundary — VERIFY ON GPU.
+    cdtype = getattr(torch, config.predictor_compute_dtype)
+    predictor = predictor.to(f"cuda:{device}", dtype=cdtype).eval()
+    return _AcPredictorAdapter(predictor, tokens_per_frame, config.action_dim, cdtype)
+
+
+def _sdpa_dtype_harmonizer() -> Any:
+    """Scoped patch: cast SDPA's q/k to v's dtype at the call boundary.
+
+    The upstream AC predictor's RoPE attention upcasts q/k to float32 before
+    ``F.scaled_dot_product_attention`` while v stays in the weight dtype, which
+    is why the predictor has run in fp32 (the June bench identified this as the
+    dominant per-forward cost). Under this guard a bf16 predictor computes bf16
+    SDPA: q/k are cast back down where they meet v. Process-global while
+    active (the adapter scopes it to a single forward; serving is
+    single-threaded per engine). VERIFY ON GPU: energy-parity vs the fp32 path
+    before benching (latency lever (a)/(b) prerequisite for flash-attn on ROCm).
+    """
+    import contextlib
+
+    import torch.nn.functional as F  # noqa: N812
+
+    @contextlib.contextmanager
+    def _guard() -> Any:
+        orig = F.scaled_dot_product_attention
+
+        def harmonized(q: Any, k: Any, v: Any, *args: Any, **kwargs: Any) -> Any:
+            if q.dtype != v.dtype:
+                q = q.to(v.dtype)
+            if k.dtype != v.dtype:
+                k = k.to(v.dtype)
+            return orig(q, k, v, *args, **kwargs)
+
+        F.scaled_dot_product_attention = harmonized  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            F.scaled_dot_product_attention = orig
+
+    return _guard()
 
 
 def _infer_tokens_per_frame(encoder: Any) -> int:
