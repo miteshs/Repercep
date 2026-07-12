@@ -354,7 +354,7 @@ failed, cargo test = 41 passed across 3 crates.**
 
 ```bash
 # Fresh box setup
-git clone https://github.com/miteshs/Mirage.git && cd Repercep
+git clone https://github.com/miteshs/Repercep.git && cd Repercep
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch==2.8.0 torchvision \
     --index-url https://download.pytorch.org/whl/cu128

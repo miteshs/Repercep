@@ -43,7 +43,7 @@ The two AMX-aware attention paths are:
 ## Reproduce
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
+git clone https://github.com/miteshs/Repercep.git repercep && cd repercep
 git checkout cpu-amx-port
 
 uv venv --python 3.12 .venv

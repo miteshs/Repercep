@@ -83,7 +83,7 @@ recommended on MI300X (~18 GiB peak reduction at no quality cost).
 ## Reproduce
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
+git clone https://github.com/miteshs/Repercep.git repercep && cd repercep
 uv venv --python 3.12 .venv
 # Plain CPU torch (no CUDA wheel needed for CPU-only)
 uv pip install --python .venv torch torchvision \

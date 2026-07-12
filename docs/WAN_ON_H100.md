@@ -232,7 +232,7 @@ The answer (this work):
 ## Reproduce
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
+git clone https://github.com/miteshs/Repercep.git repercep && cd repercep
 uv venv --python 3.12 .venv
 # H100 — install torch from the cu128 wheel index, NOT rocm7.2.
 uv pip install --python .venv torch==2.8.0 torchvision \

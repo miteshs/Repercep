@@ -34,7 +34,7 @@ resolver = "3"
 version    = "0.0.1"
 edition    = "2024"
 license    = "LicenseRef-Proprietary"
-repository = "https://github.com/miteshs/Mirage"
+repository = "https://github.com/miteshs/Repercep"
 authors    = ["Repercep"]
 rust-version = "1.85"
 

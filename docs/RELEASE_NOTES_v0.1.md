@@ -2,7 +2,7 @@
 
 *Draft. Pre-publication. Update the date + clear this banner before publishing.*
 
-**Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
+**Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Repercep ·
 **License:** Apache-2.0
 
 Repercep Runtime is the first world-model-native inference engine to ship

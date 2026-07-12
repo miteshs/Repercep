@@ -190,7 +190,7 @@ Files (paths relative to repo root):
 
 ```bash
 # H100 environment setup (one-time per fresh box)
-git clone https://github.com/miteshs/Mirage.git && cd Repercep
+git clone https://github.com/miteshs/Repercep.git && cd Repercep
 git checkout session-14-cuda-port    # (or main, once merged)
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch==2.8.0 torchvision \
@@ -246,6 +246,6 @@ findings in `BUILD_LOG.md`.
    a single session; (3) needs the F30 download workaround first;
    (4) is a multi-day kernel project.
 4. PR `session-14-cuda-port → main` is ready to review at
-   <https://github.com/miteshs/Mirage/pull/new/session-14-cuda-port>.
+   <https://github.com/miteshs/Repercep/pull/new/session-14-cuda-port>.
 
 Have a good day.

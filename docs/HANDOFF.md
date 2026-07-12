@@ -1,6 +1,6 @@
 # Repercep Runtime — Handoff
 
-**Date:** 2026-05-25 · **Repo:** https://github.com/miteshs/Mirage ·
+**Date:** 2026-05-25 · **Repo:** https://github.com/miteshs/Repercep ·
 **HEAD:** `main`, in sync with `origin/main` (4 commits past Session-16
 close) · **Status:** pre-alpha, working on MI300X **and** H100 **and**
 CPU, results publishable + **independently verified on a clean GPU**
@@ -222,7 +222,7 @@ Watchable artifacts (gitignored, local-only):
 Requires an AMD GPU host with ROCm 7.x and Python 3.11+.
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
+git clone https://github.com/miteshs/Repercep.git repercep && cd repercep
 pip install --user uv
 uv venv --python 3.12 .venv
 # torch + torchvision MUST come from the ROCm wheel index (not PyPI)

@@ -325,8 +325,8 @@ AMD vacuum (§3.1). Sequence revenue in that order.
 19. The pending **VC reply on Reactor** (`COMPETITIVE_RESPONSE_REACTOR_2026_07.md`
     ammunition is ready) — now add the Decart section from this doc: the
     category has a $4B validator and an unclaimed AMD/self-host/control flank.
-20. Rename follow-through: GitHub repo rename decision (miteshs/Mirage →
-    miteshs/Repercep or an org), site copy, local dir.
+20. Rename follow-through: ~~GitHub repo rename~~ (done 2026-07-12 —
+    `miteshs/Repercep`, old URLs redirect), site copy, local dir.
 
 ### Explicitly still don't (unchanged from REVISED_STRATEGY Tier-3)
 

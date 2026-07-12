@@ -192,7 +192,7 @@ Full text in `BUILD_LOG.md` Session 15 entry.  Short:
 
 ```bash
 # Fresh box setup
-git clone https://github.com/miteshs/Mirage.git && cd Repercep
+git clone https://github.com/miteshs/Repercep.git && cd Repercep
 git checkout session-14-cuda-port    # for H100 follow-ups
 # OR
 git checkout cpu-amx-port            # for CPU substrate

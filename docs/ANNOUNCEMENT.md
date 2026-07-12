@@ -14,7 +14,7 @@ the social / distribution layer. Pick a channel below and ship.*
 > **121 frames @ 1280×704, 36 steps, in 142 s** on a single AMD Instinct
 > MI300X — 2.68× faster than NVIDIA's published H100 reference.
 >
-> Open source. Apache-2.0. github.com/miteshs/Mirage
+> Open source. Apache-2.0. github.com/miteshs/Repercep
 
 **Tweet 2 (the how, briefly):**
 
@@ -50,10 +50,10 @@ the social / distribution layer. Pick a channel below and ship.*
 
 **Tweet 6 (links):**
 
-> Repo: github.com/miteshs/Mirage
-> Cosmos writeup: github.com/miteshs/Mirage/blob/main/docs/COSMOS_ON_MI300X.md
-> Wan writeup:    github.com/miteshs/Mirage/blob/main/docs/WAN_ON_MI300X.md
-> Methodology:    github.com/miteshs/Mirage/blob/main/docs/METHODOLOGY.md
+> Repo: github.com/miteshs/Repercep
+> Cosmos writeup: github.com/miteshs/Repercep/blob/main/docs/COSMOS_ON_MI300X.md
+> Wan writeup:    github.com/miteshs/Repercep/blob/main/docs/WAN_ON_MI300X.md
+> Methodology:    github.com/miteshs/Repercep/blob/main/docs/METHODOLOGY.md
 >
 > Phase 2 of the implementation plan landed: WM-native, MI300X-first.
 
@@ -197,7 +197,7 @@ get edge-deployment-ready Rust without a 6–9 month cold-start rewrite.
 - Bare-metal MI300X validation (we measure on a VF slice)
 
 #### 8. How to reproduce (50 words)
-`git clone github.com/miteshs/Mirage && cd Mirage` + the one-liner in
+`git clone github.com/miteshs/Repercep && cd Mirage` + the one-liner in
 `README.md`. Hardware: MI300X + ROCm 7.2. Total time to first
 generation: ~15 min (env setup) + 7 min (cold first run) or 142 s
 (warm + cached). Reproducer in `docs/HANDOFF.md` §11.
