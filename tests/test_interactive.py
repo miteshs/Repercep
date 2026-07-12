@@ -9,7 +9,7 @@ fail). The model-specific weight load remains a port and is asserted to raise.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +17,8 @@ from pydantic import ValidationError
 from mirage.models.vjepa2_ac import (
     VJepa2ACConfig,
     VJepa2ACEngine,
+    _ac_raw_qkv,
+    _ac_rotate_augmented,
     _AcPredictorAdapter,
     _infer_tokens_per_frame,
 )
@@ -188,6 +190,119 @@ def test_ac_predictor_adapter_returns_next_frame_block() -> None:
     assert tuple(nxt.shape) == (4, 8)  # the trailing P rows = predicted next frame
 
 
+def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
+    """The real adapter's durable prefix keeps historical actions at zero.
+
+    A miniature two-layer AC predictor exercises the same augmented token
+    layout, axial RoPE, block-causal attention and residual stack.  Multiple
+    cached steps must match the public full-forward contract, not merely the
+    first step where accidentally persisting the live action is invisible.
+    """
+    torch = pytest.importorskip("torch")
+    nn = pytest.importorskip("torch.nn")
+    functional = pytest.importorskip("torch.nn.functional")
+
+    class _MiniAttention(nn.Module):  # type: ignore[name-defined,misc]
+        def __init__(self, dim: int = 24, heads: int = 2) -> None:
+            super().__init__()
+            self.num_heads = heads
+            self.head_dim = dim // heads
+            self.d_dim = self.h_dim = self.w_dim = 4
+            self.grid_size = 1
+            self.proj_drop_prob = 0.0
+            self.is_causal = False
+            self.qkv = nn.Linear(dim, dim * 3)
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Identity()
+
+        def separate_positions(self, ids: Any, height: int, width: int) -> Any:
+            frame = ids // (height * width)
+            within = ids - frame * height * width
+            row = within // width
+            return frame.float(), row.float(), (within - row * width).float()
+
+        def forward(
+            self,
+            x: Any,
+            *,
+            attn_mask: Any,
+            action_tokens: int,
+            **kwargs: Any,
+        ) -> Any:
+            frames = int(kwargs["T"])
+            height = int(kwargs["H"])
+            width = int(kwargs["W"])
+            q, k, v = _ac_raw_qkv(self, x)
+            q = _ac_rotate_augmented(self, q, frames, height, width, action_tokens)
+            k = _ac_rotate_augmented(self, k, frames, height, width, action_tokens)
+            y = functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            y = y.transpose(1, 2).reshape_as(x)
+            return self.proj(y)
+
+    class _MiniBlock(nn.Module):  # type: ignore[name-defined,misc]
+        def __init__(self) -> None:
+            super().__init__()
+            self.norm1 = nn.LayerNorm(24)
+            self.attn = _MiniAttention()
+            self.drop_path = nn.Identity()
+            self.norm2 = nn.LayerNorm(24)
+            self.mlp = nn.Sequential(nn.Linear(24, 48), nn.GELU(), nn.Linear(48, 24))
+
+        def forward(self, x: Any, **kwargs: Any) -> Any:
+            x = x + self.attn(self.norm1(x), **kwargs)
+            return x + self.mlp(self.norm2(x))
+
+    class _MiniPredictor(nn.Module):  # type: ignore[name-defined,misc]
+        grid_height = 1
+        grid_width = 2
+        use_extrinsics = False
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.predictor_embed = nn.Linear(6, 24)
+            self.action_encoder = nn.Linear(3, 24)
+            self.state_encoder = nn.Linear(3, 24)
+            self.predictor_blocks = nn.ModuleList([_MiniBlock(), _MiniBlock()])
+            self.predictor_norm = nn.LayerNorm(24)
+            self.predictor_proj = nn.Linear(24, 6)
+            block = 2 + self.grid_height * self.grid_width
+            frame_ids = torch.arange(8 * block) // block
+            self.attn_mask = frame_ids[:, None] >= frame_ids[None, :]
+
+        def forward(self, visual: Any, actions: Any, states: Any) -> Any:
+            batch, rows, _dim = visual.shape
+            frames = rows // 2
+            x = self.predictor_embed(visual).view(batch, frames, 2, 24)
+            a = self.action_encoder(actions).unsqueeze(2)
+            s = self.state_encoder(states).unsqueeze(2)
+            x = torch.cat([a, s, x], dim=2).flatten(1, 2)
+            mask = self.attn_mask[: x.shape[1], : x.shape[1]]
+            for block in self.predictor_blocks:
+                x = block(
+                    x,
+                    attn_mask=mask,
+                    T=frames,
+                    H=1,
+                    W=2,
+                    action_tokens=2,
+                )
+            x = x.view(batch, frames, 4, 24)[:, :, 2:].flatten(1, 2)
+            return self.predictor_proj(self.predictor_norm(x))
+
+    torch.manual_seed(4)
+    adapter = _AcPredictorAdapter(_MiniPredictor().eval(), tokens_per_frame=2, action_dim=3)
+    for initial_rows in (2, 4):  # empty prefix and one-frame prefix bootstrap
+        context = torch.randn(initial_rows, 6)
+        cache = adapter.init_cache(context)
+        for _ in range(3):
+            action = torch.randn(3)
+            expected = adapter(context, action)
+            actual, staged = adapter.step_cached(cache, action)
+            assert torch.allclose(actual, expected, atol=2e-6)
+            cache = adapter.append_frame(staged, actual)
+            context = torch.cat([context, actual], dim=0)
+
+
 def test_step_appends_patch_token_frame_block() -> None:
     torch = pytest.importorskip("torch")
     # The real path emits P>1 patch tokens per frame; step must append the block
@@ -254,6 +369,104 @@ def test_context_window_is_capped() -> None:
     assert tuple(state.context.shape) == (2, 3)  # capped at context_frames
 
 
+class _BatchedFakePredictor:
+    """Linear toy dynamics that also accepts a candidate batch.
+
+    Single: ``(N, D) + (A,) -> (D,)``; batched: ``(S, N, D) + (S, A) -> (S, 1, D)``
+    (one "patch token" per frame, matching ``tokens_per_frame == 1``).
+    """
+
+    supports_batch = True
+
+    def __call__(self, context: Any, action: Any) -> Any:
+        if context.ndim == 3:
+            return (context[:, -1] + action).unsqueeze(1)
+        return context[-1] + action
+
+
+def test_batched_candidate_energies_match_loop() -> None:
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(0)
+    ctx0 = torch.randn(2, 4)
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=4),
+        encoder=_FakeEncoder(ctx0),
+        predictor=_BatchedFakePredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    goal = torch.randn(4)
+    seqs = torch.randn(5, 3, 4)  # S=5 candidates, H=3, A=4
+
+    batched = engine._rollout_energy_batched(state, seqs, goal)
+    looped = torch.stack([engine._rollout_energy(state, seqs[i], goal) for i in range(5)])
+    assert tuple(batched.shape) == (5,)
+    assert torch.allclose(batched, looped, atol=1e-5)
+
+
+def test_plan_dispatches_to_batched_path() -> None:
+    torch = pytest.importorskip("torch")
+
+    class _CountingPredictor(_BatchedFakePredictor):
+        calls: ClassVar[list[int]] = []
+
+        def __call__(self, context: Any, action: Any) -> Any:
+            self.calls.append(int(context.shape[0]) if context.ndim == 3 else 1)
+            return super().__call__(context, action)
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=4, plan_samples=6, plan_elites=2, plan_iters=1),
+        encoder=_FakeEncoder(torch.zeros(2, 4)),
+        predictor=_CountingPredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    engine.plan(state, torch.zeros(4), horizon=2)
+    # One batched forward of all 6 candidates per rollout timestep (H=2),
+    # not 6 x 2 single forwards.
+    assert _CountingPredictor.calls == [6, 6]
+
+
+def test_warm_start_shifts_previous_plan() -> None:
+    torch = pytest.importorskip("torch")
+    engine = _toy_engine(torch.zeros(2, 4), context_frames=8)
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    goal = torch.zeros(4)
+
+    prev = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    engine._plan_mean[state.session_id] = prev
+    mean = engine._warm_start_mean(state, goal, horizon=3)
+    # Receding horizon: drop the executed first action, repeat the last row.
+    assert torch.equal(mean, torch.cat([prev[1:], prev[-1:]], dim=0))
+    # Horizon mismatch and unknown sessions fall back to the zero mean.
+    assert torch.all(engine._warm_start_mean(state, goal, horizon=5) == 0)
+
+    torch.manual_seed(0)
+    engine.plan(state, goal, horizon=3)
+    assert state.session_id in engine._plan_mean  # solution recorded for reuse
+
+    engine._config.plan_warm_start = False
+    assert torch.all(engine._warm_start_mean(state, goal, horizon=3) == 0)
+
+
+def test_sdpa_dtype_harmonizer_casts_qk_to_v() -> None:
+    torch = pytest.importorskip("torch")
+    import torch.nn.functional as F  # noqa: N812
+
+    from mirage.models.vjepa2_ac import _sdpa_dtype_harmonizer
+
+    q = torch.randn(1, 2, 3, 4, dtype=torch.float32)
+    k = torch.randn(1, 2, 3, 4, dtype=torch.float32)
+    v = torch.randn(1, 2, 3, 4, dtype=torch.bfloat16)
+    with _sdpa_dtype_harmonizer():
+        out = F.scaled_dot_product_attention(q, k, v)
+    assert out.dtype == torch.bfloat16
+    # The patch is scoped: outside the guard the original op (and its dtype
+    # strictness) is restored.
+    with pytest.raises(Exception, match=r"dtype|scalar type"):
+        F.scaled_dot_product_attention(q, k, v)
+
+
 def test_plan_reduces_energy_toward_goal() -> None:
     torch = pytest.importorskip("torch")
     torch.manual_seed(0)
@@ -270,3 +483,206 @@ def test_plan_reduces_energy_toward_goal() -> None:
     action = engine.plan(state, goal, horizon=3)
     assert len(action.values) == 4
     assert action.space == "ee_delta"
+
+
+# --- KV/latent reuse (ADR-0009): engine-side seam, step() path ---
+
+
+class _KVCacheFakePredictor:
+    """Toy dynamics for the KV-cache seam: next frame = sum(live frames) + action.
+
+    Implements both the full-context call (the parity baseline) and the
+    incremental ``_CachedPredictor`` methods. Sensitive to exactly which
+    frames are "live" — dropping, duplicating, or staling a frame changes the
+    sum, so a bookkeeping bug (bad eviction, cache leaking across a branch)
+    produces a numerically WRONG result, not merely a slower one.
+
+    ``step_cached`` predicts only (does not mutate ``cache``); the engine's
+    layer-normed block comes back via ``append_frame`` — mirrors the real
+    contract even though this toy predictor has no norm of its own.
+    """
+
+    supports_kv_cache = True
+
+    def __init__(self) -> None:
+        self.init_cache_calls = 0
+        self.step_cached_calls = 0
+        self.append_frame_calls = 0
+        self.evict_calls = 0
+
+    def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        return context.sum(dim=0) + action
+
+    def init_cache(self, context: torch.Tensor) -> list[torch.Tensor]:
+        self.init_cache_calls += 1
+        return list(context.unbind(0))
+
+    def step_cached(
+        self, cache: list[torch.Tensor], action: torch.Tensor
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        import torch
+
+        self.step_cached_calls += 1
+        total = torch.stack(cache, dim=0).sum(dim=0) if cache else torch.zeros_like(action)
+        next_frame = total + action
+        return next_frame, cache
+
+    def append_frame(
+        self, cache: list[torch.Tensor], normed_block: torch.Tensor
+    ) -> list[torch.Tensor]:
+        self.append_frame_calls += 1
+        return [*cache, *normed_block.unbind(0)]
+
+    def evict(self, cache: list[torch.Tensor], sink_frames: int = 0) -> list[torch.Tensor]:
+        self.evict_calls += 1
+        return cache[:sink_frames] + cache[sink_frames + 1 :]
+
+
+def test_kv_cache_matches_full_recompute_with_slide_eviction() -> None:
+    """Cached step() must match full-recompute step() exactly, including
+    after the window fills and starts evicting, under the opt-in "slide"
+    policy — the case a naive append-only cache would get wrong (ADR-0009's
+    RoPE-shift discussion); this fake's toy dynamics make a wrong eviction
+    numerically visible. (The real predictor's evict is NOT exact — ADR-0009
+    Finding 2 — this only proves the engine calls append/evict correctly
+    given a predictor whose evict happens to be, like this fake's trivial
+    list-drop.)
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+
+    cached_pred = _KVCacheFakePredictor()
+    cached_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(
+            action_dim=4, context_frames=3, use_kv_cache=True, kv_evict_policy="slide"
+        ),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=cached_pred,
+    )
+    full_pred = _KVCacheFakePredictor()
+    full_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=full_pred,
+    )
+    cached_state = cached_engine.reset(ConditioningInput(), RolloutParams())
+    full_state = full_engine.reset(ConditioningInput(), RolloutParams())
+
+    torch.manual_seed(1)
+    for _ in range(6):  # crosses the context_frames=3 cap (window fills at step 1)
+        action = Action(values=torch.randn(4).tolist())
+        cached_state, _ = cached_engine.step(cached_state, action)
+        full_state, _ = full_engine.step(full_state, action)
+        assert torch.allclose(cached_state.context, full_state.context)
+
+    # Real incremental work happened, not a silent full-recompute every call.
+    assert cached_pred.step_cached_calls == 6
+    assert cached_pred.init_cache_calls == 1  # bootstrapped once, then reused
+    assert cached_pred.append_frame_calls == 6  # every predicted frame durably cached
+    assert cached_pred.evict_calls == 5  # every step once the window is full
+
+
+def test_kv_cache_reinit_policy_never_evicts_but_degrades_gracefully() -> None:
+    """The default "reinit" policy must still match full-recompute exactly
+    (dropping a cache and rebuilding it via init_cache can never be wrong),
+    but — honestly — buys no incremental savings once a strictly-capped
+    window saturates: every step past the growth phase uses the ordinary
+    full forward, same cost as use_kv_cache=False. This is the graceful-
+    degradation behavior ADR-0009 §"Revisit if" settles on in place of the
+    unsound "slide" default; this test pins the exact call-count evidence
+    for it so a future change can't silently regress it back to unsound.
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+
+    cached_pred = _KVCacheFakePredictor()
+    cached_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=True),  # reinit is default
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=cached_pred,
+    )
+    full_pred = _KVCacheFakePredictor()
+    full_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=full_pred,
+    )
+    cached_state = cached_engine.reset(ConditioningInput(), RolloutParams())
+    full_state = full_engine.reset(ConditioningInput(), RolloutParams())
+
+    torch.manual_seed(1)
+    for _ in range(6):
+        action = Action(values=torch.randn(4).tolist())
+        cached_state, _ = cached_engine.step(cached_state, action)
+        full_state, _ = full_engine.step(full_state, action)
+        assert torch.allclose(cached_state.context, full_state.context)
+
+    assert cached_engine._config.kv_evict_policy == "reinit"
+    assert cached_pred.evict_calls == 0  # never calls the unsound operation
+    # step 1: window not yet full (2 < 3) -> cheap growth, cache built + kept.
+    # step 2: window full on entry, but the cache built in step 1 is still
+    # valid for this one prediction -> reused, then dropped afterward (no
+    # append -- there's nowhere sound to put the appended frame).
+    # steps 3-6: no cache survives from the previous step -> direct ordinary
+    # full forwards (the engine avoids paying init_cache() just to discard it).
+    # Net: 1 bootstrap, one cheap reuse (step 2), then graceful full-forward
+    # fallback at exactly the same cost as use_kv_cache=False.
+    assert cached_pred.init_cache_calls == 1
+    assert cached_pred.step_cached_calls == 2
+    assert cached_pred.append_frame_calls == 1  # only the one cheap growth step
+
+
+def test_kv_cache_does_not_leak_across_branches() -> None:
+    """A rollout that restarts from the SAME state under the SAME session —
+    exactly what CEM's sequential ``_rollout_energy`` does per candidate —
+    must not let a later candidate silently resume an earlier candidate's
+    cache. Without the context-sync check this fake's sum-of-frames output
+    would come out wrong for the second candidate; compared against a
+    caching-disabled reference to prove it doesn't.
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+    goal = torch.randn(4)
+    seq_a = torch.randn(3, 4)
+    seq_b = torch.randn(3, 4)
+
+    cached = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=True),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_KVCacheFakePredictor(),
+    )
+    state = cached.reset(ConditioningInput(), RolloutParams())
+    energy_a = cached._rollout_energy(state, seq_a, goal)
+    energy_b = cached._rollout_energy(state, seq_b, goal)  # same `state` — a branch
+
+    reference = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_KVCacheFakePredictor(),
+    )
+    ref_state = reference.reset(ConditioningInput(), RolloutParams())
+    ref_a = reference._rollout_energy(ref_state, seq_a, goal)
+    ref_b = reference._rollout_energy(ref_state, seq_b, goal)
+
+    assert torch.allclose(energy_a, ref_a)
+    assert torch.allclose(energy_b, ref_b)
+
+
+def test_kv_cache_disabled_when_predictor_lacks_support() -> None:
+    """A predictor without ``supports_kv_cache`` keeps using the existing
+    full-recompute path — no behavior change for today's real predictor
+    until the GPU-verified cache wrapper lands (ADR-0009)."""
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.zeros(2, 4)
+    engine = _toy_engine(ctx0, context_frames=4)  # _FakePredictor: no cache support
+    assert getattr(engine._predictor, "supports_kv_cache", False) is False
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    nxt, _ = engine.step(state, Action(values=[1.0, 1.0, 1.0, 1.0]))
+    assert engine._kv_cache == {}  # never touched
+    assert torch.allclose(nxt.context[-1], state.context[-1] + torch.ones(4))
