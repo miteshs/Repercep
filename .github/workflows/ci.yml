@@ -15,6 +15,11 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
+          # The repo's flow is `uv venv` + `uv pip install`, not `uv sync` —
+          # uv.lock is deliberately gitignored (see .gitignore), so the
+          # default cache key (which globs for uv.lock) never matches. Key
+          # on pyproject.toml instead.
+          cache-dependency-glob: "pyproject.toml"
 
       - name: Create venv
         run: uv venv --python 3.11 .venv
