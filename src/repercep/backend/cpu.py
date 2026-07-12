@@ -37,6 +37,7 @@ unset, the BF16 SDPA->oneDNN path is the floor.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -133,21 +134,24 @@ def _detect_dtypes_and_features() -> tuple[frozenset[DType], dict[str, bool]]:
     return frozenset(dtypes), features
 
 
+def _affinity_cpu_count() -> int | None:
+    """``os.sched_getaffinity`` is Linux-only (absent from the darwin/win32
+    stdlib stubs, not just unavailable at runtime) — branch on platform so
+    mypy narrows the attribute away instead of flagging it as missing."""
+    if sys.platform == "linux":
+        return len(os.sched_getaffinity(0))
+    return None
+
+
 def _detect_topology() -> tuple[int, int]:
     """Return (physical cores, logical cores) — used to size OMP_NUM_THREADS."""
     info = _read_cpuinfo()
     siblings = int(info.get("siblings", "0") or 0)
     cores = int(info.get("cpu cores", "0") or 0)
     if cores <= 0 or siblings <= 0:
-        try:
-            logical = len(os.sched_getaffinity(0))
-        except AttributeError:
-            logical = os.cpu_count() or 1
+        logical = _affinity_cpu_count() or os.cpu_count() or 1
         return max(logical // 2, 1), logical
-    try:
-        logical = len(os.sched_getaffinity(0))
-    except AttributeError:
-        logical = os.cpu_count() or siblings
+    logical = _affinity_cpu_count() or os.cpu_count() or siblings
     sockets = max(logical // siblings, 1)
     return cores * sockets, logical
 

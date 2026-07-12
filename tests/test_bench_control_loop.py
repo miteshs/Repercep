@@ -11,8 +11,12 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import torch
 
 _SRC = Path(__file__).resolve().parent.parent / "scripts" / "bench_control_loop.py"
 _spec = importlib.util.spec_from_file_location("bench_control_loop_mod", _SRC)
@@ -80,16 +84,18 @@ def test_bench_control_loop_chunked_engine_forces_real_plan_call() -> None:
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine
-    from test_lingbot_va import _FakePipeline, _NamedBackend  # type: ignore[import-not-found]
+    from test_lingbot_va import _FakePipeline, _NamedBackend
 
-    class _CountingPipeline(_FakePipeline):  # type: ignore[misc]
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+    class _CountingPipeline(_FakePipeline):
+        def __init__(self, chunk: int = 4, action_dim: int = 30, dim: int = 8) -> None:
+            super().__init__(chunk=chunk, action_dim=action_dim, dim=dim)
             self.infer_chunk_calls = 0
 
-        def infer_chunk(self, *args: object, **kwargs: object) -> object:
+        def infer_chunk(
+            self, session_id: str, frame_st_id: int, init_latent: torch.Tensor | None
+        ) -> tuple[torch.Tensor, torch.Tensor]:
             self.infer_chunk_calls += 1
-            return super().infer_chunk(*args, **kwargs)  # type: ignore[misc]
+            return super().infer_chunk(session_id, frame_st_id, init_latent)
 
     pipeline = _CountingPipeline(chunk=2, action_dim=3, dim=4)
     engine = LingBotVAEngine(

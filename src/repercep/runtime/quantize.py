@@ -185,6 +185,28 @@ def replace_linears_with_quantized(
 # whole point of the lazy-torch pattern the rest of this file follows.
 # PEP 562 ``__getattr__`` lets us hand out the class on demand while
 # keeping the cold import path torch-free.
+#
+# A ``TYPE_CHECKING``-only mirror of the class's public shape below gives
+# mypy a real module-level name to resolve `from ...quantize import
+# QuantizedLinearModule` against, instead of falling back to
+# ``__getattr__``'s ``object`` return type. Never executes at runtime (the
+# whole point is to keep torch out of the cold-import path), so it costs
+# nothing and can't drift silently — a shape change to the real nested
+# class below must be mirrored here or callers lose type information again.
+if TYPE_CHECKING:
+
+    class QuantizedLinearModule(torch.nn.Module):
+        qweight: torch.Tensor
+        scale: torch.Tensor
+        bias: torch.nn.Parameter | None
+        out_features: int
+        in_features: int
+
+        def __init__(self, q: QuantizedLinear) -> None: ...
+        @classmethod
+        def from_linear(cls, linear: torch.nn.Linear) -> QuantizedLinearModule: ...
+        def forward(self, x: torch.Tensor) -> torch.Tensor: ...
+
 
 _QuantizedLinearModuleCls: type | None = None
 

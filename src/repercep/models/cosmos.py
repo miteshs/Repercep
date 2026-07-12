@@ -171,9 +171,11 @@ class CosmosEngine:
 
         dtype = getattr(torch, self._config.dtype)
         device = self._backend.torch_device(self._config.device_index)
-        # diffusers ships only partial type info, so `from_pretrained` reads as
-        # an untyped call under mypy --strict; the call itself is well-defined.
-        pipe = CosmosTextToWorldPipeline.from_pretrained(  # type: ignore[no-untyped-call]
+        # diffusers is optional ([models] extra) and unresolved in the base
+        # mypy environment, so this reads as Any rather than an untyped call —
+        # no ignore needed here. If a future stub package makes diffusers
+        # fully typed, this may need `type: ignore[no-untyped-call]` again.
+        pipe = CosmosTextToWorldPipeline.from_pretrained(
             self._config.repo_id, torch_dtype=dtype
         )
         pipe.to(device)
@@ -326,7 +328,7 @@ def _disable_cosmos_guardrail() -> None:
         def check_video_safety(self, video: Any) -> Any:
             return video
 
-    mod.CosmosSafetyChecker = _DisabledGuardrail  # type: ignore[attr-defined]
+    mod.CosmosSafetyChecker = _DisabledGuardrail
 
 
 def _ensure_guardrail_assets() -> None:

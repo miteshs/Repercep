@@ -144,12 +144,14 @@ class WanEngine:
         vae_dtype = getattr(torch, self._config.vae_dtype)
         device = self._backend.torch_device(self._config.device_index)
 
-        # diffusers ships only partial type info: from_pretrained reads as an
-        # untyped call under mypy --strict. The signature is well-defined.
-        vae = AutoencoderKLWan.from_pretrained(  # type: ignore[no-untyped-call]
+        # diffusers is optional ([models] extra) and unresolved in the base
+        # mypy environment, so these read as Any rather than untyped calls —
+        # no ignore needed here. If a future stub package makes diffusers
+        # fully typed, these may need `type: ignore[no-untyped-call]` again.
+        vae = AutoencoderKLWan.from_pretrained(
             self._config.repo_id, subfolder="vae", torch_dtype=vae_dtype
         )
-        pipe = WanPipeline.from_pretrained(  # type: ignore[no-untyped-call]
+        pipe = WanPipeline.from_pretrained(
             self._config.repo_id, vae=vae, torch_dtype=compute_dtype
         )
         pipe.to(device)

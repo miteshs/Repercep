@@ -31,8 +31,15 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import types
+    from collections.abc import Callable
+
+    import numpy as np
 
 # ---------------------------------------------------------------------------
 # Optional-dep gates — keep import time cheap on CPU-only / minimal hosts.
@@ -65,7 +72,7 @@ _VQ_SRC = _SCRIPTS / "verify_quality.py"
 _EVAL_SRC = _SCRIPTS / "eval_cpu_quality.py"
 
 
-def _load_script(name: str, src: Path):
+def _load_script(name: str, src: Path) -> types.ModuleType:
     spec = importlib.util.spec_from_file_location(name, src)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -116,7 +123,7 @@ def synthetic_video_pair(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path
 # ---------------------------------------------------------------------------
 
 
-def _mse_psnr(a, b):
+def _mse_psnr(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Vectorised MSE / PSNR per frame — identical formulas to verify_quality."""
     import numpy as np
 
@@ -133,7 +140,7 @@ def _mse_psnr(a, b):
     return mse_per_frame, psnr_per_frame
 
 
-def _lpips_per_frame_on_device(a, b, device: str) -> list[float]:
+def _lpips_per_frame_on_device(a: np.ndarray, b: np.ndarray, device: str) -> list[float]:
     """Run LPIPS(alex) per-frame, returning the scalar distance list."""
     import lpips
     import torch
@@ -195,7 +202,7 @@ def test_mse_psnr_are_bit_identical(synthetic_video_pair: tuple[Path, Path]) -> 
 @_REQUIRES_CUDA
 def test_lpips_cpu_cuda_parity(
     synthetic_video_pair: tuple[Path, Path],
-    record_property,
+    record_property: Callable[[str, object], None],
 ) -> None:
     """LPIPS(alex) forward should match CPU vs CUDA to within ~1e-4.
 

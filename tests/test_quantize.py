@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 
@@ -240,7 +242,8 @@ def test_replace_linears_with_quantized_swaps_in_place() -> None:
             self.norm = torch.nn.LayerNorm(8)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:  # not exercised here
-            return self.dit(x)
+            result: torch.Tensor = self.dit(x)
+            return result
 
     m = Toy()
     n = replace_linears_with_quantized(m)
@@ -281,22 +284,38 @@ def test_replace_linears_with_quantized_filters_by_name() -> None:
     assert isinstance(m.dit[1], QuantizedLinearModule)
     # The VAE linear must be untouched — same instance type, same identity.
     assert isinstance(m.vae, torch.nn.Linear)
-    assert not isinstance(m.vae, QuantizedLinearModule)
+    # mypy statically infers m.vae as nn.Linear from Toy.__init__ and (correctly,
+    # for THIS run) concludes no object can be both Linear and QuantizedLinearModule
+    # — cast to sidestep that conclusion, since the whole point of the assertion
+    # is a *runtime* check that the swap didn't happen here.
+    assert not isinstance(cast("object", m.vae), QuantizedLinearModule)
 
 
 def test_replace_linears_preserves_bias_through_swap() -> None:
     """Bias on the original Linear shows up on the wrapper after swap."""
     import torch
 
-    from repercep.runtime.quantize import replace_linears_with_quantized
+    from repercep.runtime.quantize import (
+        QuantizedLinearModule,
+        replace_linears_with_quantized,
+    )
 
     m = torch.nn.Sequential(
         torch.nn.Linear(8, 16, bias=True),
         torch.nn.Linear(16, 4, bias=False),
     )
-    original_bias = m[0].bias.detach().clone()
+    # Sequential.__getitem__ types as the base nn.Module, whose __getattr__
+    # returns Tensor | Module for any name — chaining .bias off that union
+    # makes mypy try to call the Module branch too when .detach() follows.
+    # Cast through the concrete type at each point instead of trusting the
+    # Module fallback; the swap replaces the object at m[0], so the pre- and
+    # post-swap casts are deliberately different types, not the same handle.
+    pre_swap_bias = cast("torch.nn.Linear", m[0]).bias
+    assert pre_swap_bias is not None
+    original_bias = pre_swap_bias.detach().clone()
     n = replace_linears_with_quantized(m)
     assert n == 2
-    assert m[0].bias is not None
-    assert torch.equal(m[0].bias.detach(), original_bias)
-    assert m[1].bias is None
+    swapped = cast("QuantizedLinearModule", m[0])
+    assert swapped.bias is not None
+    assert torch.equal(swapped.bias.detach(), original_bias)
+    assert cast("QuantizedLinearModule", m[1]).bias is None

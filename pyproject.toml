@@ -127,7 +127,7 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_unreachable = true
 warn_redundant_casts = true
@@ -150,6 +150,10 @@ module = [
   "cosmos_guardrail.*",
   "nltk.*",
   "pytorchvideo.*",
+  # Optional GPU-quality-eval dependency (LPIPS perceptual metric), not in any
+  # packaged extra — installed ad hoc on a GPU box running the quality-parity
+  # tests. See tests/test_eval_quality_parity_gpu.py.
+  "lpips.*",
   # LingBot-VA research repo (Phase-1 dependency, GPU box only) + its imports.
   "wan_va.*",
   "einops.*",
