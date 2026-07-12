@@ -91,22 +91,23 @@ def main() -> int:
     print(f"[bench] step {step_s * 1000:.1f} ms/step  ({1 / step_s:.1f} steps/s)", flush=True)
 
     plans: dict[str, dict[str, float]] = {}
-    for H in [int(x) for x in args.plan_horizons.split(",")]:
+    for horizon in [int(x) for x in args.plan_horizons.split(",")]:
         gs, _ = engine.step(state, Action(values=torch.randn(7).tolist()))
         goal = gs.context[-engine._tokens_per_frame :]
         _sync()
         t = time.perf_counter()
-        engine.plan(state, goal, horizon=H)
+        engine.plan(state, goal, horizon=horizon)
         _sync()
         plan_s = time.perf_counter() - t
-        fwds = cfg.plan_samples * cfg.plan_iters * H
-        plans[str(H)] = {
+        fwds = cfg.plan_samples * cfg.plan_iters * horizon
+        plans[str(horizon)] = {
             "plan_seconds": round(plan_s, 3),
             "predictor_forwards": fwds,
             "ms_per_forward": round(plan_s / fwds * 1000, 2),
         }
         print(
-            f"[bench] plan H={H}: {plan_s:.2f}s ({fwds} fwds, {plan_s / fwds * 1000:.1f} ms/fwd)",
+            f"[bench] plan H={horizon}: "
+            f"{plan_s:.2f}s ({fwds} fwds, {plan_s / fwds * 1000:.1f} ms/fwd)",
             flush=True,
         )
 

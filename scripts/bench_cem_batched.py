@@ -60,10 +60,10 @@ def batched_plan_sequence(engine, state, goal, horizon, seed=0):
     — the only delta is the batch dimension over candidates.
     """
     cfg = engine._config
-    P = engine._tokens_per_frame
+    tokens_per_frame = engine._tokens_per_frame
     adim = cfg.action_dim
-    S, E, iters = cfg.plan_samples, cfg.plan_elites, cfg.plan_iters
-    keep = cfg.context_frames * P
+    n_samples, n_elites, iters = cfg.plan_samples, cfg.plan_elites, cfg.plan_iters
+    keep = cfg.context_frames * tokens_per_frame
     adapter = engine._predictor
     predictor = adapter._predictor
     cdtype = adapter._cdtype or state.context.dtype
@@ -78,24 +78,24 @@ def batched_plan_sequence(engine, state, goal, horizon, seed=0):
     _sync()
     t0 = time.perf_counter()
     for _ in range(iters):
-        noise = torch.randn(S, horizon, adim, generator=g, dtype=cdtype, device=dev)
+        noise = torch.randn(n_samples, horizon, adim, generator=g, dtype=cdtype, device=dev)
         seqs = mean.unsqueeze(0) + std.unsqueeze(0) * noise
-        ctx = base_ctx.unsqueeze(0).expand(S, -1, -1).contiguous()
+        ctx = base_ctx.unsqueeze(0).expand(n_samples, -1, -1).contiguous()
         with torch.inference_mode():
             for t in range(horizon):
-                n_frames = ctx.shape[1] // P
-                actions = ctx.new_zeros(S, n_frames, adim)
+                n_frames = ctx.shape[1] // tokens_per_frame
+                actions = ctx.new_zeros(n_samples, n_frames, adim)
                 actions[:, -1] = seqs[:, t]
                 states = torch.zeros_like(actions)
                 out = predictor(ctx, actions, states)
                 tokens = out if isinstance(out, torch.Tensor) else out.last_hidden_state
-                block = F.layer_norm(tokens[:, -P:], (tokens.shape[-1],))
+                block = F.layer_norm(tokens[:, -tokens_per_frame:], (tokens.shape[-1],))
                 ctx = torch.cat([ctx, block], dim=1)[:, -keep:]
-            terminal = ctx[:, -P:]
+            terminal = ctx[:, -tokens_per_frame:]
             energies = torch.linalg.vector_norm(
-                (terminal - goal_c.unsqueeze(0)).reshape(S, -1), dim=1
+                (terminal - goal_c.unsqueeze(0)).reshape(n_samples, -1), dim=1
             )
-        elite_idx = torch.topk(energies, E, largest=False).indices
+        elite_idx = torch.topk(energies, n_elites, largest=False).indices
         elite = seqs[elite_idx]
         mean = elite.mean(dim=0)
         std = elite.std(dim=0).clamp_min(1e-6)
@@ -119,7 +119,10 @@ def main() -> int:
     t = time.perf_counter()
     engine.load()
     _sync()
-    print(f"[opt] loaded in {time.perf_counter() - t:.1f}s  P={engine._tokens_per_frame}", flush=True)
+    print(
+        f"[opt] loaded in {time.perf_counter() - t:.1f}s  P={engine._tokens_per_frame}",
+        flush=True,
+    )
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     state = engine.reset(ConditioningInput(), RolloutParams(horizon=4))
@@ -131,32 +134,32 @@ def main() -> int:
         "cem": {"samples": cfg.plan_samples, "elites": cfg.plan_elites, "iters": cfg.plan_iters},
         "results": {},
     }
-    for H in [int(x) for x in args.horizons.split(",")]:
+    for horizon in [int(x) for x in args.horizons.split(",")]:
         gs, _ = engine.step(state, Action(values=torch.randn(7).tolist()))
         goal = gs.context[-engine._tokens_per_frame :]
 
         _sync()
         t = time.perf_counter()
-        seq_mean = engine._plan_sequence(state, goal, H)
+        seq_mean = engine._plan_sequence(state, goal, horizon)
         _sync()
         seq_s = time.perf_counter() - t
         e_seq = float(engine._rollout_energy(state, seq_mean, goal))
 
-        bat_mean, bat_s = batched_plan_sequence(engine, state, goal, H)
+        bat_mean, bat_s = batched_plan_sequence(engine, state, goal, horizon)
         e_bat = float(engine._rollout_energy(state, bat_mean.to(state.context.dtype), goal))
 
         speedup = seq_s / bat_s if bat_s else 0.0
-        out["results"][str(H)] = {
+        out["results"][str(horizon)] = {
             "sequential_s": round(seq_s, 3),
             "batched_s": round(bat_s, 3),
             "speedup": round(speedup, 1),
             "energy_sequential": round(e_seq, 3),
             "energy_batched": round(e_bat, 3),
-            "forwards_sequential": cfg.plan_samples * cfg.plan_iters * H,
-            "forwards_batched": cfg.plan_iters * H,
+            "forwards_sequential": cfg.plan_samples * cfg.plan_iters * horizon,
+            "forwards_batched": cfg.plan_iters * horizon,
         }
         print(
-            f"[opt] H={H}: seq {seq_s:.2f}s -> batched {bat_s:.2f}s = {speedup:.1f}x "
+            f"[opt] H={horizon}: seq {seq_s:.2f}s -> batched {bat_s:.2f}s = {speedup:.1f}x "
             f"| energy {e_seq:.2f} vs {e_bat:.2f}",
             flush=True,
         )
