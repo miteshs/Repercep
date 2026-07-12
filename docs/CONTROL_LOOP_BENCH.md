@@ -48,7 +48,7 @@ upcast; the bf16 path is the active optimization workstream).
 | closed-loop step latency (warm) | **70.8 ms** (14.1 steps/s) | **75.8 ms** (13.2 steps/s) |
 | planning-decisions/sec (H=4, 64×3 CEM, sequential fp32 baseline) | 0.018 (55.6 s/plan) | 0.015 (67.2 s/plan) |
 | planning-decisions/sec (H=4, candidate-batched, fp32) | 0.029 (35.1 s/plan, 1.6×) | 0.031 (32.1 s/plan, 2.1×) |
-| **planning-decisions/sec (H=4, candidate-batched + bf16)** | **0.106 (9.42 s/plan, 7.3×)** | *pending* |
+| **planning-decisions/sec (H=4, candidate-batched + bf16)** | **0.106 (9.42 s/plan, 7.3×)** | **0.093 (10.81 s/plan, 6.3×)** |
 | energy-evals/sec (H=4, batched fp32) | 5.5 | 6.0 |
 | session marginal HBM | ~3.4 GiB | ~3.7 GiB |
 | resident sessions/GPU (est.) | ~20 | **~50** |
@@ -61,8 +61,20 @@ sequential fp32 68.84 s → **+batching** 40.58 s (1.7×) → **+bf16** (parity
 exact to bf16 resolution) **9.42 s (7.3×)**. Warm-start (1-iter steady-state
 replan) reaches lower energy (30.25) than a cold 3-iter plan (45.0) at ⅓ the
 per-plan work, ≈3.1 s/replan estimated (not yet timed directly — see KV-reuse
-work below). MI300X pending; bf16 parity is architecture-general so the ROCm
-run is expected to land the same multiplier.
+work below).
+
+**MI300X companion run (2026-07-11, `docs/LEVERS_2026_07_H100.md` §"MI300X
+companion run"):** sequential fp32 (June baseline, reused) 68.44 s →
+**+batching** 29.77 s (2.3×) → **+bf16** (parity 0.0059 rel, bf16-resolution
+noise) **10.81 s (6.3×)** — bf16 parity is architecture-general as expected,
+though the batching/bf16 split of the total win differs by vendor (MI300X
+gets more from batching alone, less incremental from bf16, than H100).
+**One real discrepancy, not smoothed over:** MI300X's warm-start energy
+ordering did *not* reproduce H100's — cold-1-iter (50.25) beat warm-1-iter
+(58.0) here, the opposite of H100 (warm 30.25 < cold 40.25). Same default
+seed, different box; treat as an open question (RNG-sensitive vs. a real
+per-vendor effect) rather than a confirmed cross-silicon finding, pending a
+multi-seed rerun.
 
 The remaining gap to sub-second cold / ~100 ms-class warm planning is
 KV/latent reuse across rollout steps and CEM candidates — designed and
@@ -79,14 +91,31 @@ the real weights through the Mirage seam (`docs/LINGBOT_VA_SEAM_VERIFY.md` has
 the raw imagination-mode rollout this corroborates). "Step" for a chunked
 video-action model = one chunk (4 latent frames, 32 actions).
 
-| metric | H100 (reference stack) | H100 (Mirage seam, shared harness) | MI300X |
+| metric | H100 (reference stack) | H100 (Mirage seam, shared harness) | MI300X (Mirage seam, shared harness) |
 |---|---|---|---|
-| chunk latency (warm) | 1384.7 ms (CFG 5.0, SDPA) | **754.6 ms** (1.3/s) | *pending (RunPod stock)* |
-| planning-decisions/sec (1 chunk = 1 decision) | 0.72 (derived) | **1.09** (0.92 s/plan, measured) | *pending* |
-| energy-evals/sec | n/a (policy regime) | n/a | — |
-| one-time weight load | — | 9.48 GiB | *pending* |
-| session marginal HBM | 38.8 GiB (undifferentiated) | **6.01 GiB** | *pending* |
-| resident sessions/GPU | **1** (est., undifferentiated) | **11** (measured: `(79.2 − 9.48) // 6.01`) | *pending* |
+| chunk latency (warm) | 1384.7 ms (CFG 5.0, SDPA) | **754.6 ms** (1.3/s) | **1198.1 ms** (0.8/s) |
+| planning-decisions/sec (1 chunk = 1 decision) | 0.72 (derived) | **1.09** (0.92 s/plan, measured) | **0.77** (1.29 s/plan, measured) |
+| energy-evals/sec | n/a (policy regime) | n/a | n/a |
+| one-time weight load | — | 9.48 GiB | 9.48 GiB |
+| session marginal HBM | 38.8 GiB (undifferentiated) | **6.01 GiB** | **6.05 GiB** |
+| resident sessions/GPU | **1** (est., undifferentiated) | **11** (measured: `(79.2 − 9.48) // 6.01`) | **30** (measured: `(192.0 − 9.48) // 6.05`) |
+
+MI300X run (2026-07-11/12, RunPod, torch 2.9.1+rocm6.3, `scripts/bench_control_loop.py
+--engine lingbot-va --backend rocm`): per-session HBM cost is nearly identical
+to H100 (6.05 vs 6.01 GiB) — the 30-vs-11 resident-sessions gap is a capacity
+story (MI300X's 192 GiB vs H100's 80 GiB), not a per-session efficiency win.
+Chunk latency is 1.59× slower than the H100 seam number, consistent with the
+MI300X-vs-H100 gap seen elsewhere in this doc. **Caveat:** `reset_seconds`
+measured 76.5 s on this run (vs H100's sub-second reset) — almost certainly
+ROCm cold first-forward kernel compilation (§1 "Warm vs cold": ROCm first-
+forward compiles run ~3× warm cost elsewhere in this repo's numbers; this one
+is larger, plausibly compiling the full VAE+T5+transformer pipeline for the
+first time), not a steady-state cost — reported as measured, not corrected,
+pending a warm-reset rerun to isolate it. Verbatim provenance:
+
+```json
+{"mode": "control_loop_bench_v0", "model": "lingbot-va-2", "device": "rocm:0", "dtype": "bfloat16", "load_seconds": 67.1, "reset_seconds": 76.532, "step_ms_warm": 1198.07, "steps_per_sec": 0.8, "plan_seconds": 1.291, "planning_decisions_per_sec": 0.7747, "plan_horizon": 4, "cem": null, "energy_evals_per_plan": null, "energy_evals_per_sec": null, "weights_gib": 9.48, "session_marginal_gib": 6.05, "hbm_total_gib": 192.0, "resident_sessions_per_gpu": 30, "step_iters": 20, "plan_calls": 1, "state_carryover": true}
+```
 
 The seam column isn't "faster because different work" — same imagination-mode
 rollout, matching action-magnitude distribution (`LINGBOT_VA_SEAM_VERIFY.md`
@@ -133,11 +162,11 @@ project exists to fill — roughly a 10× window on this model.**
 
 ## 5. Open items
 
-- MI300X LingBot-VA + V-JEPA rows: RunPod stock flapped fully unavailable
-  most of 2026-07-11, then returned same day — a run against the existing
-  scripts (this section's rows do not yet reflect it; check the session's
-  handoff doc for the latest MI300X numbers before assuming this row is
-  current).
+- ~~MI300X LingBot-VA + V-JEPA rows~~ — done 2026-07-11/12 (LingBot-VA row
+  above; V-JEPA row + ladder in `docs/LEVERS_2026_07_H100.md` §"MI300X
+  companion run"). One open thread from that run: the MI300X warm-start
+  energy ordering did not reproduce H100's (see that doc) — needs a
+  multi-seed rerun before treating either ordering as settled.
 - V-JEPA rows re-measured on the batched+bf16 path (done —
   `docs/LEVERS_2026_07_H100.md`, 7.3x combined) and on KV-reuse
   (design done — `docs/adr/0009-kv-latent-reuse.md`; real-predictor GPU-verify
