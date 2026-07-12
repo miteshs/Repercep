@@ -27,7 +27,8 @@ import uuid
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import anyio
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -67,6 +68,14 @@ _DEFAULT_SCHEDULER_CAPACITY = 64
 # at a time and the streaming handler drains continuously, so a small bound
 # is enough; backpressure here would only fire if a client TCP-stalls.
 _DEFAULT_FRAME_QUEUE_DEPTH = 64
+
+# Concurrent /v2/world/session connections before a new one is refused. Each
+# open session holds server-side engine state (e.g. a KV-cache entry) for
+# its lifetime, so this is a memory bound, not just a fairness knob.
+_DEFAULT_MAX_INTERACTIVE_SESSIONS = 16
+
+# Close a /v2/world/session connection that sends nothing for this long.
+_DEFAULT_SESSION_IDLE_TIMEOUT_S = 300.0
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +157,9 @@ def create_app(
     interactive_engine: InteractiveWorldModel | None = None,
     scheduler_capacity: int = _DEFAULT_SCHEDULER_CAPACITY,
     frame_queue_depth: int = _DEFAULT_FRAME_QUEUE_DEPTH,
+    max_sessions: int = _DEFAULT_MAX_INTERACTIVE_SESSIONS,
+    session_idle_timeout_s: float = _DEFAULT_SESSION_IDLE_TIMEOUT_S,
+    api_token: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI application.
 
@@ -161,9 +173,31 @@ def create_app(
             ``submit`` raises ``QueueFull`` (surfaces as HTTP 503).
         frame_queue_depth: per-request frame channel depth. Backpressure
             within the router fires when a client TCP-stalls beyond this.
+        max_sessions: concurrent ``/v2/world/session`` connections before a
+            new one is refused (session capacity, not the v2 generate path's
+            ``scheduler_capacity``). Each open session holds server-side
+            engine state (KV cache, etc.) for its lifetime.
+        session_idle_timeout_s: close a ``/v2/world/session`` connection that
+            sends nothing (no ``ResetRequest``, no ``Action``) for this long.
+            Bounds how long a client that connects and goes silent can hold a
+            session slot and its underlying engine state.
+        api_token: when set, require ``Authorization: Bearer <api_token>`` on
+            every HTTP endpoint except ``/health``, and on the
+            ``/v2/world/session`` WebSocket (header or ``?token=`` query
+            param, checked before ``accept()``). ``None`` (default) disables
+            auth entirely — existing callers are unaffected.
     """
     active_engine: WorldModelEngine = engine if engine is not None else StubEngine()
     active_interactive = interactive_engine
+    active_sessions = 0
+
+    def _require_api_token(authorization: Annotated[str | None, Header()] = None) -> None:
+        if api_token is None:
+            return
+        if authorization != f"Bearer {api_token}":
+            raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+
+    _auth = [Depends(_require_api_token)]
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -199,11 +233,11 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/v1/info")
+    @app.get("/v1/info", dependencies=_auth)
     def info() -> EngineInfo:
         return active_engine.info()
 
-    @app.post("/v1/generate/stream")
+    @app.post("/v1/generate/stream", dependencies=_auth)
     def generate_stream(request: GenerationRequest) -> StreamingResponse:
         """Stream frames as newline-delimited JSON ``FrameChunk`` records.
 
@@ -230,7 +264,7 @@ def create_app(
     # v2 (Rust-router path)
     # -----------------------------------------------------------------------
 
-    @app.post("/v2/generate/stream")
+    @app.post("/v2/generate/stream", dependencies=_auth)
     async def generate_stream_v2(
         body: Annotated[V2GenerationRequest, Field()],
     ) -> StreamingResponse:
@@ -277,7 +311,7 @@ def create_app(
 
         return StreamingResponse(body_iter(), media_type="application/x-ndjson")
 
-    @app.post("/v2/generate/{request_id}/cancel")
+    @app.post("/v2/generate/{request_id}/cancel", dependencies=_auth)
     async def cancel_v2(request_id: str) -> dict[str, str]:
         """Cancel an in-flight v2 request. 404 if the id is unknown."""
         state: _V2State = app.state.v2
@@ -290,7 +324,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"status": "cancelled", "request_id": request_id}
 
-    @app.get("/v2/generate/{request_id}/state")
+    @app.get("/v2/generate/{request_id}/state", dependencies=_auth)
     def state_v2(request_id: str) -> dict[str, str | None]:
         """Look up the router's current state for a request. ``None`` if unknown."""
         state: _V2State = app.state.v2
@@ -310,36 +344,98 @@ def create_app(
         State persists for the life of the connection. Engine calls run in a
         threadpool so the event loop stays free — the same rationale as the v2
         driver thread. See ADR-0008.
+
+        Hardened for a design partner's first hour, not just the happy path:
+        an optional bearer token (checked before ``accept()``, so an
+        unauthenticated client never gets a live connection), a cap on
+        concurrent sessions (each holds server-side engine state for its
+        lifetime), an idle timeout (bounds how long a silent-but-connected
+        client can hold a slot), and a release call on every exit path once
+        a session has been opened (see :meth:`release` below).
         """
+        nonlocal active_sessions
+
+        if api_token is not None:
+            supplied = ws.query_params.get("token")
+            if supplied is None:
+                auth_header = ws.headers.get("authorization", "")
+                if auth_header.startswith("Bearer "):
+                    supplied = auth_header.removeprefix("Bearer ")
+            if supplied != api_token:
+                await ws.close(code=1008)
+                return
+
         await ws.accept()
         engine = active_interactive
         if engine is None:
             await ws.send_json({"error": "no interactive engine configured"})
             await ws.close(code=1008)
             return
+
+        if active_sessions >= max_sessions:
+            await ws.send_json({"error": "session capacity reached"})
+            await ws.close(code=1013)
+            return
+        active_sessions += 1
+
+        # Tracked separately from the loop-local `state` (kept strictly
+        # WorldState, matching engine.step/reset's Protocol signatures) so
+        # the finally block can release whatever was last reached without
+        # widening `state` itself to `WorldState | None` throughout the loop.
+        opened_state: WorldState | None = None
         try:
-            reset = ResetRequest.model_validate_json(await ws.receive_text())
-        except ValidationError:
-            await ws.send_json({"error": "first message must be a ResetRequest"})
-            await ws.close(code=1008)
-            return
-        except WebSocketDisconnect:
-            return
-        state: WorldState = await run_in_threadpool(
-            engine.reset, reset.conditioning, reset.params
-        )
-        await ws.send_text(LatentStep(step_index=0).model_dump_json())
-        try:
-            while True:
-                raw = await ws.receive_text()
-                try:
-                    action = Action.model_validate_json(raw)
-                except ValidationError:
-                    await ws.send_json({"error": "invalid action"})
-                    continue
-                state, latent_step = await run_in_threadpool(engine.step, state, action)
-                await ws.send_text(latent_step.model_dump_json())
-        except WebSocketDisconnect:
-            return
+            try:
+                reset_raw = await asyncio.wait_for(
+                    ws.receive_text(), timeout=session_idle_timeout_s
+                )
+            except TimeoutError:
+                await ws.close(code=1001)
+                return
+            except WebSocketDisconnect:
+                return
+            try:
+                reset = ResetRequest.model_validate_json(reset_raw)
+            except ValidationError:
+                await ws.send_json({"error": "first message must be a ResetRequest"})
+                await ws.close(code=1008)
+                return
+
+            state = await run_in_threadpool(engine.reset, reset.conditioning, reset.params)
+            opened_state = state
+            await ws.send_text(LatentStep(step_index=0).model_dump_json())
+            try:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(
+                            ws.receive_text(), timeout=session_idle_timeout_s
+                        )
+                    except TimeoutError:
+                        await ws.close(code=1001)
+                        return
+                    try:
+                        action = Action.model_validate_json(raw)
+                    except ValidationError:
+                        await ws.send_json({"error": "invalid action"})
+                        continue
+                    state, latent_step = await run_in_threadpool(engine.step, state, action)
+                    opened_state = state
+                    await ws.send_text(latent_step.model_dump_json())
+            except WebSocketDisconnect:
+                return
+        finally:
+            active_sessions -= 1
+            if opened_state is not None:
+                release = getattr(engine, "release", None)
+                if release is not None:
+                    # Shielded: a disconnecting client cancels this handler's
+                    # task (confirmed via a test client that tears down its
+                    # side eagerly — some real ASGI servers do this too on an
+                    # abrupt close, not just a clean one), and an unshielded
+                    # await here gets a CancelledError before release() ever
+                    # runs, silently reintroducing the leak this exists to
+                    # fix. Shielding lets this one cleanup call finish even
+                    # though the surrounding task is already being torn down.
+                    with anyio.CancelScope(shield=True):
+                        await run_in_threadpool(release, opened_state)
 
     return app
