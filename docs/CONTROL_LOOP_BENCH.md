@@ -46,26 +46,29 @@ upcast; the bf16 path is the active optimization workstream).
 | metric | H100 | MI300X |
 |---|---|---|
 | closed-loop step latency (warm) | **70.8 ms** (14.1 steps/s) | **75.8 ms** (13.2 steps/s) |
-| planning-decisions/sec (H=4, 64×3 CEM, sequential) | 0.018 (55.6 s/plan) | 0.015 (67.2 s/plan) |
-| planning-decisions/sec (H=4, candidate-batched) | 0.029 (35.1 s/plan, 1.6×) | 0.031 (32.1 s/plan, 2.1×) |
-| energy-evals/sec (H=4, batched) | 5.5 | 6.0 |
+| planning-decisions/sec (H=4, 64×3 CEM, sequential fp32 baseline) | 0.018 (55.6 s/plan) | 0.015 (67.2 s/plan) |
+| planning-decisions/sec (H=4, candidate-batched, fp32) | 0.029 (35.1 s/plan, 1.6×) | 0.031 (32.1 s/plan, 2.1×) |
+| **planning-decisions/sec (H=4, candidate-batched + bf16)** | **0.106 (9.42 s/plan, 7.3×)** | *pending* |
+| energy-evals/sec (H=4, batched fp32) | 5.5 | 6.0 |
 | session marginal HBM | ~3.4 GiB | ~3.7 GiB |
 | resident sessions/GPU (est.) | ~20 | **~50** |
 
 **Lever ladder, same box** (`docs/LEVERS_2026_07_H100.md`, 2026-07-11 — a
 different H100 rental/stack than the row above, so its own sequential-fp32
-baseline (68.84 s) differs in absolute terms; the *ratios* are the result):
+baseline (68.84 s) differs in absolute terms from the row's 55.6 s; the
+*ratios* are the result and are what the bf16 row above carries forward):
 sequential fp32 68.84 s → **+batching** 40.58 s (1.7×) → **+bf16** (parity
 exact to bf16 resolution) **9.42 s (7.3×)**. Warm-start (1-iter steady-state
 replan) reaches lower energy (30.25) than a cold 3-iter plan (45.0) at ⅓ the
-per-plan work, ≈3.1 s/replan estimated. MI300X pending; bf16 parity is
-architecture-general so the ROCm run is expected to land the same multiplier.
+per-plan work, ≈3.1 s/replan estimated (not yet timed directly — see KV-reuse
+work below). MI300X pending; bf16 parity is architecture-general so the ROCm
+run is expected to land the same multiplier.
 
-The remaining gap to a 10–100 ms control budget is the context-window
-recompute every rollout step — **KV/latent reuse across rollout steps**
-(design in `docs/adr/0009-kv-latent-reuse.md`, engine-side seam CPU-tested;
-wrapping the real predictor is the next GPU-verify item). This leaderboard is
-where that lever's measured row lands next.
+The remaining gap to sub-second cold / ~100 ms-class warm planning is
+KV/latent reuse across rollout steps and CEM candidates — designed and
+GPU-verified for the growing-window case, sliding-window needs an explicit
+approximation decision (`docs/adr/0009-kv-latent-reuse.md`); productization is
+the active workstream, next row lands here once measured.
 
 ### LingBot-VA 2.0 base (MoT DiT over Wan2.2 latents, 32 actions/chunk) — policy regime
 
@@ -130,8 +133,11 @@ project exists to fill — roughly a 10× window on this model.**
 
 ## 5. Open items
 
-- MI300X LingBot-VA rows (blocked on RunPod MI300X availability, 2026-07-11;
-  a persistent stock watcher is armed).
+- MI300X LingBot-VA + V-JEPA rows: RunPod stock flapped fully unavailable
+  most of 2026-07-11, then returned same day — a run against the existing
+  scripts (this section's rows do not yet reflect it; check the session's
+  handoff doc for the latest MI300X numbers before assuming this row is
+  current).
 - V-JEPA rows re-measured on the batched+bf16 path (done —
   `docs/LEVERS_2026_07_H100.md`, 7.3x combined) and on KV-reuse
   (design done — `docs/adr/0009-kv-latent-reuse.md`; real-predictor GPU-verify
