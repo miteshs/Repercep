@@ -154,6 +154,24 @@ class _CacheEntry:
 
 
 @dataclass(slots=True)
+class _AcKVCache:
+    """Real AC-predictor cache: zero-action prefix K/V plus one pending frame.
+
+    The public adapter's full forward supplies zeros for every historical
+    action and the requested action only at the trailing frame.  Persisting
+    the action-conditioned trailing K/V would therefore change the model on
+    the next step.  ``layer_kv`` contains only frames processed with zero
+    actions; ``pending`` is the newest visual block, processed with the
+    caller's action by :meth:`_AcPredictorAdapter.step_cached` but not made
+    durable until a separate zero-action pass has produced parity-safe K/V.
+    """
+
+    layer_kv: tuple[tuple[torch.Tensor, torch.Tensor], ...]
+    processed_frames: int
+    pending: torch.Tensor | None
+
+
+@dataclass(slots=True)
 class VJepa2ACConfig:
     """Load-time + planning configuration for :class:`VJepa2ACEngine`."""
 
@@ -205,13 +223,13 @@ class VJepa2ACConfig:
     reset_context_frames: int | None = None
     # What happens once the window is full and the next step would evict the
     # oldest cached frame. "reinit" (default, exact): drop the session's
-    # cache; the next step pays a full init_cache() recompute instead of a
-    # cheap incremental one — same answer as use_kv_cache=False for that one
-    # step, never wrong. Because a strictly-capped window evicts on *every*
-    # step once saturated, "reinit" only wins for sessions/episodes bounded
-    # by context_frames - reset_context_frames steps of pure growth; steps
-    # past saturation cost the same as no cache at all (graceful degradation,
-    # not a silent approximation). "slide": call the predictor's `evict` —
+    # cache; subsequent saturated steps use the ordinary full predictor — the
+    # same answer and cost as use_kv_cache=False, never wrong. Because a
+    # strictly-capped window evicts on *every* step once saturated, "reinit"
+    # only wins for sessions/episodes bounded by context_frames -
+    # reset_context_frames steps of pure growth; steps past saturation cost
+    # the same as no cache at all (graceful degradation, not a silent
+    # approximation). "slide": call the predictor's `evict` —
     # an explicit, disclosed approximation (ADR-0009 Finding 2: not exact for
     # a full-depth causal transformer) — only enable after running
     # scripts/verify_kv_regimes.py and accepting its measured drift.
@@ -341,9 +359,23 @@ class VJepa2ACEngine:
 
         self._ensure_predictor()
         assert self._predictor is not None
-        cached_path = self._config.use_kv_cache and getattr(
+        cache_capable = self._config.use_kv_cache and getattr(
             self._predictor, "supports_kv_cache", False
         )
+        frames_now = int(state.context.shape[0]) // self._tokens_per_frame
+        entry = self._kv_cache.get(state.session_id)
+        cache_reusable = entry is not None and _same_tensor(entry.last_context, state.context)
+        # In exact "reinit" mode a saturated window cannot produce a reusable
+        # next cache.  If no matching growth-phase cache remains, call the
+        # ordinary predictor directly instead of paying init_cache() overhead
+        # only to discard the result after this step.
+        cached_path = cache_capable and (
+            self._config.kv_evict_policy == "slide"
+            or frames_now < self._config.context_frames
+            or cache_reusable
+        )
+        if cache_capable and not cached_path:
+            self._kv_cache.pop(state.session_id, None)
         with torch.inference_mode():
             vec = torch.tensor(
                 action.values, dtype=state.context.dtype, device=state.context.device
@@ -417,7 +449,7 @@ class VJepa2ACEngine:
         window_full = frames_now >= self._config.context_frames
         if window_full and self._config.kv_evict_policy == "reinit":
             # Exact: don't touch a cache we're not confident is sound to
-            # evict from. Drop it; the next call pays a full init_cache().
+            # evict from. Drop it; the next call uses the full predictor.
             self._kv_cache.pop(session_id, None)
             return
         cache = predictor.append_frame(cache, normed_block)
@@ -637,6 +669,8 @@ class _AcPredictorAdapter:
 
     #: The engine's batched CEM path (``_rollout_energy_batched``) keys off this.
     supports_batch = True
+    #: The persistent-session path can reuse a zero-action prefix exactly.
+    supports_kv_cache = True
 
     def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
         import torch
@@ -659,6 +693,181 @@ class _AcPredictorAdapter:
         next_frames: torch.Tensor = tokens[:, -self._p :]  # predicted next frame(s)
         result = next_frames if batched else next_frames[0]
         return result.to(in_dtype)
+
+    def init_cache(self, context: torch.Tensor) -> _AcKVCache:
+        """Cache every completed frame and leave the trailing frame pending.
+
+        A call predicts *from* the trailing context frame, so that frame must
+        still be processed with the new action.  All earlier frames use the
+        same zero historical actions as :meth:`__call__` and can be cached.
+        """
+        if context.ndim != 2 or int(context.shape[0]) % self._p:
+            raise ValueError("AC KV cache expects context shaped (frames * patches, dim)")
+        in_dtype = context.dtype
+        x = context.unsqueeze(0)
+        if self._cdtype is not None:
+            x = x.to(self._cdtype)
+        frames = int(x.shape[1]) // self._p
+        if frames < 1:
+            raise ValueError("AC KV cache requires at least one context frame")
+
+        pending = x[:, -self._p :]
+        prefix = x[:, : -self._p]
+        if frames == 1:
+            empty = tuple(
+                (x.new_empty(1, 0, 0, 0), x.new_empty(1, 0, 0, 0))
+                for _ in self._predictor.predictor_blocks
+            )
+            return _AcKVCache(empty, processed_frames=0, pending=pending.to(in_dtype))
+
+        layer_kv = self._encode_zero_action_prefix(prefix)
+        return _AcKVCache(layer_kv, processed_frames=frames - 1, pending=pending.to(in_dtype))
+
+    def step_cached(
+        self, cache: _AcKVCache, action: torch.Tensor
+    ) -> tuple[torch.Tensor, _AcKVCache]:
+        """Predict from the pending frame, then commit its zero-action K/V.
+
+        The second incremental pass is intentional.  The uncached adapter
+        zeros historical actions, so retaining the action-conditioned K/V
+        would silently make cached multi-step rollouts a different model.
+        Both passes touch only one frame of queries against the shared prefix.
+        """
+        if cache.pending is None:
+            raise ValueError("AC KV cache has no pending frame to predict from")
+        in_dtype = cache.pending.dtype
+        predicted, _ = self._advance_pending(cache, action)
+        zeros = action.new_zeros(self._adim)
+        _unused, committed = self._advance_pending(cache, zeros)
+        return predicted.to(in_dtype), committed
+
+    def append_frame(self, cache: _AcKVCache, normed_block: torch.Tensor) -> _AcKVCache:
+        if cache.pending is not None:
+            raise ValueError("AC KV cache append requires a completed prediction step")
+        if normed_block.ndim != 2 or int(normed_block.shape[0]) != self._p:
+            raise ValueError("AC KV cache frame has the wrong patch-token shape")
+        return _AcKVCache(cache.layer_kv, cache.processed_frames, normed_block.unsqueeze(0))
+
+    def evict(self, cache: _AcKVCache, sink_frames: int = 0) -> _AcKVCache:
+        """Approximate FIFO eviction of one completed frame's raw K/V.
+
+        Raw pre-RoPE keys are retained, so all surviving positions are rotated
+        fresh on their next use.  Deeper-layer residual contamination still
+        makes this approximate, as documented in ADR-0009; the engine only
+        calls it under the explicit ``slide`` policy.
+        """
+        import torch
+
+        if sink_frames < 0 or sink_frames >= cache.processed_frames:
+            raise ValueError("kv_sink_frames must leave a non-sink frame available to evict")
+        block = self._action_tokens + self._p
+        start = sink_frames * block
+        stop = start + block
+        layer_kv = tuple(
+            (
+                torch.cat([k[:, :, :start], k[:, :, stop:]], dim=2),
+                torch.cat([v[:, :, :start], v[:, :, stop:]], dim=2),
+            )
+            for k, v in cache.layer_kv
+        )
+        return _AcKVCache(layer_kv, cache.processed_frames - 1, cache.pending)
+
+    @property
+    def _action_tokens(self) -> int:
+        return 3 if bool(getattr(self._predictor, "use_extrinsics", False)) else 2
+
+    def _encode_zero_action_prefix(
+        self, visual: torch.Tensor
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+        """Run the ordinary full prefix once while capturing pre-RoPE K/V."""
+        import torch
+
+        predictor = self._predictor
+        frames = int(visual.shape[1]) // self._p
+        x = predictor.predictor_embed(visual)
+        actions = x.new_zeros(int(x.shape[0]), frames, self._adim)
+        states = torch.zeros_like(actions)
+        a = predictor.action_encoder(actions).unsqueeze(2)
+        s = predictor.state_encoder(states).unsqueeze(2)
+        x = x.view(int(x.shape[0]), frames, self._p, int(x.shape[-1]))
+        if self._action_tokens == 3:
+            extrinsics = actions[..., :-1]
+            e = predictor.extrinsics_encoder(extrinsics).unsqueeze(2)
+            x = torch.cat([a, s, e, x], dim=2).flatten(1, 2)
+        else:
+            x = torch.cat([a, s, x], dim=2).flatten(1, 2)
+
+        mask = predictor.attn_mask[: x.shape[1], : x.shape[1]].to(x.device, non_blocking=True)
+        captured: list[tuple[torch.Tensor, torch.Tensor]] = []
+        with self._sdpa_guard():
+            for block in predictor.predictor_blocks:
+                _q, k, v = _ac_raw_qkv(block.attn, block.norm1(x))
+                captured.append((k, v))
+                x = block(
+                    x,
+                    mask=None,
+                    attn_mask=mask,
+                    T=frames,
+                    H=predictor.grid_height,
+                    W=predictor.grid_width,
+                    action_tokens=self._action_tokens,
+                )
+        return tuple(captured)
+
+    def _advance_pending(
+        self, cache: _AcKVCache, action: torch.Tensor
+    ) -> tuple[torch.Tensor, _AcKVCache]:
+        """Run one pending frame against the cached prefix at every layer."""
+        import torch
+        import torch.nn.functional as F  # noqa: N812
+
+        assert cache.pending is not None
+        predictor = self._predictor
+        visual = cache.pending
+        if self._cdtype is not None:
+            visual = visual.to(self._cdtype)
+        x = predictor.predictor_embed(visual)
+        action_row = action.to(dtype=x.dtype, device=x.device).reshape(1, 1, self._adim)
+        state_row = torch.zeros_like(action_row)
+        pieces = [predictor.action_encoder(action_row), predictor.state_encoder(state_row)]
+        if self._action_tokens == 3:
+            pieces.append(predictor.extrinsics_encoder(state_row[..., :-1]))
+        pieces.append(x)
+        x = torch.cat(pieces, dim=1)
+
+        extended: list[tuple[torch.Tensor, torch.Tensor]] = []
+        with self._sdpa_guard():
+            for layer, block in enumerate(predictor.predictor_blocks):
+                q, k_new, v_new = _ac_raw_qkv(block.attn, block.norm1(x))
+                k_old, v_old = cache.layer_kv[layer]
+                if cache.processed_frames == 0:
+                    k_old = k_new[:, :, :0]
+                    v_old = v_new[:, :, :0]
+                q = _ac_rotate_augmented(
+                    block.attn, q, 1, predictor.grid_height, predictor.grid_width,
+                    self._action_tokens, frame_offset=cache.processed_frames,
+                )
+                k_all_raw = torch.cat([k_old, k_new], dim=2)
+                v_all = torch.cat([v_old, v_new], dim=2)
+                k_all = _ac_rotate_augmented(
+                    block.attn, k_all_raw, cache.processed_frames + 1,
+                    predictor.grid_height, predictor.grid_width, self._action_tokens,
+                )
+                y = F.scaled_dot_product_attention(
+                    q, k_all, v_all,
+                    dropout_p=block.attn.proj_drop_prob,
+                    is_causal=block.attn.is_causal,
+                )
+                y = y.transpose(1, 2).reshape_as(x)
+                y = block.attn.proj_drop(block.attn.proj(y))
+                x = x + block.drop_path(y)
+                x = x + block.drop_path(block.mlp(block.norm2(x)))
+                extended.append((k_all_raw, v_all))
+
+        visual_out = x[:, self._action_tokens :]
+        visual_out = predictor.predictor_proj(predictor.predictor_norm(visual_out))[0]
+        committed = _AcKVCache(tuple(extended), cache.processed_frames + 1, pending=None)
+        return visual_out, committed
 
     def _sdpa_guard(self) -> Any:
         """The bf16 SDPA harmonizer when computing in bf16; a no-op otherwise."""
@@ -708,6 +917,86 @@ def _load_ac_predictor(config: VJepa2ACConfig, tokens_per_frame: int) -> _Predic
     cdtype = getattr(torch, config.predictor_compute_dtype)
     predictor = predictor.to(f"cuda:{device}", dtype=cdtype).eval()
     return _AcPredictorAdapter(predictor, tokens_per_frame, config.action_dim, cdtype)
+
+
+def _ac_raw_qkv(attn: Any, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Project augmented AC tokens without applying the model's RoPE."""
+    qkv = (
+        attn.qkv(x)
+        .unflatten(-1, (3, attn.num_heads, -1))
+        .permute(2, 0, 3, 1, 4)
+    )
+    return qkv[0], qkv[1], qkv[2]
+
+
+def _ac_bug_compatible_rope(x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+    """The checkpoint-compatible upstream rotation, including its tiling bug."""
+    import torch
+
+    dim = int(x.shape[-1])
+    omega = torch.arange(dim // 2, dtype=x.dtype, device=x.device)
+    omega /= dim / 2.0
+    omega = 1.0 / 10000**omega
+    freq = torch.einsum("..., f -> ... f", pos.to(dtype=x.dtype), omega)
+    # Deliberately tile rather than repeat_interleave: pretrained V-JEPA 2-AC
+    # was trained with this upstream behavior (facebookresearch/vjepa2#15).
+    sin = freq.sin().squeeze(-1).repeat(1, 1, 1, 2)
+    cos = freq.cos().squeeze(-1).repeat(1, 1, 1, 2)
+    y1, y2 = x.reshape(*x.shape[:-1], dim // 2, 2).unbind(-1)
+    rotated = torch.stack((-y2, y1), dim=-1).flatten(-2)
+    return (x * cos) + (rotated * sin)
+
+
+def _ac_rotate_augmented(
+    attn: Any,
+    raw: torch.Tensor,
+    frames: int,
+    height: int,
+    width: int,
+    action_tokens: int,
+    *,
+    frame_offset: int = 0,
+) -> torch.Tensor:
+    """Apply axial AC RoPE to raw Q/K in augmented per-frame token order."""
+    import torch
+
+    batch, heads, _tokens, head_dim = raw.shape
+    per_frame = action_tokens + height * width
+    grouped = raw.view(batch, heads, frames, per_frame, head_dim)
+    cond_raw = grouped[:, :, :, :action_tokens]
+    visual = grouped[:, :, :, action_tokens:].flatten(2, 3)
+
+    frame_pos = torch.arange(
+        frame_offset, frame_offset + frames, device=raw.device, dtype=raw.dtype
+    )
+    cond_parts = []
+    for index in range(action_tokens):
+        token = cond_raw[:, :, :, index]
+        token_d = _ac_bug_compatible_rope(token[..., : attn.d_dim], frame_pos)
+        cond_parts.append(torch.cat([token_d, token[..., attn.d_dim :]], dim=-1))
+    cond = torch.stack(cond_parts, dim=3).flatten(2, 3)
+
+    ids = torch.arange(
+        frame_offset * height * width,
+        (frame_offset + frames) * height * width,
+        device=raw.device,
+    )
+    d_pos, h_pos, w_pos = attn.separate_positions(ids, height, width)
+    h_pos = h_pos * (attn.grid_size / height)
+    w_pos = w_pos * (attn.grid_size / width)
+    start = 0
+    vd = _ac_bug_compatible_rope(visual[..., start : start + attn.d_dim], d_pos)
+    start += attn.d_dim
+    vh = _ac_bug_compatible_rope(visual[..., start : start + attn.h_dim], h_pos)
+    start += attn.h_dim
+    vw = _ac_bug_compatible_rope(visual[..., start : start + attn.w_dim], w_pos)
+    start += attn.w_dim
+    tail = visual[..., start:]
+    visual = torch.cat([vd, vh, vw, tail], dim=-1)
+
+    cond = cond.view(batch, heads, frames, action_tokens, head_dim)
+    visual = visual.view(batch, heads, frames, height * width, head_dim)
+    return torch.cat([cond, visual], dim=3).flatten(2, 3)
 
 
 def _sdpa_dtype_harmonizer() -> Any:

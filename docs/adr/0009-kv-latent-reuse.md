@@ -1,14 +1,16 @@
 # ADR-0009 — KV/latent reuse across rollout steps (the structural latency lever)
 
-- **Status:** Design accepted for the *growing*-window regime; the *sliding*-
+- **Status:** Implemented for the *growing*-window regime; the *sliding*-
   window (eviction) regime is **not achievable as an exact operation** for
   this model — GPU-verified 2026-07-11 against the real pretrained weights
-  (not assumed; see §"GPU verify: two real findings" below). The `step()`
-  engine-side seam (§"Decision") is implemented + CPU-tested against a fake
-  predictor. Wrapping the *real* torch-hub predictor was attempted this
-  session: the growing-window case is verified bit-close-correct on real
-  weights; the eviction case is verified **incorrect by construction**, not
-  merely unbuilt. The CEM-batched-candidate path remains design-only (a
+  (not assumed; see §"Verification findings" below). The `step()`
+  engine-side seam (§"Decision") and real torch-hub predictor adapter are
+  implemented. The engine is CPU-tested against a cache-sensitive fake; the
+  adapter is CPU-tested through a miniature multi-layer AC predictor with the
+  real augmented-token/RoPE/block-causal structure. Earlier direct GPU work
+  verified the growing-window algorithm bit-close-correct on real weights;
+  the eviction case is **incorrect by construction**, not merely unbuilt. The
+  CEM-batched-candidate path remains design-only (a
   separate, harder lift — §"scope note" below), now doubly so since it would
   inherit the same eviction problem for horizons that exceed the window.
 - **Date:** 2026-07-11
@@ -177,16 +179,18 @@ matters more for real serving anyway** — it's what metric #1 of
 directly measures, and is the online robot-control-loop cost, not just the
 offline-planning cost.
 
-## GPU verify: two real findings (2026-07-11, real pretrained weights, H100)
+## Verification findings (2026-07-11)
 
-Wrapped the real torch-hub predictor (`facebookresearch/vjepa2`,
+Findings 1–2 came from wrapping the real torch-hub predictor (`facebookresearch/vjepa2`,
 `vjepa2-ac-vitg.pt` checkpoint) directly, using its own verbatim source (a
 temporary `F.scaled_dot_product_attention` monkeypatch confirmed a
 hand-written replica of `ACRoPEAttention`'s pre-SDPA Q/K/V computation is
 bit-exact against the live module — `q/k/v` match to `0.0` max abs diff — so
 the incremental adapter below reuses provably-correct building blocks, not
 guesses). Full end-to-end multi-layer replica of `predictor.forward()` also
-matches the real forward exactly (`0.0` diff). Two findings from there:
+matches the real forward exactly (`0.0` diff). Finding 3 came from integrating
+that algorithm with Mirage's adapter contract and is covered by CPU parity
+tests over the same multi-layer token/attention structure.
 
 **Finding 1 — the model's own RoPE is not a composable rotation.** The
 source carries a maintainer comment: *"This expansion has a subtle bug where
@@ -223,6 +227,19 @@ the *residual stream*, not in an attention key. **This is not a bug to fix;
 it is the well-known hard problem sliding-window LLM serving (StreamingLLM,
 attention-sinks, etc.) exists to work around, encountered here freshly.**
 
+**Finding 3 — the durable prefix must use zero historical actions to preserve
+the adapter's public semantics.** `_AcPredictorAdapter.__call__` supplies the
+requested action only at the trailing frame and deliberately supplies zeros at
+all earlier frames. Persisting the trailing frame's action-conditioned K/V
+would therefore make cached and uncached multi-step rollouts different models:
+the discrepancy is invisible on step 1 and appears at layer 1+ on later steps.
+The implemented adapter keeps one visual frame pending, predicts it with the
+live action, and separately advances that frame with a zero action before its
+K/V becomes durable. This is two one-frame query passes against the shared
+prefix per control step, still O(window) rather than a full O(window²) forward.
+A miniature two-layer parity test covers multiple successive steps so this
+cannot regress to the tempting but semantically wrong one-pass design.
+
 **Net effect on this ADR's design:** the `step()` seam's *growing*-window
 case (§"Decision", `init_cache` → `step_cached`, no `evict`) is real, GPU-
 verified end-to-end on pretrained weights (grow-only multi-step test:
@@ -240,6 +257,31 @@ that decision is made explicitly** — until then, `use_kv_cache` only helps
 sessions that stay within `context_frames`, and the config should size
 `context_frames` to the expected session/plan horizon to get the win without
 silently hitting the un-implemented, unsound eviction path.
+The real adapter now implements that grow-only design with pre-rotation K and
+zero-action durable prefixes; the default `kv_evict_policy="reinit"` drops the
+cache at saturation rather than invoking the approximate eviction operation.
+
+**Finding 3's integration re-verified end-to-end on pretrained weights
+(2026-07-11/12, MI300X, `scripts/verify_kv_growing_window.py`).** The earlier
+`3.8e-4` number above verified the growing-window *algorithm* directly against
+a hand-wrapped predictor; this run verifies the actual wired-up
+`_AcPredictorAdapter.init_cache`/`step_cached`/`append_frame` contract (the
+code CPU-tested against a synthetic predictor above) through
+`VJepa2ACEngine.reset()`+real weights, growing a session from 1 to 8 frames.
+At `dtype="float32"` (encoder output + action + predicted-frame boundary all
+fp32, matching how the original number was measured): max abs diff **6.8e-4**
+across 6 steps, same order as the original finding — the CPU-tested
+integration is real. **One methodology note, not a regression:** the first
+attempt used this engine's `dtype="bfloat16"` default (the *encoder's* output
+cast, independent of `predictor_compute_dtype`) and saw max abs diff up to
+0.125 — alarming until traced to bf16 boundary rounding on ~100-magnitude
+values (bf16 has ~3 significant digits; 0.125 ≈ 100 × 2⁻¹⁰, the right order
+for that quantization), not a cached-vs-uncached algorithm divergence. Re-
+running at fp32 isolated the algorithm from that rounding and matched the
+known-good number. Relative diff (elementwise, vs `expected`) ran as high as
+0.29 even in the fp32 run — an artifact of near-zero elements in `expected`
+inflating the ratio, not a sign of a large real error; absolute diff (as used
+throughout this ADR) is the meaningful metric here.
 
 ## Consequences
 

@@ -17,6 +17,8 @@ from pydantic import ValidationError
 from mirage.models.vjepa2_ac import (
     VJepa2ACConfig,
     VJepa2ACEngine,
+    _ac_raw_qkv,
+    _ac_rotate_augmented,
     _AcPredictorAdapter,
     _infer_tokens_per_frame,
 )
@@ -186,6 +188,119 @@ def test_ac_predictor_adapter_returns_next_frame_block() -> None:
     context = torch.zeros(12, 8)  # 3 frames x P=4 patch tokens, D=8
     nxt = adapter(context, torch.ones(7))
     assert tuple(nxt.shape) == (4, 8)  # the trailing P rows = predicted next frame
+
+
+def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
+    """The real adapter's durable prefix keeps historical actions at zero.
+
+    A miniature two-layer AC predictor exercises the same augmented token
+    layout, axial RoPE, block-causal attention and residual stack.  Multiple
+    cached steps must match the public full-forward contract, not merely the
+    first step where accidentally persisting the live action is invisible.
+    """
+    torch = pytest.importorskip("torch")
+    nn = pytest.importorskip("torch.nn")
+    functional = pytest.importorskip("torch.nn.functional")
+
+    class _MiniAttention(nn.Module):  # type: ignore[name-defined,misc]
+        def __init__(self, dim: int = 24, heads: int = 2) -> None:
+            super().__init__()
+            self.num_heads = heads
+            self.head_dim = dim // heads
+            self.d_dim = self.h_dim = self.w_dim = 4
+            self.grid_size = 1
+            self.proj_drop_prob = 0.0
+            self.is_causal = False
+            self.qkv = nn.Linear(dim, dim * 3)
+            self.proj = nn.Linear(dim, dim)
+            self.proj_drop = nn.Identity()
+
+        def separate_positions(self, ids: Any, height: int, width: int) -> Any:
+            frame = ids // (height * width)
+            within = ids - frame * height * width
+            row = within // width
+            return frame.float(), row.float(), (within - row * width).float()
+
+        def forward(
+            self,
+            x: Any,
+            *,
+            attn_mask: Any,
+            action_tokens: int,
+            **kwargs: Any,
+        ) -> Any:
+            frames = int(kwargs["T"])
+            height = int(kwargs["H"])
+            width = int(kwargs["W"])
+            q, k, v = _ac_raw_qkv(self, x)
+            q = _ac_rotate_augmented(self, q, frames, height, width, action_tokens)
+            k = _ac_rotate_augmented(self, k, frames, height, width, action_tokens)
+            y = functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            y = y.transpose(1, 2).reshape_as(x)
+            return self.proj(y)
+
+    class _MiniBlock(nn.Module):  # type: ignore[name-defined,misc]
+        def __init__(self) -> None:
+            super().__init__()
+            self.norm1 = nn.LayerNorm(24)
+            self.attn = _MiniAttention()
+            self.drop_path = nn.Identity()
+            self.norm2 = nn.LayerNorm(24)
+            self.mlp = nn.Sequential(nn.Linear(24, 48), nn.GELU(), nn.Linear(48, 24))
+
+        def forward(self, x: Any, **kwargs: Any) -> Any:
+            x = x + self.attn(self.norm1(x), **kwargs)
+            return x + self.mlp(self.norm2(x))
+
+    class _MiniPredictor(nn.Module):  # type: ignore[name-defined,misc]
+        grid_height = 1
+        grid_width = 2
+        use_extrinsics = False
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.predictor_embed = nn.Linear(6, 24)
+            self.action_encoder = nn.Linear(3, 24)
+            self.state_encoder = nn.Linear(3, 24)
+            self.predictor_blocks = nn.ModuleList([_MiniBlock(), _MiniBlock()])
+            self.predictor_norm = nn.LayerNorm(24)
+            self.predictor_proj = nn.Linear(24, 6)
+            block = 2 + self.grid_height * self.grid_width
+            frame_ids = torch.arange(8 * block) // block
+            self.attn_mask = frame_ids[:, None] >= frame_ids[None, :]
+
+        def forward(self, visual: Any, actions: Any, states: Any) -> Any:
+            batch, rows, _dim = visual.shape
+            frames = rows // 2
+            x = self.predictor_embed(visual).view(batch, frames, 2, 24)
+            a = self.action_encoder(actions).unsqueeze(2)
+            s = self.state_encoder(states).unsqueeze(2)
+            x = torch.cat([a, s, x], dim=2).flatten(1, 2)
+            mask = self.attn_mask[: x.shape[1], : x.shape[1]]
+            for block in self.predictor_blocks:
+                x = block(
+                    x,
+                    attn_mask=mask,
+                    T=frames,
+                    H=1,
+                    W=2,
+                    action_tokens=2,
+                )
+            x = x.view(batch, frames, 4, 24)[:, :, 2:].flatten(1, 2)
+            return self.predictor_proj(self.predictor_norm(x))
+
+    torch.manual_seed(4)
+    adapter = _AcPredictorAdapter(_MiniPredictor().eval(), tokens_per_frame=2, action_dim=3)
+    for initial_rows in (2, 4):  # empty prefix and one-frame prefix bootstrap
+        context = torch.randn(initial_rows, 6)
+        cache = adapter.init_cache(context)
+        for _ in range(3):
+            action = torch.randn(3)
+            expected = adapter(context, action)
+            actual, staged = adapter.step_cached(cache, action)
+            assert torch.allclose(actual, expected, atol=2e-6)
+            cache = adapter.append_frame(staged, actual)
+            context = torch.cat([context, actual], dim=0)
 
 
 def test_step_appends_patch_token_frame_block() -> None:
@@ -473,8 +588,8 @@ def test_kv_cache_reinit_policy_never_evicts_but_degrades_gracefully() -> None:
     """The default "reinit" policy must still match full-recompute exactly
     (dropping a cache and rebuilding it via init_cache can never be wrong),
     but — honestly — buys no incremental savings once a strictly-capped
-    window saturates: every step past the growth phase re-triggers
-    init_cache, same cost as use_kv_cache=False. This is the graceful-
+    window saturates: every step past the growth phase uses the ordinary
+    full forward, same cost as use_kv_cache=False. This is the graceful-
     degradation behavior ADR-0009 §"Revisit if" settles on in place of the
     unsound "slide" default; this test pins the exact call-count evidence
     for it so a future change can't silently regress it back to unsound.
@@ -512,9 +627,12 @@ def test_kv_cache_reinit_policy_never_evicts_but_degrades_gracefully() -> None:
     # step 2: window full on entry, but the cache built in step 1 is still
     # valid for this one prediction -> reused, then dropped afterward (no
     # append -- there's nowhere sound to put the appended frame).
-    # steps 3-6: no cache survives from the previous step -> each reinits.
-    # Net: 1 bootstrap + 4 reinits, one cheap reuse (step 2) in between.
-    assert cached_pred.init_cache_calls == 5
+    # steps 3-6: no cache survives from the previous step -> direct ordinary
+    # full forwards (the engine avoids paying init_cache() just to discard it).
+    # Net: 1 bootstrap, one cheap reuse (step 2), then graceful full-forward
+    # fallback at exactly the same cost as use_kv_cache=False.
+    assert cached_pred.init_cache_calls == 1
+    assert cached_pred.step_cached_calls == 2
     assert cached_pred.append_frame_calls == 1  # only the one cheap growth step
 
 
