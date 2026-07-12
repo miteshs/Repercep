@@ -31,3 +31,13 @@ benchmark-results/
 kernels/cpu/*/build/
 kernels/cpu/*/*.so
 
+# OS / editor cruft
+.DS_Store
+
+# uv lockfile — repo flow is `uv venv` / `uv pip install`, not `uv sync`
+uv.lock
+
+# repercep.ai marketing site (published separately, not Mirage source)
+site/
+*.pdf
+
