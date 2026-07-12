@@ -12,7 +12,7 @@ Usage:
 
 Status: this is the kernel-layer toolchain smoke test.  The perf-path FP8
 attention path lives in kernels/triton_kernels/fp8_flash_attn.py and is
-already integrated as src/mirage/attention/fp8_triton.py.
+already integrated as src/repercep/attention/fp8_triton.py.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def load_hip_fp8(verbose: bool = False) -> Any:
     from torch.utils.cpp_extension import load
 
     _EXT = load(
-        name="mirage_fp8_hip",
+        name="repercep_fp8_hip",
         sources=[
             str(_KERNEL_DIR / "binding.cpp"),
             str(_KERNEL_DIR / "fp8_gemm.hip"),

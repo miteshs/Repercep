@@ -1,4 +1,8 @@
-# Mirage Runtime
+# Repercep Runtime
+
+*(formerly "Mirage" — renamed 2026-07-12 to the company name, Repercep.AI; the
+old name also collided with Decart's MirageLSD product. Older session docs and
+provenance records keep the historical name where it is part of the record.)*
 
 A **world-model-native inference engine**. Lead workload: **Cosmos-Predict-7B**.
 Lead hardware: **AMD Instinct MI300X** (`gfx942`, CDNA3).
@@ -7,7 +11,7 @@ The LLM-era serving stack (vLLM, TensorRT-LLM, Diffusers, `torch.compile`) is
 built for autoregressive token decode. World models violate those assumptions:
 diffusion-temporal denoising over latent volumes, bidirectional attention,
 action conditioning, closed-loop latency. That gap is the 30–60% of silicon
-performance Mirage is built to recover.
+performance Repercep is built to recover.
 
 ## Why MI300X first
 
@@ -25,7 +29,7 @@ NVIDIA backend is a zero-rewrite fast-follow.
 ## Status
 
 **Pre-alpha, and running on three silicon targets.** Cosmos-Predict-7B,
-Wan-2.2-T2V-A14B, and V-JEPA 2 all run end-to-end through the Mirage runtime on
+Wan-2.2-T2V-A14B, and V-JEPA 2 all run end-to-end through the Repercep runtime on
 **AMD MI300X**, **NVIDIA H100**, and **Intel CPU (AMX)** — one engine behind one
 vendor-neutral backend Protocol (ADR-0003).
 
@@ -42,7 +46,7 @@ accounting before trusting any of these):
 
 Landed: the vendor-neutral backend layer (ROCm/CUDA/CPU), the attention
 abstraction + autotuned FP8 Triton flash kernels (gfx942/Hopper/Ada) + CPU AMX
-kernels, the Mirage-native denoise loop with TeaCache-style adaptive caching, the
+kernels, the Repercep-native denoise loop with TeaCache-style adaptive caching, the
 Cosmos and Wan engines (+ the Cosmos guardrail), a Rust+PyO3 core
 (cache/scheduler/router), and a FastAPI frame-streaming serving API (v1 sync +
 v2 router path).
@@ -105,7 +109,7 @@ uv venv --python 3.12 .venv
 # 2. ROCm PyTorch — match the index to your system ROCm (here: 7.2)
 uv pip install --python .venv torch --index-url https://download.pytorch.org/whl/rocm7.2
 
-# 3. Mirage + extras
+# 3. Repercep + extras
 make install        # == uv pip install --python .venv -e ".[models,serving,dev]"
 
 # 4. verify the GPU is visible
@@ -134,9 +138,9 @@ it lands, is a separate codebase with different review standards.
 ## Layout
 
 ```
-src/mirage/
+src/repercep/
   hardware.py      framework-agnostic device/dtype domain types
-  config.py        runtime configuration (MIRAGE_* env vars)
+  config.py        runtime configuration (REPERCEP_* env vars)
   backend/         vendor-neutral compute backends (rocm / cuda / cpu)
   attention/       attention ops behind the AttentionOp Protocol (+ FP8/AMX bridges)
   runtime/         denoise loop + adaptive cache, scheduler, router, types,

@@ -1,7 +1,7 @@
 # Part 0 — Orientation: the pixel world model on the same seam
 
 > Reminder (see the [index](README.md)): this is a **design** walkthrough. AVID
-> isn't built — it's ADR-0008 Phase 3. Real Mirage pieces get `file:line`;
+> isn't built — it's ADR-0008 Phase 3. Real Repercep pieces get `file:line`;
 > AVID-specific pieces are marked **(design)**.
 
 The [V-JEPA 2-AC series](../walkthroughs-vjepa2-ac/) built a world model that
@@ -53,7 +53,7 @@ unbuilt part.
 | Base model | trained | trained | **frozen + small trained adapter** |
 | Seam | `WorldModelEngine` | `InteractiveWorldModel` | **`InteractiveWorldModel`** (same) |
 
-The takeaway: AVID is the path where Mirage's **diffusion** investment (the loop,
+The takeaway: AVID is the path where Repercep's **diffusion** investment (the loop,
 the cache, the FP8 kernels, the VAE) and its **interactive seam** meet. It's the
 one world-model family that uses *all* of the existing machinery.
 

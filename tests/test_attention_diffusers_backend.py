@@ -1,4 +1,4 @@
-"""Tests for the Mirage FP8 backend registration with diffusers' dispatcher.
+"""Tests for the Repercep FP8 backend registration with diffusers' dispatcher.
 
 These tests are CPU-runnable for the registration / env-var bridge surface;
 the correctness allclose test is GPU-gated (kernel availability + a Cosmos-DiT
@@ -56,17 +56,17 @@ def _restore_active_backend() -> Iterator[None]:
         _AttentionBackendRegistry._active_backend = prior
 
 
-def test_mirage_fp8_backend_is_registered() -> None:
-    # Just importing ``mirage.attention`` should trigger the bridge module's
+def test_repercep_fp8_backend_is_registered() -> None:
+    # Just importing ``repercep.attention`` should trigger the bridge module's
     # registration as a side effect — no opt-in API needed.
     from diffusers.models.attention_dispatch import (
         AttentionBackendName,
         _AttentionBackendRegistry,
     )
 
-    import mirage.attention  # noqa: F401
+    import repercep.attention  # noqa: F401
 
-    member = AttentionBackendName("mirage_fp8")
+    member = AttentionBackendName("repercep_fp8")
     assert member in _AttentionBackendRegistry._backends
     # The backend function must accept the exact signature diffusers dispatch
     # introspects against. Missing any of these would cause the kwarg filter
@@ -76,52 +76,52 @@ def test_mirage_fp8_backend_is_registered() -> None:
 
 
 def test_register_is_idempotent() -> None:
-    from mirage.attention.diffusers_backend import register_mirage_fp8_backend
+    from repercep.attention.diffusers_backend import register_repercep_fp8_backend
 
-    member_a = register_mirage_fp8_backend()
-    member_b = register_mirage_fp8_backend()
+    member_a = register_repercep_fp8_backend()
+    member_b = register_repercep_fp8_backend()
     assert member_a is member_b
 
 
-def test_attention_backend_context_manager_accepts_mirage_fp8() -> None:
-    # Importing mirage.attention performs registration; the diffusers
+def test_attention_backend_context_manager_accepts_repercep_fp8() -> None:
+    # Importing repercep.attention performs registration; the diffusers
     # ``attention_backend`` ctx manager then resolves the string by enum lookup.
     from diffusers.models.attention_dispatch import (
         _AttentionBackendRegistry,
         attention_backend,
     )
 
-    import mirage.attention  # noqa: F401
+    import repercep.attention  # noqa: F401
 
-    with _restore_active_backend(), attention_backend("mirage_fp8"):
+    with _restore_active_backend(), attention_backend("repercep_fp8"):
         active = _AttentionBackendRegistry._active_backend
-        assert str(active.value) == "mirage_fp8"
+        assert str(active.value) == "repercep_fp8"
 
 
 def test_env_var_bridge_activates_backend() -> None:
     from diffusers.models.attention_dispatch import _AttentionBackendRegistry
 
-    from mirage.attention.diffusers_backend import maybe_activate_from_env
+    from repercep.attention.diffusers_backend import maybe_activate_from_env
 
-    with _restore_active_backend(), _temporary_env("MIRAGE_FP8_ATTENTION", "1"):
+    with _restore_active_backend(), _temporary_env("REPERCEP_FP8_ATTENTION", "1"):
         activated = maybe_activate_from_env()
         # ``activated`` is True the first time it switches; the dispatcher
-        # may already be on mirage_fp8 from an earlier test.
-        assert _AttentionBackendRegistry._active_backend.value == "mirage_fp8"
+        # may already be on repercep_fp8 from an earlier test.
+        assert _AttentionBackendRegistry._active_backend.value == "repercep_fp8"
         del activated  # silence flake8/unused
 
 
 def test_env_var_bridge_inactive_when_unset() -> None:
-    # When MIRAGE_FP8_ATTENTION is absent, the bridge must NOT switch the
+    # When REPERCEP_FP8_ATTENTION is absent, the bridge must NOT switch the
     # dispatcher — that preserves the default-safe path.
     from diffusers.models.attention_dispatch import (
         AttentionBackendName,
         _AttentionBackendRegistry,
     )
 
-    from mirage.attention.diffusers_backend import maybe_activate_from_env
+    from repercep.attention.diffusers_backend import maybe_activate_from_env
 
-    with _restore_active_backend(), _temporary_env("MIRAGE_FP8_ATTENTION", None):
+    with _restore_active_backend(), _temporary_env("REPERCEP_FP8_ATTENTION", None):
         # Pin a known starting state.
         _AttentionBackendRegistry._active_backend = AttentionBackendName.NATIVE
         switched = maybe_activate_from_env()
@@ -144,7 +144,7 @@ def test_backend_routes_short_seq_to_native() -> None:
     if not torch.cuda.is_available():
         pytest.skip("no GPU on host")
 
-    from mirage.attention.diffusers_backend import _mirage_fp8_attention
+    from repercep.attention.diffusers_backend import _repercep_fp8_attention
 
     # Short S → fallback path. We can't easily detect "fallback was taken"
     # from outside; instead, exercise the call and assert it matches SDPA
@@ -155,7 +155,7 @@ def test_backend_routes_short_seq_to_native() -> None:
     q = torch.randn(b, s, h, d, device="cuda", dtype=dtype)
     k = torch.randn_like(q)
     v = torch.randn_like(q)
-    out = _mirage_fp8_attention(q, k, v)
+    out = _repercep_fp8_attention(q, k, v)
     # Reference: native SDPA on permuted tensors (the diffusers convention).
     q_bhsd = q.permute(0, 2, 1, 3)
     k_bhsd = k.permute(0, 2, 1, 3)
@@ -185,11 +185,11 @@ def test_backend_matches_native_on_cosmos_dit_shape() -> None:
     if not torch.version.hip:
         pytest.skip("AMD-only FP8 kernel; H100 path lives in test_attention_cuda.py")
 
-    from mirage.attention.diffusers_backend import (
+    from repercep.attention.diffusers_backend import (
         _FP8_MIN_SEQ_LEN,
-        _mirage_fp8_attention,
+        _repercep_fp8_attention,
     )
-    from mirage.attention.fp8_triton import FP8TritonAttention
+    from repercep.attention.fp8_triton import FP8TritonAttention
 
     op = FP8TritonAttention()
     if not op.available:
@@ -204,7 +204,7 @@ def test_backend_matches_native_on_cosmos_dit_shape() -> None:
     k = torch.randn_like(q) / 8.0
     v = torch.randn_like(q)
 
-    out = _mirage_fp8_attention(q, k, v)
+    out = _repercep_fp8_attention(q, k, v)
     assert out.shape == q.shape
     assert torch.isfinite(out).all()
 
@@ -235,7 +235,7 @@ def test_cross_attention_shape_falls_back_to_native() -> None:
     if not torch.cuda.is_available():
         pytest.skip("no GPU on host")
 
-    from mirage.attention.diffusers_backend import _mirage_fp8_attention
+    from repercep.attention.diffusers_backend import _repercep_fp8_attention
 
     # Different KV seq_len than Q — classic cross-attention shape.
     torch.manual_seed(0)
@@ -244,6 +244,6 @@ def test_cross_attention_shape_falls_back_to_native() -> None:
     k = torch.randn(1, 512, 4, 128, device="cuda", dtype=dtype)
     v = torch.randn(1, 512, 4, 128, device="cuda", dtype=dtype)
     # Must not raise — the routing rejects, fallback executes.
-    out = _mirage_fp8_attention(q, k, v)
+    out = _repercep_fp8_attention(q, k, v)
     assert out.shape == q.shape
     assert torch.isfinite(out).all()

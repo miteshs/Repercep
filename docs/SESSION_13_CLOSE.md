@@ -64,7 +64,7 @@ drafts to be committed. They are at:
 
 1. Bump `Cargo.toml` workspace `version` and `pyproject.toml`
    `[project] version` from `0.0.1` → `0.1.0`.
-2. `git tag -a v0.1.0 -m 'Mirage Runtime v0.1.0' && git push origin v0.1.0`.
+2. `git tag -a v0.1.0 -m 'Repercep Runtime v0.1.0' && git push origin v0.1.0`.
 3. Cut the GitHub release from the tag; paste `RELEASE_NOTES_v0.1.md`.
 4. Post the X thread first; let it settle 24 h; then HN; then blog if
    long-form is wanted.
@@ -117,7 +117,7 @@ sg render -c "sg video -c 'make check-gpu'"
 
 # Headline (the 142-s, 2.68× claim)
 sg render -c "sg video -c '\
-    MIRAGE_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
+    REPERCEP_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
         --frames 121 --steps 36 --native-loop \
         --cache-mode adaptive --cache-adaptive-threshold 0.30 \
         --cache-force-full-every 16'"

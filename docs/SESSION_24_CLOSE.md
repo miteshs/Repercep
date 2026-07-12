@@ -51,7 +51,7 @@ depth; grounded in real source + verified CPU runs):
 - `docs/walkthroughs-vjepa2-ac/` — **V-JEPA 2-AC**, Parts 0–5 (code tour: JEPA/EBM
   foundations → the model → seam/rollout → energy planning → serving). Grounded in
   the real transformers 5.9.0 `VJEPA2Model` + a verified tiny-encoder CPU run +
-  Mirage's own code.
+  Repercep's own code.
 - `docs/walkthroughs-avid/` — **AVID**, Parts 0–3 (**design** walkthrough, not a
   code tour: the pixel world model on the same seam; ADR-0008 Phase 3). Real reuses
   cited by `file:line`; the unbuilt adapter clearly marked.
@@ -60,7 +60,7 @@ depth; grounded in real source + verified CPU runs):
 
 - Clean working tree, `HEAD == origin/main == ffaf369`. Nothing to push.
 - Nothing precious lives only on this pod (verified earlier in the session) — safe
-  to tear down. The **off-repo strategy docs** (`~/Mirage_Implementation_Plan.pdf`,
+  to tear down. The **off-repo strategy docs** (`~/Repercep_Implementation_Plan.pdf`,
   `~/Mirage_Cowork_Handoff.md`) remain not-in-git by design; back them up off-pod
   if they live only on a pod.
 

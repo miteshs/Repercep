@@ -15,12 +15,12 @@ a GPU; the perf claim is "this runs" rather than "this is fast."
 
 ## Pending headline numbers
 
-All measured (or to be measured) on the host CPU of the Mirage H100
+All measured (or to be measured) on the host CPU of the Repercep H100
 template — Intel Xeon Platinum 8470 (Sapphire Rapids, family 6 model
 143, 52 physical cores × 2 sockets = 208 logical, 1007 GiB DRAM,
 AMX_BF16 + AMX_INT8 + AVX-512 BF16/FP16 + AVX-VNNI):
 
-| Config | Wall | vs Mirage H100 (138.4 s adaptive) | Peak RAM |
+| Config | Wall | vs Repercep H100 (138.4 s adaptive) | Peak RAM |
 |---|--:|--:|--:|
 | Smoke (17 f / 8 steps, BF16, SDPA→oneDNN AMX) | **TBD** | — | TBD |
 | Smoke (17 f / 8 steps, BF16, AMX flash kernel) | **TBD** | — | TBD |
@@ -30,12 +30,12 @@ AMX_BF16 + AMX_INT8 + AVX-512 BF16/FP16 + AVX-VNNI):
 
 The two AMX-aware attention paths are:
 
-* **AMX flash kernel** (`mirage.attention.amx_flash.AMXFlashAttention`) —
-  Mirage-owned C++ kernel using `_tile_dpbf16ps` for the QK^T and PV
+* **AMX flash kernel** (`repercep.attention.amx_flash.AMXFlashAttention`) —
+  Repercep-owned C++ kernel using `_tile_dpbf16ps` for the QK^T and PV
   matmuls inside a flash-attention online-softmax loop.  Sibling of the
   gfx942 and Hopper Triton kernels — same per-vendor pattern (ADR-0006).
   Source: `kernels/cpu/amx_attn/flash_attn_amx.cpp`.
-* **IPEX flash** (`mirage.attention.ipex_flash.IPEXFlashAttention`) —
+* **IPEX flash** (`repercep.attention.ipex_flash.IPEXFlashAttention`) —
   wrapper over Intel-Extension-for-PyTorch's fused attention.  Wider
   shape coverage (head_dim ∈ {64, 80, 96, 128, 192, 256}); requires an
   IPEX install (~1 GiB).
@@ -43,7 +43,7 @@ The two AMX-aware attention paths are:
 ## Reproduce
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git mirage && cd mirage
+git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
 git checkout cpu-amx-port
 
 uv venv --python 3.12 .venv
@@ -62,8 +62,8 @@ make check-gpu
 # Smoke gen on CPU (BF16, SDPA→oneDNN, AMX dispatch is automatic)
 .venv/bin/python scripts/run_cosmos.py --frames 17 --steps 8
 
-# Smoke with the Mirage AMX flash kernel (env-promoted attention op)
-MIRAGE_AMX_ATTENTION=amx .venv/bin/python scripts/run_cosmos.py \
+# Smoke with the Repercep AMX flash kernel (env-promoted attention op)
+REPERCEP_AMX_ATTENTION=amx .venv/bin/python scripts/run_cosmos.py \
     --frames 17 --steps 8
 
 # Full reference with adaptive cache
@@ -118,7 +118,7 @@ until this lands.  Now it isn't.
 | Item | Where | Status |
 |---|---|---|
 | Build + benchmark the AMX BF16 flash kernel end-to-end | `kernels/cpu/amx_attn/` + `scripts/run_cosmos.py --frames 17 --steps 8` | **Hardware-blocked** — every dev VM the project has access to today (RunPod H100 and MI300X templates) reports `amx_bf16` masked by the hypervisor; the kernel builds + runs on bare-metal Sapphire Rapids when one is available |
-| AMX INT8 attention kernel | `kernels/cpu/amx_int8_attn/flash_attn_amx_int8.cpp` + `src/mirage/attention/amx_int8_flash.py` | **Code landed Session 18 (Item B)** — TDPBSSD-based, BF16-in/BF16-out, dynamic per-tile quant; build refuses without `amx_int8` flag, same hardware gate as the BF16 sibling |
-| Per-channel symmetric INT8 weight quantization | `src/mirage/runtime/quantize.py` | **Landed Session 18 (Item A)** — `QuantizedLinear` + `QuantizedLinearModule` + `replace_linears_with_quantized`; CPU/CUDA bit-parity on `qweight`, 1-ULP slack on `scale` validated on real RTX 2000 Ada (Item H) |
+| AMX INT8 attention kernel | `kernels/cpu/amx_int8_attn/flash_attn_amx_int8.cpp` + `src/repercep/attention/amx_int8_flash.py` | **Code landed Session 18 (Item B)** — TDPBSSD-based, BF16-in/BF16-out, dynamic per-tile quant; build refuses without `amx_int8` flag, same hardware gate as the BF16 sibling |
+| Per-channel symmetric INT8 weight quantization | `src/repercep/runtime/quantize.py` | **Landed Session 18 (Item A)** — `QuantizedLinear` + `QuantizedLinearModule` + `replace_linears_with_quantized`; CPU/CUDA bit-parity on `qweight`, 1-ULP slack on `scale` validated on real RTX 2000 Ada (Item H) |
 | FVD on CPU vs GPU adaptive output | `scripts/eval_cpu_quality.py` + `scripts/compute_fvd.py` | **Wired Session 18 (Item F)** — combined LPIPS+MSE+PSNR+FVD runner with `--device cpu` forced; LPIPS CPU/CUDA parity validated within 1.5e-5 (Item I).  Held-out reference set workflow documented in `docs/METHODOLOGY.md` §"Held-out reference set for FVD"; the set itself is local-only (N≥50 generation is still owed) |
-| Granite Rapids AMX_FP16 kernel | `kernels/cpu/amx_fp16_attn/` + `src/mirage/attention/amx_fp16_flash.py` | **Scaffolded Session 18 (Item C)** — wrapper, setup.py, tile config, OMP shell + `arch_prctl` opt-in all real; the inner `_tile_dpfp16ps` loop is `// TODO(GNR):` markers (six total) for the eventual GNR-host fill-in |
+| Granite Rapids AMX_FP16 kernel | `kernels/cpu/amx_fp16_attn/` + `src/repercep/attention/amx_fp16_flash.py` | **Scaffolded Session 18 (Item C)** — wrapper, setup.py, tile config, OMP shell + `arch_prctl` opt-in all real; the inner `_tile_dpfp16ps` loop is `// TODO(GNR):` markers (six total) for the eventual GNR-host fill-in |

@@ -26,17 +26,17 @@ Cosmos cache lever on this pod: **3.15 ×** (no-cache 320.9 → adaptive 101.8).
 **Plumbing landed and verified:**
 
 - **F40 fix-path 1** (Wan diffusers bridge) engages 960 × on Wan
-  TI2V-5B 17f/8 under `MIRAGE_FP8_ATTENTION=fa` — up from 0 × in
-  Session 17's F40 baseline.  `wan_processor.maybe_install_mirage_
+  TI2V-5B 17f/8 under `REPERCEP_FP8_ATTENTION=fa` — up from 0 × in
+  Session 17's F40 baseline.  `wan_processor.maybe_install_repercep_
   wan_attention(pipe)` in `WanEngine.load()` is doing exactly what
   the F40 spec needed it to.
 - **Native PyO3 control plane** is live: `PagedLatentCache` ←
-  `mirage_cache._native`, `Router` ← `mirage_router._native`,
-  `Scheduler` ← `mirage_scheduler._native`.  Python fallbacks
+  `repercep_cache._native`, `Router` ← `repercep_router._native`,
+  `Scheduler` ← `repercep_scheduler._native`.  Python fallbacks
   available but not active.
-- **`mypy --strict src/mirage` clean across all 49 files** for the
+- **`mypy --strict src/repercep` clean across all 49 files** for the
   first time since the lazy `QuantizedLinearModule` pattern.
-- **AMX CI compile-smoke + routing tests:** `MIRAGE_AMX_FORCE_BUILD=1
+- **AMX CI compile-smoke + routing tests:** `REPERCEP_AMX_FORCE_BUILD=1
   make kernels-cpu` builds all three AMX kernels (BF16 / INT8 / FP16)
   on the hypervisor-AMX-masked dev VM.  4 capability-gate routing
   tests verify the registry's INTEL branch under monkeypatched
@@ -44,11 +44,11 @@ Cosmos cache lever on this pod: **3.15 ×** (no-cache 320.9 → adaptive 101.8).
 
 **Env shape on the H100 pod:**
 
-- `.venv` symlinks to `/workspace/mirage-venv`.
+- `.venv` symlinks to `/workspace/repercep-venv`.
 - torch 2.11.0+cu128, diffusers 0.37.1, transformers 5.9.0,
   triton 3.6.0, fastapi 0.136.3.
 - `flash-attn` and `flash_attn_3` are **NOT** installed.  The
-  `MIRAGE_FP8_ATTENTION=fa` bridge engages the diffusers dispatcher
+  `REPERCEP_FP8_ATTENTION=fa` bridge engages the diffusers dispatcher
   and falls through `_native_fallback` → `torch.nn.functional.scaled_
   dot_product_attention` (cuDNN-FA-3 on Hopper), not the FA-3 Python
   wrapper.  This is the path that produced the 101.8 s headline.
@@ -70,8 +70,8 @@ Cosmos cache lever on this pod: **3.15 ×** (no-cache 320.9 → adaptive 101.8).
 
 - `pytest -q` → 233 passed / 24 skipped.
 - `ruff check src tests scripts` → clean.
-- `mypy --strict src/mirage` → clean (49 files).
-- `MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu` → all three kernels
+- `mypy --strict src/repercep` → clean (49 files).
+- `REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu` → all three kernels
   build to `_native*.so`.
 
 ## What's open after Session 20
@@ -89,7 +89,7 @@ in parallel is overcommit per POSITIONING.md.
 ### Lane A — Wan-shaped adaptive cache (widens the wedge)
 
 The Cosmos adaptive cache hardcodes `CosmosTransformer3DModel` block
-topology in `src/mirage/runtime/denoise.py::denoise_cosmos_video`.
+topology in `src/repercep/runtime/denoise.py::denoise_cosmos_video`.
 A Wan equivalent needs:
 
 - A native `denoise_wan_video` in the same module (mirror the Cosmos
@@ -187,7 +187,7 @@ itself doesn't pick between them; it lays out the trade.
 
 8. **Bare-metal AMX measurement.**  Hardware-blocked.  When a
    Sapphire / Emerald / Granite Rapids host opens up, the
-   `MIRAGE_AMX_FORCE_BUILD` smoke + capability-gate tests are CI-
+   `REPERCEP_AMX_FORCE_BUILD` smoke + capability-gate tests are CI-
    ready; what's missing is real silicon for headline numbers.
 
 9. **Ada FP8 wiring decision (F42 vs F44).**  Deprioritized in
@@ -215,46 +215,46 @@ doesn't already accept it.
 ## Quick reproducers
 
 ```bash
-cd /home/mshah/Mirage
+cd /home/mshah/Repercep
 source ~/extra.sh                          # HF_TOKEN + gh auth login
 
 # Sanity checks (all clean on Session 20 close)
 PYTHONPATH=$(pwd)/src .venv/bin/python -m ruff check src tests scripts
-PYTHONPATH=$(pwd)/src .venv/bin/python -m mypy src/mirage
+PYTHONPATH=$(pwd)/src .venv/bin/python -m mypy src/repercep
 PYTHONPATH=$(pwd)/src .venv/bin/python -m pytest -q
 
 # Confirm native PyO3 control plane is live (Session 19's check)
 PYTHONPATH=$(pwd)/src .venv/bin/python - <<'PY'
-from mirage.runtime.latent_cache import PagedLatentCache
-from mirage.runtime.router import Router
-from mirage.runtime.scheduler import Scheduler
-print(PagedLatentCache.__module__)  # expect: mirage_cache._native
-print(Router.__module__)            # expect: mirage_router._native
-print(Scheduler.__module__)         # expect: mirage_scheduler._native
+from repercep.runtime.latent_cache import PagedLatentCache
+from repercep.runtime.router import Router
+from repercep.runtime.scheduler import Scheduler
+print(PagedLatentCache.__module__)  # expect: repercep_cache._native
+print(Router.__module__)            # expect: repercep_router._native
+print(Scheduler.__module__)         # expect: repercep_scheduler._native
 PY
 
 # Wan F40 dispatch trace — expect bridge=960, fallback→SDPA=960
-MIRAGE_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python \
+REPERCEP_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python \
     scripts/trace_wan_attention.py --small --frames 17 --steps 8
 
 # Cosmos H100 headline (cached) — expect ~100 s ± 4 s, 52.5 GiB
-MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     PYTHONPATH=$(pwd)/src .venv/bin/python -u scripts/run_cosmos.py \
         --frames 121 --steps 36 --native-loop \
         --cache-mode adaptive --cache-adaptive-threshold 0.30 \
         --cache-force-full-every 16
 
 # Cosmos H100 no-cache baseline — expect ~321 s ± n, 52.5 GiB
-MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     PYTHONPATH=$(pwd)/src .venv/bin/python -u scripts/run_cosmos.py \
         --frames 121 --steps 36 --native-loop --cache-mode none
 
 # Wan TI2V-5B smoke — expect ~6 s, 42.6 GiB
-MIRAGE_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python \
+REPERCEP_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python \
     scripts/run_wan.py --small --frames 17 --steps 8 --profile
 
 # AMX CI compile-smoke + routing tests (works on AMX-less VMs)
-MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu
+REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu
 PYTHONPATH=$(pwd)/src .venv/bin/python -m pytest \
     tests/test_attention_cpu.py tests/test_amx_int8.py \
     tests/test_amx_fp16.py -q
@@ -268,7 +268,7 @@ PYTHONPATH=$(pwd)/src .venv/bin/python -m pytest \
    recommend doing in the next 2 weeks" — pick a lane.
 4. If picking up Lane A (Wan cache): start with the A14B download
    (~118 GB), then sketch `denoise_wan_video` mirroring `denoise_
-   cosmos_video` in `src/mirage/runtime/denoise.py`.
+   cosmos_video` in `src/repercep/runtime/denoise.py`.
 5. If picking up Lane B (FVD): pick the prompt set source, then
    pre-generate the 50 no-cache + 50 adaptive references (~6 hr
    GPU), then run `scripts/compute_fvd.py` over the pairs.

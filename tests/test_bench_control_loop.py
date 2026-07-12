@@ -79,7 +79,7 @@ def test_bench_control_loop_chunked_engine_forces_real_plan_call() -> None:
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from mirage.models.lingbot_va import LingBotVAConfig, LingBotVAEngine
+    from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine
     from test_lingbot_va import _FakePipeline, _NamedBackend  # type: ignore[import-not-found]
 
     class _CountingPipeline(_FakePipeline):  # type: ignore[misc]

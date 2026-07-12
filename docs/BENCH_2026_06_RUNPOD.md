@@ -1,6 +1,6 @@
-# Latest Mirage benchmarks — H100 vs MI300X on RunPod (2026-06-26)
+# Latest Repercep benchmarks — H100 vs MI300X on RunPod (2026-06-26)
 
-Fresh end-to-end measurements of the Mirage runtime on **NVIDIA H100 SXM**
+Fresh end-to-end measurements of the Repercep runtime on **NVIDIA H100 SXM**
 and **AMD MI300X**, both rented on RunPod, for the two live models:
 **Cosmos-Predict-7B** (diffusion world model, generation regime) and
 **V-JEPA 2-AC** (energy-based action-conditioned world model, control regime —

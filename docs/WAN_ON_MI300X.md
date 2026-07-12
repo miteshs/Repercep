@@ -4,7 +4,7 @@
 world-model family on AMD Instinct silicon, via the diffusers reference
 path.*
 
-**Status (2026-05-23):** Measurement on a single MI300X VF through Mirage's
+**Status (2026-05-23):** Measurement on a single MI300X VF through Repercep's
 `WanEngine` + the diffusers `WanPipeline`. The 81 f / 40 step quality run
 is **cold** (one-time ROCm kernel autotuning included) — wall = 2576 s but
 the **steady-state per-step is ~41 s** at the back end of the run, with
@@ -15,7 +15,7 @@ are spelled out below.
 ## TL;DR
 
 We ran `Wan-AI/Wan2.2-T2V-A14B-Diffusers` end-to-end on an AMD Instinct
-MI300X VF (`gfx942`, ROCm 7.2.0, torch 2.12+rocm7.2) through the Mirage
+MI300X VF (`gfx942`, ROCm 7.2.0, torch 2.12+rocm7.2) through the Repercep
 runtime. To our knowledge, this is the **first publicly disclosed
 inference benchmark of Wan-2.2-T2V-A14B (or any Wan-2.2 variant) on any
 AMD GPU end-to-end with wall time + peak HBM, via diffusers, BF16 + FP32
@@ -27,14 +27,14 @@ parameter expert transformers (high-noise + low-noise), ~14 B parameters
 active per denoise step, ~27 B parameters total, Apache 2.0. The MoE
 boundary handoff swaps the active expert mid-denoise.
 
-| Configuration | NVIDIA single H100 (Wan team reference) | Mirage on AMD MI300X (this work) |
+| Configuration | NVIDIA single H100 (Wan team reference) | Repercep on AMD MI300X (this work) |
 |---|---|---|
 | Stack | `Wan2.2` repo + FlashAttention-3 + offload | `diffusers` 0.37.1 + SDPA→aotriton |
 | 17 frames @ 1280×720, 8 steps — **smoke** (warm) | — | **45.2 s** generate / **84.3 GiB** peak HBM |
 | 81 frames @ 1280×720, 40 steps — **quality reference** | **1041.5 s** (BF16, FA-3, `--offload_model True --convert_model_dtype`) / **79.8 GB peak** | **2576 s** generate (one-shot, cold autotune) / **85.1 GiB** peak HBM; **~41 s/step steady-state** in the back end (≈ **1640 s** projected steady-state DiT loop / **~1700 s** projected end-to-end without the cold autotune tail) |
 
 **Headline (steady-state projected):** at the canonical Wan reference shape
-(81 f / 40 steps / 1280×720), Mirage's MI300X **per-step time settles to
+(81 f / 40 steps / 1280×720), Repercep's MI300X **per-step time settles to
 ~41 s** after the cold-cache phase, which projects to **~1640 s for the DiT
 loop and ~1700 s end-to-end** — uncached, no caching mode, no FP8 wiring,
 no native loop. The Wan team's own single-H100 reference at the same shape
@@ -55,7 +55,7 @@ single-tenant warm re-run is the obvious follow-up to nail the headline
 number down. The data we **do** have shows steady-state per-step landing
 in the 41-45 s range; we project from those.
 
-Like Cosmos, Mirage uses **none** of the FP16-Hopper-specific tooling
+Like Cosmos, Repercep uses **none** of the FP16-Hopper-specific tooling
 (no FlashAttention-3, no FSDP-ed multi-GPU sharding, no FP8 weight
 conversion, no CPU offload) — just stock PyTorch SDPA→aotriton flash
 kernels on ROCm, a single VF, BF16 transformer + FP32 VAE, both MoE
@@ -163,8 +163,8 @@ the canonical reference.
 Wan's diffusers `WanPipeline` ships with no built-in step-caching path.
 The Wan-2.2 community ecosystem includes TeaCache / Magcache adaptations
 for the diffusers `WanTransformer3DModel` (e.g. the Morphic and Voltage
-Park blogs above both fold in TeaCache), but Mirage's adaptive caching
-implementation (in `mirage.runtime.denoise.denoise_cosmos_video`) is
+Park blogs above both fold in TeaCache), but Repercep's adaptive caching
+implementation (in `repercep.runtime.denoise.denoise_cosmos_video`) is
 **specific to the Cosmos `CosmosTransformer3DModel` block topology**.
 
 `WanEngine` exposes the same `use_native_loop` / `cache_skip_every` /
@@ -185,9 +185,9 @@ caches, would be the highest-value next move.
 **Hardware:** AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs, gfx942 /
 CDNA3); ROCm 7.2.0; torch 2.12.0+rocm7.2; 235 GiB host RAM; 20 CPU cores.
 
-**Software:** Mirage Runtime (this repo), `diffusers` 0.37.1 +
+**Software:** Repercep Runtime (this repo), `diffusers` 0.37.1 +
 `transformers` 5.9.0, BF16 transformer / FP32 VAE (per the Wan reference
-path). The diffusers `WanPipeline` runs unmodified above Mirage's
+path). The diffusers `WanPipeline` runs unmodified above Repercep's
 `WanEngine`; the `--profile` flag wraps a per-stage probe identical in
 shape to `scripts/profile_cosmos.py`, with the MoE second expert
 (`transformer_2`) accounted for as a separate counter.
@@ -325,7 +325,7 @@ H100 at the diffusers baseline, **with two important asymmetries**:
 1. **H100's number requires FP8 quantization + offload.** Our number is
    BF16 + both experts resident. A more apples-to-apples comparison —
    MI300X at FP8 with offload — is a separate workstream; the diffusers
-   BF16 reference is the path Mirage ships today.
+   BF16 reference is the path Repercep ships today.
 2. **MI300X has all the headroom that H100 doesn't.** Wan-2.2's 27 B
    total parameters do not fit in 80 GB H100 in BF16 (54 GiB just for
    weights, ~30+ GiB for activations at 81 f / 720 P); H100 deployments
@@ -343,7 +343,7 @@ suggest similar headroom on MI300X once the caching strategy is
 adapted to the MoE boundary handoff.
 
 The single-A100 H100-vintage reference (no FP8, no offload, FA-2) is
-**2735.7 s** per the Wan team's table — Mirage's MI300X BF16 path is
+**2735.7 s** per the Wan team's table — Repercep's MI300X BF16 path is
 already ~1.6× faster than that, on a single-VF without offloading.
 
 ## Strategic context
@@ -372,7 +372,7 @@ a non-NVIDIA model on non-NVIDIA hardware**, with the entire stack
   reference clip + seed combination from the Wan team to diff against;
   visual quality is eyeballed on the produced mp4 and confirmed to be a
   valid Wan-shaped output.
-- Caching analysis is **deferred** — Mirage's adaptive cache is
+- Caching analysis is **deferred** — Repercep's adaptive cache is
   Cosmos-block-shape-specific and doesn't transfer 1:1 to
   `WanTransformer3DModel`. A native Wan loop is queued.
 - Wan-2.2's MoE second-expert boundary handoff is a known non-trivial
@@ -387,14 +387,14 @@ a non-NVIDIA model on non-NVIDIA hardware**, with the entire stack
   together with the H100 figure with that caveat in mind. A
   fully-quantized-and-offloaded MI300X comparison is a separate
   follow-up; the diffusers BF16 reference is the path we ship in
-  Mirage today.
+  Repercep today.
 
 ## Reproduce
 
 Hardware: AMD Instinct MI300X (192 GiB) or compatible CDNA3; ROCm 7.x.
 
 ```bash
-git clone <repo> mirage && cd mirage
+git clone <repo> repercep && cd repercep
 pip install --user uv
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2
@@ -422,7 +422,7 @@ make install
 | `diffusers` | 0.37.1 (registers `WanPipeline`, `AutoencoderKLWan`, `WanTransformer3DModel`) |
 | `transformers` | 5.9.0 |
 | `accelerate` | 1.13.0 |
-| Mirage | 0.0.1 (this repo, `WanEngine`) |
+| Repercep | 0.0.1 (this repo, `WanEngine`) |
 
 ## References
 
@@ -430,13 +430,13 @@ make install
 
 - Wan2.2 GitHub repo (the `comp_effic.png` source):
   <https://github.com/Wan-Video/Wan2.2>
-- Wan-AI/Wan2.2-T2V-A14B-Diffusers (the lead Mirage variant):
+- Wan-AI/Wan2.2-T2V-A14B-Diffusers (the lead Repercep variant):
   <https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers>
 - Wan-AI/Wan2.2-T2V-A14B (raw / non-diffusers):
   <https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B>
 - Wan-AI/Wan2.2-I2V-A14B-Diffusers (image-to-video sibling):
   <https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers>
-- Wan-AI/Wan2.2-TI2V-5B-Diffusers (smaller variant — Mirage's `--small`):
+- Wan-AI/Wan2.2-TI2V-5B-Diffusers (smaller variant — Repercep's `--small`):
   <https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers>
 - Wan-2.1 arxiv paper (Wan-2.2 has no standalone paper; the 2.1 paper is
   the closest published methodology reference):
@@ -477,5 +477,5 @@ make install
 Wan-Video (Alibaba) team for open-sourcing Wan-2.2 under Apache 2.0.
 HuggingFace `diffusers` maintainers — particularly the WanPipeline /
 AutoencoderKLWan / WanTransformer3DModel authors — for the diffusers
-path Mirage runs above. The AMD ROCm + aotriton + hipBLASLt teams for
+path Repercep runs above. The AMD ROCm + aotriton + hipBLASLt teams for
 the underlying kernel infrastructure.

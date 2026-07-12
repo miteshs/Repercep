@@ -1,4 +1,4 @@
-# Mirage — Build Log
+# Repercep — Build Log
 
 A chronological record of major work, decisions, findings, and blockers — kept
 for handoff and so decisions can be traced back. Architecture decisions have
@@ -37,7 +37,7 @@ clean (33 files) · `pytest` 36 passed.
 | PyTorch | `2.12.0+rocm7.2` (from `download.pytorch.org/whl/rocm7.2`) |
 | Host | 235 GiB RAM, 20 CPUs, 697 GB disk (592 GB free at start) |
 | Python | 3.12.3; env managed by `uv` (system `python3-venv` unavailable, no sudo) |
-| Repo | `/home/mshah/mirage` — Apache-2.0 |
+| Repo | `/home/mshah/repercep` — Apache-2.0 |
 
 ---
 
@@ -84,24 +84,24 @@ clean (33 files) · `pytest` 36 passed.
 - **Task 2** — Installed `torch 2.12.0+rocm7.2`; verified HIP, device
   enumeration, and a bf16 matmul on-device. Installed model/serving/dev extras.
 - **Task 3** — Repo skeleton: `pyproject.toml` (mypy-strict, ruff, hatchling),
-  `src/mirage` package layout, Apache-2.0 `LICENSE`, `README.md`, `Makefile`,
+  `src/repercep` package layout, Apache-2.0 `LICENSE`, `README.md`, `Makefile`,
   `docs/architecture.md`, 3 ADRs.
-- **Task 4** — `mirage.hardware` (device/dtype domain types), `mirage.backend`
-  (`Backend` Protocol + `ROCmBackend` + registry). `mirage info` CLI detects the
+- **Task 4** — `repercep.hardware` (device/dtype domain types), `repercep.backend`
+  (`Backend` Protocol + `ROCmBackend` + registry). `repercep info` CLI detects the
   MI300X.
-- **Task 5** — `mirage.runtime` (Pydantic request/response types, `WorldModelEngine`
-  Protocol, `StubEngine`, frame-aware `PagedLatentCache`); `mirage.serving`
+- **Task 5** — `repercep.runtime` (Pydantic request/response types, `WorldModelEngine`
+  Protocol, `StubEngine`, frame-aware `PagedLatentCache`); `repercep.serving`
   (FastAPI NDJSON frame-streaming API + gRPC `.proto` contract).
 - **Task 6** — Attention wired: `AttentionOp` Protocol, `NaiveAttention`,
   `ROCmFlashAttention` (CK wrapper, inert until the CK package is built),
   shape-based `select_attention_op`. On-device test confirms attention runs at
   the Cosmos DiT shape (32 heads × head_dim 128) on the MI300X.
-- **Task 7** — `mirage.models.cosmos.CosmosEngine` wraps the diffusers pipeline
+- **Task 7** — `repercep.models.cosmos.CosmosEngine` wraps the diffusers pipeline
   as a `WorldModelEngine`. `scripts/run_cosmos.py` is the end-to-end runner.
   **First inference run launched (smoke config: 17 frames, 8 steps).**
-- **Task 8** — `mirage.bench` harness: `benchmark_engine` (latency/throughput/
+- **Task 8** — `repercep.bench` harness: `benchmark_engine` (latency/throughput/
   peak-HBM), `BenchmarkResult` (JSON-serializable), `speedup()`,
-  `python -m mirage.bench` CLI.
+  `python -m repercep.bench` CLI.
 
 ### Findings
 
@@ -154,7 +154,7 @@ Smoke run — `scripts/run_cosmos.py --frames 17 --steps 8`, guardrail disabled:
 | Peak HBM | 28.4 GiB / 192 GiB |
 | Output | `benchmark-results/cosmos_smoke.mp4` — verified: 17 frames, full dynamic range, inter-frame motion present |
 
-**Milestone:** Cosmos-Predict-7B runs end-to-end on AMD MI300X through the Mirage
+**Milestone:** Cosmos-Predict-7B runs end-to-end on AMD MI300X through the Repercep
 runtime.
 
 Full reference run — `scripts/run_cosmos.py` (121 frames @ 1280×704, 36 steps):
@@ -181,7 +181,7 @@ Full reference run — `scripts/run_cosmos.py` (121 frames @ 1280×704, 36 steps
 - **Single GPU** — the MI300X is a VF; multi-GPU paths untestable here.
 - **"vs naive baseline"** — today `CosmosEngine` *is* the stock diffusers path,
   so the benchmark currently measures the baseline itself; a meaningful speedup
-  number needs Mirage-specific optimizations (future work).
+  number needs Repercep-specific optimizations (future work).
 
 ### How to verify / run (handoff)
 
@@ -190,7 +190,7 @@ make check-gpu                       # MI300X smoke test
 make info                            # detected backend + device
 make lint && make typecheck && make test
 .venv/bin/python scripts/run_cosmos.py --frames 17 --steps 8   # quick gen
-.venv/bin/python -m mirage.bench --engine cosmos --iters 3     # benchmark
+.venv/bin/python -m repercep.bench --engine cosmos --iters 3     # benchmark
 ```
 
 ---
@@ -202,7 +202,7 @@ apply levers, every change measured.
 
 ### Decisions
 
-- **D8** — Instrument before optimizing. Built `mirage.bench.profile`: a
+- **D8** — Instrument before optimizing. Built `repercep.bench.profile`: a
   warmup-separated, CUDA-synced per-stage profiler (text-encode / DiT / VAE
   decode / other), using forward hooks so it is valid on a `torch.compile`-d DiT.
 
@@ -224,7 +224,7 @@ apply levers, every change measured.
 
 ### Work done
 
-- `mirage.bench.profile` — `CosmosProfile` + `profile_cosmos` (forward-hook,
+- `repercep.bench.profile` — `CosmosProfile` + `profile_cosmos` (forward-hook,
   compile-safe, warmup-separated).
 - `CosmosConfig.compile_transformer` flag; `CosmosEngine.load()` applies
   `torch.compile` (inductor + triton-rocm) to the DiT transformer.
@@ -258,7 +258,7 @@ The profile confirms the strategy:
 
 - **CFG batching** — fold the 2 per-step transformer forwards into one batch-2
   forward. The diffusers pipeline hard-codes two calls, so this needs a
-  Mirage-native denoising loop — a deliberate step toward replacing the
+  Repercep-native denoising loop — a deliberate step toward replacing the
   diffusers `__call__`. Estimated ~1.2–1.5× on the DiT loop.
 - `torch.compile` `max-autotune` mode — possible extra DiT win, long compile.
 - Feature / step caching (training-free, ~1.5–2×) — also needs the custom loop.
@@ -272,7 +272,7 @@ requires the Cosmos safety guardrail for deployment.
 
 ### Decisions
 
-- **D9 — Mirage owns guardrail orchestration.** The diffusers pipeline
+- **D9 — Repercep owns guardrail orchestration.** The diffusers pipeline
   force-registers a `CosmosSafetyChecker` as a pipeline *component*, which
   breaks the current diffusers device detection (`_execution_device` raises).
   Rather than fight that, `CosmosEngine` always neutralizes the in-pipeline
@@ -325,7 +325,7 @@ the `guardrail` extra.
 
 ### Finding
 
-- **F13 — Mirage is currently the only public Cosmos-on-AMD implementation.**
+- **F13 — Repercep is currently the only public Cosmos-on-AMD implementation.**
   A deep web search (AMD.com, ROCm Blogs, the entire Cosmos GitHub org —
   `cosmos-predict1`, `cosmos-predict2`, `cosmos-predict2.5` — the
   `huggingface/diffusers`, `ROCm/pytorch`, `ROCm/aotriton`, `ROCm/aiter` issue
@@ -337,7 +337,7 @@ the `guardrail` extra.
   v6.0 Single Stream 27.4 s on MI355X), and their own Micro-World, but has
   conspicuously skipped Cosmos. The likely reason is the CUDA-only dependency
   stack of NVIDIA's reference repo (TransformerEngine, Apex, NATTEN,
-  flash-attn). Mirage's D4 (use the `diffusers` path) sidesteps all four —
+  flash-attn). Repercep's D4 (use the `diffusers` path) sidesteps all four —
   which is *why* we have numbers and no one else does. NVIDIA's published
   reference number for the same config: Cosmos-Predict1-7B Text2World on H100
   ≈ **380 s** for 121 frames @ 1280×704, 36 steps, BF16, peak 74 GB.
@@ -358,11 +358,11 @@ the `guardrail` extra.
 
 ---
 
-## Session 5 — 2026-05-22 — Mirage-native denoising loop + CFG batching (Task #13)
+## Session 5 — 2026-05-22 — Repercep-native denoising loop + CFG batching (Task #13)
 
 ### Work
 
-- New module `mirage.runtime.denoise` — `denoise_cosmos_video()` implements
+- New module `repercep.runtime.denoise` — `denoise_cosmos_video()` implements
   the Cosmos denoising loop natively, using the diffusers pipeline's
   components (T5, DiT, VAE, EDM-Euler scheduler) but folding the per-step
   conditional + unconditional transformer forwards into one batch-2 call.
@@ -428,7 +428,7 @@ total GEMM work unchanged.
 Warmup-separated 121-frame / 36-step baseline on MI300X — **the** publishable
 headline number:
 
-| | MI300X (Mirage, diffusers + SDPA→aotriton) | H100 (NVIDIA reference) |
+| | MI300X (Repercep, diffusers + SDPA→aotriton) | H100 (NVIDIA reference) |
 |---|--:|--:|
 | Total | **465.4 s** | ~380 s |
 | DiT loop / calls | 460.0 s / 72 | (not separately reported) |
@@ -478,7 +478,7 @@ refresh full forwards; the other 6 steps reuse the cached `noise_pred`).
 End-to-end **1.96×, DiT loop 2.00×**. This is the kind of behaviour F14
 predicted: *work-reducing* levers scale, *overhead-cutting* ones don't.
 
-If the 2× scales linearly to the 121-frame baseline (465 s), Mirage on MI300X
+If the 2× scales linearly to the 121-frame baseline (465 s), Repercep on MI300X
 projects to **~232 s — faster than NVIDIA's H100 reference (~380 s) on the
 same workload.** That projection is contingent on quality holding at the
 longer config — to be verified.
@@ -558,7 +558,7 @@ the right long-term shape.
   brightness 106 / std 65.1). Visual verification is the gating test; if
   `skip=4` degrades visibly, `skip=2` trades half the win for safer quality.
 
-This is the strongest measured Mirage win to date and the first MI300X number
+This is the strongest measured Repercep win to date and the first MI300X number
 that beats NVIDIA's published H100 reference wall time on the same workload.
 
 ## Session 8 — 2026-05-23 — Polyglot scaffold + Rust core + OOM fix
@@ -584,10 +584,10 @@ and (incidentally) discover a latent OOM bug on the 121 f path.
 ADR-0005 commits the Rust-core fork resolution ahead of design-partner
 mix landing. Three crates scoped:
 
-- `crates/mirage-cache` — port of `src/mirage/runtime/latent_cache.py`
-- `crates/mirage-scheduler` — greenfield priority queue, FIFO within
+- `crates/repercep-cache` — port of `src/repercep/runtime/latent_cache.py`
+- `crates/repercep-scheduler` — greenfield priority queue, FIFO within
   priority
-- `crates/mirage-router` — greenfield per-request state machine + frame
+- `crates/repercep-router` — greenfield per-request state machine + frame
   ordering
 
 Workspace deps pinned: pyo3 0.25 (abi3-py311), tokio 1, serde 1, thiserror
@@ -603,18 +603,18 @@ Each agent: their own crate body + PyO3 bindings + Python wrapper +
 pytest. Hard scope discipline ensured no cross-crate edits. ~2,166 lines
 of Rust + 41 Rust tests + 30 new pytest cases, all green in worktrees.
 
-- **Agent A — `mirage-cache`** (515 LoC). Port of `latent_cache.py`. 11
+- **Agent A — `repercep-cache`** (515 LoC). Port of `latent_cache.py`. 11
   Rust unit tests + 9 cross-language pytest (existing `tests/test_runtime.py`
   passes unchanged against the Rust-backed wrapper).
-- **Agent B — `mirage-scheduler`** (686 LoC). Three priority buckets,
+- **Agent B — `repercep-scheduler`** (686 LoC). Three priority buckets,
   FIFO within bucket, cancellation via skip-set, tokio runtime owned by
   the scheduler. Blocking PyO3 surface (`next_blocking(timeout_ms)` +
   `py.allow_threads`) — avoids the `pyo3-async-runtimes` dep.
-- **Agent C — `mirage-router`** (965 LoC). State machine (Received →
+- **Agent C — `repercep-router`** (965 LoC). State machine (Received →
   Scheduled → Generating → Streaming → Complete, with Cancelled/Failed
   off-ramps). True-async PyO3 via `pyo3-async-runtimes 0.25`.
   `SchedulerHandle` trait is the integration seam — NOT a Cargo dep on
-  `mirage-scheduler`.
+  `repercep-scheduler`.
 
 ### Stage 3 integration polish (commit `af9210d`)
 
@@ -624,8 +624,8 @@ Three issues caught while integrating in main:
    `[lib].name = "_native"`, producing identical
    `target/release/lib_native.so`. The last crate's binary wins and ends
    up in every wheel (cache + router `.so` files were byte-identical by
-   MD5). Fix: unique Rust lib names (`mirage_<name>_native`) per crate;
-   Python import path stays `mirage_<name>._native` via
+   MD5). Fix: unique Rust lib names (`repercep_<name>_native`) per crate;
+   Python import path stays `repercep_<name>._native` via
    `[tool.maturin] module-name`.
 2. **`maturin develop --uv` is unreliable** in 1.13 for workspace-member
    crates with separate per-crate `pyproject.toml`. Fix: `make rust-install`
@@ -694,7 +694,7 @@ Three parallel Claude sub-agents in isolated git worktrees, dispatched
 simultaneously. Each agent owned one of Phase 2's three speedup/breadth
 levers and worked to a tight scope brief.
 
-### Agent D — `mirage.models.wan` — second world-model family (commit `ed1ed27`)
+### Agent D — `repercep.models.wan` — second world-model family (commit `ed1ed27`)
 
 - **Variant:** `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (Apache 2.0, MoE 14B
   active per step; ~52 GiB BF16). Fits comfortably in 192 GiB HBM.
@@ -760,7 +760,7 @@ inside the 1e-2 tolerance the agent set. **Cosmos at 121 f runs spatial
 attention at S ≈ 109 k — well above the crossover.**
 
 Also shipped:
-- `src/mirage/attention/fp8_scaled_mm.py` — unfused FP8 via
+- `src/repercep/attention/fp8_scaled_mm.py` — unfused FP8 via
   `torch._scaled_grouped_mm` as a fallback.
 - `kernels/triton_kernels/fp8_flash_attn.py` — the fused FA-2 kernel.
 - `kernels/hip/fp8_attn/` — HIP C++ proof-of-life: `hipcc` compiles a
@@ -778,13 +778,13 @@ Cherry-picked all three branches into main (commits `ed1ed27`,
 |---|--:|--:|--:|
 | 121 f / 36 / `cache=fixed/4` | **163.9 s** | 2.32× | within noise |
 | 121 f / 36 / `cache=adaptive thr=0.30 floor=16` | **151.1 s** | **2.51×** | 1.020× faster |
-| same + `MIRAGE_FP8_ATTENTION=1` | 151.2 s | 2.51× | identical |
+| same + `REPERCEP_FP8_ATTENTION=1` | 151.2 s | 2.51× | identical |
 
 **F19 — FP8 is a no-op in the Cosmos diffusers path today.** The third
-row is the diagnostic. `MIRAGE_FP8_ATTENTION=1` enables the FP8 op only
-inside `mirage.attention.select_attention_op` — but the diffusers
+row is the diagnostic. `REPERCEP_FP8_ATTENTION=1` enables the FP8 op only
+inside `repercep.attention.select_attention_op` — but the diffusers
 Cosmos pipeline calls its own `dispatch_attention_fn` from
-`diffusers.models.attention_dispatch`, which never consults the Mirage
+`diffusers.models.attention_dispatch`, which never consults the Repercep
 registry. The kernel exists, is measurably fast (1.92× at S=8k+), and
 is opt-in safe to ship. Wiring it into Cosmos's attention path is a
 Phase-2.5 follow-up: either monkey-patch diffusers' dispatch, or rebuild
@@ -805,8 +805,8 @@ Implementation Plan's Phase-2 3-5× target. Adaptive replaces the F16/F17
   follows this BUILD_LOG entry. All work pushed to `origin/main`.
 - Tests: 41 Rust + 86 pytest passing on a clean GPU.
 - Five new files in `scripts/`, three new modules in
-  `src/mirage/attention/`, four new directories in `kernels/`, plus
-  `src/mirage/models/wan.py` as the second model family.
+  `src/repercep/attention/`, four new directories in `kernels/`, plus
+  `src/repercep/models/wan.py` as the second model family.
 - Phase 2 deliverables status: ✓ Wan-2.2 loader, ✓ adaptive caching,
   ✓ F15 gated, ◐ FP8 (kernel ready, dispatch wiring deferred to 2.5).
   Continuous batching and action conditioning hooks remain in
@@ -817,9 +817,9 @@ Implementation Plan's Phase-2 3-5× target. Adaptive replaces the F16/F17
 
 ### Agent H — `/v2/generate/stream` through router + scheduler
 
-The three Rust crates (`mirage-cache`, `mirage-scheduler`, `mirage-router`)
+The three Rust crates (`repercep-cache`, `repercep-scheduler`, `repercep-router`)
 were importable but unused — the FastAPI handler in
-`src/mirage/serving/app.py` ran `engine.generate(...)` inline. This
+`src/repercep/serving/app.py` ran `engine.generate(...)` inline. This
 session adds a second API surface — `/v2/...` — that exercises the
 full Rust-core path while keeping `/v1/...` byte-stable for callers.
 
@@ -831,13 +831,13 @@ client receives NDJSON line.
 
 **Files landed**
 
-- `src/mirage/serving/driver.py` (new, 354 LOC) — the engine driver
+- `src/repercep/serving/driver.py` (new, 354 LOC) — the engine driver
   thread plus the `_SchedulerAdapter` that bridges the router's 2-arg
   `submit(id, priority)` to the scheduler's 3-arg
   `submit(id, priority, payload)` (the router crate doesn't forward the
   payload across the duck-typed `SchedulerHandle` seam; see
-  `crates/mirage-router/src/lib.rs::529`).
-- `src/mirage/serving/app.py` — adds a FastAPI `lifespan` context that
+  `crates/repercep-router/src/lib.rs::529`).
+- `src/repercep/serving/app.py` — adds a FastAPI `lifespan` context that
   builds Scheduler+Adapter+Router+Driver at startup and tears them down
   on shutdown. New routes: `POST /v2/generate/stream`,
   `POST /v2/generate/{id}/cancel`, `GET /v2/generate/{id}/state`. v1
@@ -881,7 +881,7 @@ Each NDJSON line is a `FrameChunk`-shaped JSON object plus two v2
 additions: `is_final: bool` and `pixels_b64: str` (base64 of the
 uint8 H×W×3 tensor). Field shape and key names match v1's
 `FrameChunk` so a future client migration is a URL swap. The
-driver-side encoder lives in `mirage.serving.driver.encode_frame_line`;
+driver-side encoder lives in `repercep.serving.driver.encode_frame_line`;
 the matching `decode_frame_line` is symmetric and used by the tests.
 
 ### Acceptance
@@ -908,20 +908,20 @@ the matching `decode_frame_line` is symmetric and used by the tests.
 
 ### Agent G — wire FP8 kernel into Cosmos via diffusers `_AttentionBackendRegistry`
 
-Session 9's F19 finding was that `MIRAGE_FP8_ATTENTION=1` was a no-op for
+Session 9's F19 finding was that `REPERCEP_FP8_ATTENTION=1` was a no-op for
 the Cosmos path — Cosmos goes through diffusers' own `dispatch_attention_fn`,
-not Mirage's `select_attention_op`. This session bridges that.
+not Repercep's `select_attention_op`. This session bridges that.
 
 **What landed**
 
-- `src/mirage/attention/diffusers_backend.py` (new) — registers a
-  `"mirage_fp8"` backend with diffusers'
+- `src/repercep/attention/diffusers_backend.py` (new) — registers a
+  `"repercep_fp8"` backend with diffusers'
   `_AttentionBackendRegistry`. Uses diffusers' published extension
-  surface: the `attention_backend("mirage_fp8")` context manager and
-  the `DIFFUSERS_ATTN_BACKEND=mirage_fp8` env var both resolve cleanly.
-- `src/mirage/models/cosmos.py` — `CosmosEngine.load()` calls
+  surface: the `attention_backend("repercep_fp8")` context manager and
+  the `DIFFUSERS_ATTN_BACKEND=repercep_fp8` env var both resolve cleanly.
+- `src/repercep/models/cosmos.py` — `CosmosEngine.load()` calls
   `diffusers_backend.maybe_activate_from_env()`, so
-  `MIRAGE_FP8_ATTENTION=1` now flips diffusers' active backend.
+  `REPERCEP_FP8_ATTENTION=1` now flips diffusers' active backend.
 - Shape routing in the backend: FP8 only when BF16 / FP16, Q/K/V same
   shape (self-attention), `head_dim ∈ {32, 64, 128, 256}`, `seq_len >=
   4096`, no mask / dropout / GQA / ParallelConfig. Otherwise the backend
@@ -938,12 +938,12 @@ Session 10 final clean sweep on the live MI300X VF (no contention):
 | Config | Wall | vs Session-9 |
 |---|--:|--:|
 | 121 f / 36 / `cache=adaptive thr=0.30` | **150.9 s** | 151.1 → 150.9, identical within noise |
-| same + `MIRAGE_FP8_ATTENTION=1` | **154.7 s** | identical to G's worktree 155.1 s |
+| same + `REPERCEP_FP8_ATTENTION=1` | **154.7 s** | identical to G's worktree 155.1 s |
 | Wan-2.2 17 f / 8 steps (smoke) | **326.2 s** (load 18.8 + gen 307) | — |
 
 The headline stays **adaptive caching at 150.9 s / 2.52× the H100
 reference**. FP8 backend wiring is verified (the dispatcher reads
-`"mirage_fp8"`, kernel runs in-pipeline, quality is preserved — motion
+`"repercep_fp8"`, kernel runs in-pipeline, quality is preserved — motion
 4.65 vs 4.64, mean abs pixel diff 6.81/255), but the kernel is **0.98×
 SDPA→aotriton at Cosmos's production shape (B=2, H=32, D=128, S=109k)** —
 a wash, ~3 % slower end-to-end.
@@ -972,7 +972,7 @@ main:
 - Peak HBM: **84.3 GiB** — comfortably under the 192 GiB envelope.
 
 **To our knowledge as of 2026-05-23 this is the first publicly reported
-Wan-2.2 T2V-A14B run on AMD MI300X via the diffusers path.** Mirage now
+Wan-2.2 T2V-A14B run on AMD MI300X via the diffusers path.** Repercep now
 serves two world-model families on AMD silicon end-to-end.
 
 ### State of the runtime after Session 10
@@ -1013,8 +1013,8 @@ grid wanted different tile sizes.
   already memoizes within a process. We layer a persistent JSON cache on
   top so the first kernel call in a fresh process skips the (~30 s)
   search when the shape was tuned before. Path is
-  ``~/.cache/mirage/fp8_autotune.json``, overridable via
-  ``MIRAGE_FP8_AUTOTUNE_CACHE`` so tests pin a tmp file and the
+  ``~/.cache/repercep/fp8_autotune.json``, overridable via
+  ``REPERCEP_FP8_AUTOTUNE_CACHE`` so tests pin a tmp file and the
   ``scripts/autotune_fp8.py`` runner pins its own.
 - **D13 — Add a manual search mode for noisy environments.** Triton's
   built-in autotuner uses ``do_bench`` with 50 ms warmup + 100 ms rep,
@@ -1035,7 +1035,7 @@ grid wanted different tile sizes.
   - A second decorated symbol ``_fp8_flash_attn_fwd_autotuned``
     (``triton.autotune(_fp8_flash_attn_fwd_impl)``) runs the search.
   - The Python launcher ``fp8_flash_attention(q, k, v, ...)`` resolves
-    the config in this order: (1) ``MIRAGE_FP8_DISABLE_AUTOTUNE=1`` →
+    the config in this order: (1) ``REPERCEP_FP8_DISABLE_AUTOTUNE=1`` →
     use the pre-tune fallback (BLOCK_M=128 / BLOCK_N=64 / w=4 / s=2);
     (2) cache hit on ``(B, H, Sq, Skv, D, causal)`` → launch
     ``_fp8_flash_attn_fwd_impl`` directly with the cached tile shape;
@@ -1126,20 +1126,20 @@ different program grid).
 
 Cache pre-populated via ``scripts/autotune_fp8.py --manual`` at S=109120,
 then a single 121 f / 36 step adaptive-cache run with
-``MIRAGE_FP8_ATTENTION=1``. Once Agent J's parallel Wan profile pass
+``REPERCEP_FP8_ATTENTION=1``. Once Agent J's parallel Wan profile pass
 finished and the GPU went quiet, this ran cleanly:
 
 | Config | Wall | Δ vs prior headline |
 |---|--:|--:|
 | 121 f / 36 / adaptive (Session 10 headline, no FP8) | 150.9 s | — |
-| 121 f / 36 / adaptive + ``MIRAGE_FP8_ATTENTION=1``, fixed M=128/N=64 (Session 10) | 154.7 s | +3.8 s (FP8 wiring lost) |
-| 121 f / 36 / adaptive + ``MIRAGE_FP8_ATTENTION=1`` + tuned M=256/N=128 (Session 11) | **141.7 s** | **−9.2 s vs 150.9, −13 s vs 154.7** |
+| 121 f / 36 / adaptive + ``REPERCEP_FP8_ATTENTION=1``, fixed M=128/N=64 (Session 10) | 154.7 s | +3.8 s (FP8 wiring lost) |
+| 121 f / 36 / adaptive + ``REPERCEP_FP8_ATTENTION=1`` + tuned M=256/N=128 (Session 11) | **141.7 s** | **−9.2 s vs 150.9, −13 s vs 154.7** |
 
 **FP8 is finally a wall-time win.** 141.7 s / 36 steps = 3.94 s/step,
 peak HBM 52.5 GiB, frames-per-second 0.854. The pre-tune FP8 path had
 the *wiring* but lost ~4 seconds to the wrong tile shape; with the
 tuned config, FP8 saves ~9 seconds end-to-end vs the SDPA→aotriton
-adaptive-only headline. New Mirage headline:
+adaptive-only headline. New Repercep headline:
 
 | | Wall time | vs NVIDIA H100 reference (~380 s) |
 |---|--:|--:|
@@ -1191,8 +1191,8 @@ special-casing.
 - ``docs/OPTIMIZATION.md`` — appended F21 measurements.
 - ``docs/BUILD_LOG.md`` — this entry.
 
-No changes to ``src/mirage/runtime/``, ``src/mirage/models/``,
-``src/mirage/serving/``, the diffusers backend wiring, or the Rust
+No changes to ``src/repercep/runtime/``, ``src/repercep/models/``,
+``src/repercep/serving/``, the diffusers backend wiring, or the Rust
 crates — Agent I's scope was strictly the kernel + tuning loop.
 
 ### Quality gate
@@ -1527,35 +1527,35 @@ is unchanged.
 
 #### Backend
 
-- `src/mirage/backend/cuda.py` — `CUDABackend` satisfying
-  `mirage.backend.protocol.Backend`. Detects via
+- `src/repercep/backend/cuda.py` — `CUDABackend` satisfying
+  `repercep.backend.protocol.Backend`. Detects via
   `torch.version.cuda is not None`. Maps `sm_XX` → `DeviceArch`:
   sm_90 → Hopper, sm_80 → Ampere, sm_89 → Ada. Capabilities:
   FP8 (e4m3fn + e5m2), flash-attention via flash-attn-3,
   torch.compile.
-- `src/mirage/backend/registry.py` — `_ALL_BACKENDS` now
+- `src/repercep/backend/registry.py` — `_ALL_BACKENDS` now
   `(ROCmBackend(), CUDABackend())`. AMD-first preserves the "MI300X
   is lead" tiebreaker (D15). `select_backend(prefer="cuda")` pins
   CUDA explicitly when needed.
 
 #### Attention ops (three new)
 
-- `src/mirage/attention/hopper_flash.py` — `HopperFlashAttention`
+- `src/repercep/attention/hopper_flash.py` — `HopperFlashAttention`
   wrapping `flash_attn_interface.flash_attn_func` (the FA-3 entry
   point on Hopper) with a `flash_attn.flash_attn_func` FA-2 fallback
   when the FA-3 wheel is older than the import-by-interface API.
   Supported dtypes: FP16, BF16, FP8 (delegated to the FP8 op tree);
   supported head_dims: 64, 128, 256.
-- `src/mirage/attention/fp8_hopper_triton.py` +
+- `src/repercep/attention/fp8_hopper_triton.py` +
   `kernels/triton_kernels/fp8_flash_attn_hopper.py` — Hopper FP8
   Triton FA-2. `tl.float8e4nv` (e4m3fn, FP8_MAX=448) not
   `tl.float8e4b8` (gfx942's fnuz, FP8_MAX=240). Larger tile sweep
   (Hopper's 228 KiB SMEM/block admits 256×256 tiles the gfx942 LDS
   can't hold). Persistent autotune cache at
-  `~/.cache/mirage/fp8_autotune_hopper.json`. Same FA-2 algorithm
+  `~/.cache/repercep/fp8_autotune_hopper.json`. Same FA-2 algorithm
   as the gfx942 sibling; same `_fp8_flash_attn_fwd_impl` +
   `_fp8_flash_attn_fwd_autotuned` + JSON-cache pattern.
-- `src/mirage/attention/transformer_engine.py` —
+- `src/repercep/attention/transformer_engine.py` —
   `TransformerEngineAttention` wrapping
   `transformer_engine.pytorch.DotProductAttention` with the default
   `DelayedScaling` FP8 recipe. Registers only when TE imports
@@ -1564,7 +1564,7 @@ is unchanged.
 
 #### Registry + selection
 
-- `src/mirage/attention/registry.py` — `select_attention_op` grows an
+- `src/repercep/attention/registry.py` — `select_attention_op` grows an
   NVIDIA vendor branch in addition to the existing AMD branch. Order
   on NVIDIA: TE (if available + FP8 env) → FP8 Hopper Triton (if env
   + shape) → FA-3 / FA-2 (`HopperFlashAttention`) → naive SDPA.
@@ -1628,13 +1628,13 @@ port is below the seam, not above it.**
   not a single parameterized kernel.
 
 - **F26 — The H100 port closes a real methodology gap.** `METHODOLOGY.md`
-  §3 was honest that the 2.68× claim is system-vs-system: Mirage's
+  §3 was honest that the 2.68× claim is system-vs-system: Repercep's
   optimized MI300X stack vs NVIDIA's published H100 reference (no
   cache, no FP8 stack disclosed). The skeptic's correct question
-  ("but what if you ran Mirage's own stack on the same H100?") had
+  ("but what if you ran Repercep's own stack on the same H100?") had
   no answer because no H100 was attached to the project. The
   Session 14 port lets us answer it directly in Session 15. Note
-  the answer can go either way (Mirage on H100 might be faster
+  the answer can go either way (Repercep on H100 might be faster
   than on MI300X by exactly the 1.24× silicon ratio, which
   *strengthens* the MI300X claim; or by more, which calibrates how
   much of the MI300X gap is silicon vs Hopper-specific kernel
@@ -1661,7 +1661,7 @@ port is below the seam, not above it.**
   unoptimized at the production shape. The AMD perf win came from
   beating aotriton; on H100, cuDNN-FA3 is the harder bar.
 
-  Autotune correctly populated `~/.cache/mirage/fp8_autotune_hopper.json`
+  Autotune correctly populated `~/.cache/repercep/fp8_autotune_hopper.json`
   with winning configs (all four converged on
   `BLOCK_M=128, BLOCK_N=128, num_warps=8, num_stages=2`). The grid
   needs Hopper-specific expansion (true WGMMA-shaped tiles, TMA-aware
@@ -1670,9 +1670,9 @@ port is below the seam, not above it.**
 
   **The right v0 recommendation on Hopper is TransformerEngine.** TE
   wraps cuDNN flash-attn-3 + an FP8 recipe natively; the Triton path
-  is shipped for parity (the Mirage-owned kernel ships on both
+  is shipped for parity (the Repercep-owned kernel ships on both
   vendors) and for cases where TE's install is impractical, but it is
-  not the headline FP8 path on this hardware. The `MIRAGE_FP8_ATTENTION=te`
+  not the headline FP8 path on this hardware. The `REPERCEP_FP8_ATTENTION=te`
   subvalue selects TE; `=1` defaults to Triton for sibling parity with
   AMD. ADR-0006 §"Revisit if" already calls this out as a trigger to
   flip the default if Session 15 confirms it.
@@ -1710,7 +1710,7 @@ port is below the seam, not above it.**
   WGMMA-aware tile sizing (Hopper's 64-wide warpgroup MMA wants
   multiples of 64 along the M axis), TMA-aware K/V loads, deeper SW
   pipelining (num_stages ∈ {4, 5}). Until then, TE is the right
-  Hopper FP8 path; `MIRAGE_FP8_ATTENTION=1` on Hopper should be
+  Hopper FP8 path; `REPERCEP_FP8_ATTENTION=1` on Hopper should be
   treated as "demonstration that the kernel runs," not a perf-on
   setting. ADR-0006 §"Revisit if" trigger is now armed.
 
@@ -1728,7 +1728,7 @@ port is below the seam, not above it.**
   (serialized writes), then run the benchmark against the warm
   cache. This is a *plumbing* problem, not an architectural one;
   the WanEngine path through CUDABackend is verified by the
-  existing Mirage tests.
+  existing Repercep tests.
 
 ### State of the runtime after Session 14
 
@@ -1754,7 +1754,7 @@ port is below the seam, not above it.**
 121 f @ 1280×704, 36 steps, BF16, seed=0, single prompt — same
 configuration as the MI300X reference:
 
-| Config | Wall | Peak HBM | s/step | vs NVIDIA pub. (~380 s) | vs Mirage MI300X |
+| Config | Wall | Peak HBM | s/step | vs NVIDIA pub. (~380 s) | vs Repercep MI300X |
 |---|--:|--:|--:|--:|--:|
 | Baseline (no cache) | 446.3 s | 52.5 GiB | 12.4 | 0.85× | 1.05× faster than 470 s |
 | Adaptive cache (thr=0.30) | **138.4 s** | 52.5 GiB | 3.84 | **2.75×** | 1.11× faster than 154 s |
@@ -1763,14 +1763,14 @@ configuration as the MI300X reference:
 | Smoke (17 f / 8 steps, warm) | 10.7 s | 28.4 GiB | 1.34 | — | comparable to MI300X 45 s |
 
 **Stack-vs-stack on the same silicon (the apples-to-apples
-comparison the original METHODOLOGY.md §3 was missing):** Mirage on
-H100 at the adaptive headline (138.4 s) and Mirage on MI300X at the
+comparison the original METHODOLOGY.md §3 was missing):** Repercep on
+H100 at the adaptive headline (138.4 s) and Repercep on MI300X at the
 same configuration (154 s) — **silicon delta = 1.113×**, not the
-1.24× the original Mirage-MI300X-vs-NVIDIA-published-H100 framing
+1.24× the original Repercep-MI300X-vs-NVIDIA-published-H100 framing
 implied. The 24 % delta was overwhelmingly *stack*, not silicon.
 This **strengthens** the MI300X 2.68× claim, not weakens it: the
 optimization stack is the win; MI300X is essentially tied with H100
-silicon-for-silicon when both run Mirage's path.
+silicon-for-silicon when both run Repercep's path.
 
 ### Open after Session 14
 
@@ -1799,7 +1799,7 @@ silicon-for-silicon when both run Mirage's path.
   grid with WGMMA-aware tiles (M ∈ {64, 128, 192, 256} × N ∈ {64,
   128, 256} × num_stages ∈ {2, 3, 4, 5}), add TMA-based K/V loads
   via `tl.make_tensor_descriptor`. Goal: beat cuDNN-FA3 at the
-  Cosmos production shape, restoring `MIRAGE_FP8_ATTENTION=1` as a
+  Cosmos production shape, restoring `REPERCEP_FP8_ATTENTION=1` as a
   perf-on setting on Hopper.
 - **The MI300X-side Truly-open list from Session 13 remains open**
   (FVD at N ≥ 1000, HIP FP8 correctness, continuous batching,
@@ -1884,7 +1884,7 @@ enforces a *write-rate* quota that's independent of disk-space
 quota (`df` shows 138 TiB free, every new `close()` / `fsync()` to
 `/workspace` returns `EDQUOT` "Disk quota exceeded").  Tripped
 ~3 min after starting the Wan-A14B parallel download (~25 GiB
-partial) alongside the editable Mirage install (~3 000 file creates
+partial) alongside the editable Repercep install (~3 000 file creates
 from `uv pip install -e`).  Symptom: file open + write succeed,
 `close()` discards data, the inode persists at 0 bytes.
 
@@ -1900,7 +1900,7 @@ Mitigation in-session (everything moved off `/workspace`):
   land in `/tmp`);
 - FA-3 source build done entirely in `/tmp/flash-attention` so no
   hopper/build artefacts touch `/workspace`;
-- `mirage-snapshot` git clone in `/tmp` for the snapshot commits that
+- `repercep-snapshot` git clone in `/tmp` for the snapshot commits that
   this BUILD_LOG entry is part of.
 
 The Session-15 throttle lasted >55 min, much longer than any
@@ -1924,7 +1924,7 @@ short-circuit refs writes when the file already exists.
 
 ### F31a — Cosmos engine `DEFAULT_REPO` vs README naming mismatch
 
-`mirage.models.cosmos.DEFAULT_REPO ==
+`repercep.models.cosmos.DEFAULT_REPO ==
 "nvidia/Cosmos-1.0-Diffusion-7B-Text2World"` (the diffusers-format
 mirror) but the project README + COSMOS_ON_MI300X.md use the
 marketing name `Cosmos-Predict-7B` (which on HF is
@@ -2001,7 +2001,7 @@ is not None` at call time and conditionally include the kwarg.
 Detection by pipeline config rather than repo_id means any future
 Wan variant works without an allow-list.
 
-### F40 — `MIRAGE_FP8_ATTENTION=fa` bridge does not engage on `WanTransformer3DModel`
+### F40 — `REPERCEP_FP8_ATTENTION=fa` bridge does not engage on `WanTransformer3DModel`
 
 Cosmos under the same bridge gets a 3.81× wall-time speedup over
 torch SDPA (cuDNN-FA3) — see `SESSION_16_CLOSE.md` §2.  Wan H100
@@ -2017,10 +2017,10 @@ or going through a per-block flag that doesn't read the active
 backend.
 
 **Confirmed empirically.**  `scripts/trace_wan_attention.py`
-patches `_mirage_fp8_attention`, `_native_fallback`, AND
+patches `_repercep_fp8_attention`, `_native_fallback`, AND
 `torch.nn.functional.scaled_dot_product_attention` with counters,
 then runs one 17 f / 4 step Wan smoke under
-`MIRAGE_FP8_ATTENTION=fa`.  Result:
+`REPERCEP_FP8_ATTENTION=fa`.  Result:
 
 ```
 === ATTENTION DISPATCHER COUNTERS ===
@@ -2034,16 +2034,16 @@ then runs one 17 f / 4 step Wan smoke under
 780 SDPA calls over 4 steps × 2 CFG forwards × ~98 attention
 sublayers ≈ 195 calls / step / forward, consistent with Wan A14B's
 30 transformer blocks × ~3 attention paths (self + cross) per block.
-The Mirage diffusers bridge is a dead lever on Wan today.
+The Repercep diffusers bridge is a dead lever on Wan today.
 
-Until that's fixed, FA-3 is dead weight on Wan and `MIRAGE_FP8_
+Until that's fixed, FA-3 is dead weight on Wan and `REPERCEP_FP8_
 ATTENTION=fa` is informational, not load-bearing.  Wired into
 `docs/WAN_ON_H100.md` Caveats and Reproduce sections.
 
 **Fix paths**, ranked by surface area:
 
 1. **Diffusers `set_attn_processor` API.**  Inject a custom
-   `WanAttnProcessor` that calls `mirage.attention.select_attention_op`
+   `WanAttnProcessor` that calls `repercep.attention.select_attention_op`
    directly.  Targeted to Wan, doesn't perturb other models.
 2. **Monkey-patch `torch.nn.functional.scaled_dot_product_attention`**
    inside `WanEngine.load()` for the duration of the run.  Heavy
@@ -2067,7 +2067,7 @@ installed on H100, the SDPA route can land on a different cuDNN
 algorithm and outputs differ in the 4th decimal (within bf16 noise
 but well above 1e-5).
 
-Not a regression caused by Session 17 code changes (`src/mirage`
+Not a regression caused by Session 17 code changes (`src/repercep`
 edits this session are wan.py only).  Fix is a separate test
 patch — `atol=1e-2, rtol=1e-2` or convert to fp32 before the
 allclose.
@@ -2089,7 +2089,7 @@ on H100.  Three real findings worth recording for follow-up
 ### F42 — FP8 "Hopper" Triton kernel is in fact sm_89+ portable; rename / re-document is overdue
 
 `kernels/triton_kernels/fp8_flash_attn_hopper.py` and
-`src/mirage/attention/fp8_hopper_triton.py` are named "Hopper"
+`src/repercep/attention/fp8_hopper_triton.py` are named "Hopper"
 because they were developed on H100 (Session 11 autotune, Session
 14 wiring) as the NVIDIA sibling of the gfx942 (MI300X) FP8
 Triton kernel.  The naming is silicon-family shorthand: nothing
@@ -2115,7 +2115,7 @@ Two follow-up items:
    applicability.  Not a Session 18 edit (this session's `src/`
    write surface is doc-only) — flagged for Item I or a
    later session.
-2. **Autotune cache key.**  `~/.cache/mirage/fp8_autotune_
+2. **Autotune cache key.**  `~/.cache/repercep/fp8_autotune_
    hopper.json` does not include the device's SM count or arch
    in its cache key — only `(B, H, Sq, Skv, D, causal)`.  This
    was fine when only H100 ran the kernel; with Ada also running
@@ -2131,13 +2131,13 @@ Two follow-up items:
 ### F43 — `AttentionOp` Protocol does not declare `available`; some ops have it, some don't
 
 Surfaced while running the F40-style dispatch verification on Ada
-(`MIRAGE_FP8_ATTENTION=fa python3 -c "...; print('op:', op.name,
+(`REPERCEP_FP8_ATTENTION=fa python3 -c "...; print('op:', op.name,
 'available:', op.available)"`).  `NaiveAttention` raises
 `AttributeError: 'NaiveAttention' object has no attribute
 'available'`; `HopperFlashAttention`, `FP8HopperTritonAttention`,
 and `TransformerEngineAttention` all expose `available: bool`.
 
-Source: `src/mirage/attention/protocol.py` declares only `name`,
+Source: `src/repercep/attention/protocol.py` declares only `name`,
 `supports`, and `__call__`.  The `available` attribute is a
 convention some ops adopted for their `supports()` short-circuits
 (an op whose backing library isn't importable returns False from
@@ -2182,7 +2182,7 @@ warpgroup fences, `tl.async_copy`) are avoided.
 Files landed in this finding:
 - `kernels/triton_kernels/fp8_flash_attn_ada.py` — kernel (sibling
   of `fp8_flash_attn_hopper.py`; ~100 KiB SMEM-tuned config grid).
-- `src/mirage/attention/fp8_ada_triton.py` — `AttentionOp` wrapper
+- `src/repercep/attention/fp8_ada_triton.py` — `AttentionOp` wrapper
   with `torch.cuda.get_device_capability() == (8, 9)` silicon gate.
 - `tests/test_fp8_attention_ada.py` — 10 tests, 9 pass on Ada
   (1 skipped on Ada because it exercises the off-Ada path).
@@ -2230,22 +2230,22 @@ long-S crossover and re-tune.
 
 ### F45 — F40 fix-path 1 lands: Wan diffusers bridge now engages on H100
 
-Session 19 wired `mirage.attention.wan_processor.maybe_install_mirage_
+Session 19 wired `repercep.attention.wan_processor.maybe_install_repercep_
 wan_attention(pipe)` into `WanEngine.load()`.  The processor finds
 `diffusers.models.transformers.transformer_wan.WanAttnProcessor`,
-sets its `_attention_backend` to Mirage's registered `mirage_fp8`
+sets its `_attention_backend` to Repercep's registered `repercep_fp8`
 backend, and installs it via `transformer.set_attn_processor(...)`
 on both `transformer` and `transformer_2` (MoE).  This is
 F40 fix-path 1 from F40's recommendations.
 
 **Confirmed empirically on H100.**  Re-running
 `scripts/trace_wan_attention.py --small --frames 17 --steps 8`
-under `MIRAGE_FP8_ATTENTION=fa` on TI2V-5B:
+under `REPERCEP_FP8_ATTENTION=fa` on TI2V-5B:
 
 ```
 === ATTENTION DISPATCHER COUNTERS ===
   torch.F.scaled_dot_product_attention (direct)   1100
-  mirage_fp8_attention (dispatcher entry)         960
+  repercep_fp8_attention (dispatcher entry)         960
   native_fallback -> SDPA (fallback)              960
 
 === VERDICT ===
@@ -2275,7 +2275,7 @@ the DiT dominates wall time, not the VAE or text encoder.
 incremental move on Wan is installing `flash-attn` (or
 `flash-attn-3`) in the H100 venv and re-running the same trace —
 expected counter: `native_fallback -> FA-3 = 960`.  After that,
-benchmark `MIRAGE_FP8_ATTENTION=fa` Wan TI2V-5B 17f/8 wall time
+benchmark `REPERCEP_FP8_ATTENTION=fa` Wan TI2V-5B 17f/8 wall time
 against the un-bridged baseline to quantify the FA-3 lift on Wan.
 
 ### F46 — Cosmos H100 + Wan TI2V-5B headlines reproduce on a fresh build env
@@ -2283,7 +2283,7 @@ against the un-bridged baseline to quantify the FA-3 lift on Wan.
 Closing the session-19 follow-up of "re-verify the load-bearing
 numbers before close."  Both ran on the same H100 80GB HBM3 pod,
 torch 2.11.0+cu128, diffusers 0.37.1, **without** `flash-attn`
-installed (so `MIRAGE_FP8_ATTENTION=fa` activates the diffusers
+installed (so `REPERCEP_FP8_ATTENTION=fa` activates the diffusers
 bridge but falls through to SDPA→cuDNN-FA-3 rather than the FA-3
 Python wrapper).
 
@@ -2344,7 +2344,7 @@ it's re-validated.
 
 **Take-away.**  The 3.73-3.81 × Cosmos H100 claim is robust across
 session boundaries and venv resets — same diffusers, same torch,
-same `MIRAGE_FP8_ATTENTION=fa` env, same cache config, same numbers.
+same `REPERCEP_FP8_ATTENTION=fa` env, same cache config, same numbers.
 
 ### F47 — Cosmos H100 no-cache baseline drops 28 % vs Session 14: framework overhead gone
 
@@ -2356,7 +2356,7 @@ multi-prompt mean.
 Config: identical to F46 except `--cache-mode none` (cache disabled):
 
 ```
-MIRAGE_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python -u \
+REPERCEP_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src .venv/bin/python -u \
     scripts/run_cosmos.py --frames 121 --steps 36 --native-loop \
     --cache-mode none
 ```
@@ -2396,13 +2396,13 @@ tiles for Cosmos's shape under the newer torch.  An ablation
 | step | wall time | factor vs NVIDIA pub. (~380 s) | what changed |
 |---|---|---|---|
 | NVIDIA published H100 reference | ~380 s | 1.00 × | TE + Apex + NATTEN + FA-3, no cache disclosed |
-| **Mirage no-cache (Session 20, this pod)** | **320.9 s** | **1.18 × (we're faster)** | diffusers 0.37.1 + native loop + cuDNN-FA-3 SDPA, BF16, no cache |
-| Mirage + adaptive cache (thr=0.30) | 101.8 s | **3.73 ×** | + TeaCache-style step-skip in `mirage.runtime.denoise.denoise_cosmos_video` |
+| **Repercep no-cache (Session 20, this pod)** | **320.9 s** | **1.18 × (we're faster)** | diffusers 0.37.1 + native loop + cuDNN-FA-3 SDPA, BF16, no cache |
+| Repercep + adaptive cache (thr=0.30) | 101.8 s | **3.73 ×** | + TeaCache-style step-skip in `repercep.runtime.denoise.denoise_cosmos_video` |
 
 - **Cache lever on this pod: 320.9 / 101.8 = 3.15 ×** (vs 2.75 × in
   POSITIONING.md, based on Session 14's stack).  The cache itself is
   doing slightly more work because the baseline floor moved down.
-- **Mirage's no-cache path is now faster than NVIDIA's published
+- **Repercep's no-cache path is now faster than NVIDIA's published
   reference** — the Session 14 "our framework layer costs us ~17 %"
   framing in POSITIONING.md (lines 99-101) is no longer true on this
   stack.  Multi-prompt re-measure would be needed before promoting
@@ -2414,7 +2414,7 @@ Nothing in *direction*, much in *attribution*:
 
 - The headline (**~100 s on H100, ~3.8 × NVIDIA pub**) holds on both
   Session 14's stack and Session 20's stack.  Robust.
-- POSITIONING.md's bullet "Mirage's own diffusers wrapping is slower
+- POSITIONING.md's bullet "Repercep's own diffusers wrapping is slower
   than NVIDIA's bespoke cosmos-predict1 pipeline at the no-cache
   config (446 vs 380 s).  This is honest — our overhead at the
   framework layer costs us ~17 %" should be revisited.  On the

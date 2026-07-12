@@ -1,7 +1,7 @@
-"""Build script for the Mirage AMX BF16 flash-attention C++ extension.
+"""Build script for the Repercep AMX BF16 flash-attention C++ extension.
 
 Sits next to the GPU Triton kernels and is built on demand by the wrapper in
-``src/mirage/attention/amx_flash.py``.
+``src/repercep/attention/amx_flash.py``.
 
 Invoke as::
 
@@ -27,9 +27,9 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 # Fail fast on CPUs that cannot run the kernel at all.
 # ---------------------------------------------------------------------------
 def _require_amx_bf16() -> None:
-    if os.environ.get("MIRAGE_AMX_FORCE_BUILD") == "1":
+    if os.environ.get("REPERCEP_AMX_FORCE_BUILD") == "1":
         print(
-            "[amx-bf16] MIRAGE_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
+            "[amx-bf16] REPERCEP_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
             "(compile-only smoke).",
             file=sys.stderr,
         )
@@ -90,9 +90,9 @@ EXTRA_LINK_ARGS = ["-fopenmp"]
 
 
 setup(
-    name="mirage_amx_attn",
+    name="repercep_amx_attn",
     version="0.1.0",
-    description="Intel AMX BF16 flash-attention kernel for Mirage (CPU sibling "
+    description="Intel AMX BF16 flash-attention kernel for Repercep (CPU sibling "
                 "of the GPU Triton kernels).",
     ext_modules=[
         CppExtension(

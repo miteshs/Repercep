@@ -6,7 +6,7 @@
 
 ## Context
 
-The Mirage Implementation Plan (§1.2, §1.4 Decision 3) sequences hardware as:
+The Repercep Implementation Plan (§1.2, §1.4 Decision 3) sequences hardware as:
 H100 first, H200 fast-follow, and MI300X *or* Jetson Thor as a Phase-5 second
 target around Month 12–18. The reasoning was that NVIDIA documents Cosmos
 inference characteristics in detail, which de-risks the baseline measurement.

@@ -37,7 +37,7 @@ kernels/cpu/*/*.so
 # uv lockfile — repo flow is `uv venv` / `uv pip install`, not `uv sync`
 uv.lock
 
-# repercep.ai marketing site (published separately, not Mirage source)
+# repercep.ai marketing site (published separately, not Repercep source)
 site/
 *.pdf
 

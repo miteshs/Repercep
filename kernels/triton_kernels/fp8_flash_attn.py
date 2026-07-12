@@ -1,7 +1,7 @@
 """FP8 flash-attention Triton kernel for CDNA3 (gfx942).
 
 This is the *kernel-layer* code — no abstractions, no Protocols.  The thin
-loader in ``src/mirage/attention/fp8_triton.py`` wraps it as an ``AttentionOp``.
+loader in ``src/repercep/attention/fp8_triton.py`` wraps it as an ``AttentionOp``.
 
 Algorithm: standard FlashAttention-2 (Dao 2023) — tile Q over the
 sequence axis, stream K/V tiles through, maintain a running max + running
@@ -53,12 +53,12 @@ FP8_E4M3_MAX = 240.0
 
 # Persistent shape→config cache.  One autotune per (B, H, Sq, Skv, D, causal)
 # per host; the winner is recorded on disk and reused across processes.  Path
-# is overridable via MIRAGE_FP8_AUTOTUNE_CACHE so tests can pin a tmp file.
-_DEFAULT_CACHE_PATH = Path.home() / ".cache" / "mirage" / "fp8_autotune.json"
+# is overridable via REPERCEP_FP8_AUTOTUNE_CACHE so tests can pin a tmp file.
+_DEFAULT_CACHE_PATH = Path.home() / ".cache" / "repercep" / "fp8_autotune.json"
 
 
 def _cache_path() -> Path:
-    override = os.environ.get("MIRAGE_FP8_AUTOTUNE_CACHE")
+    override = os.environ.get("REPERCEP_FP8_AUTOTUNE_CACHE")
     if override:
         return Path(override)
     return _DEFAULT_CACHE_PATH
@@ -402,11 +402,11 @@ def fp8_flash_attention(
 
     Resolution order for the launch config:
 
-    1. If ``MIRAGE_FP8_DISABLE_AUTOTUNE`` is set, use ``_FALLBACK_CONFIG``
+    1. If ``REPERCEP_FP8_DISABLE_AUTOTUNE`` is set, use ``_FALLBACK_CONFIG``
        (the pre-tune tile shape — useful for A/B comparisons).
     2. Otherwise check the persistent JSON cache at
-       ``~/.cache/mirage/fp8_autotune.json`` (or
-       ``$MIRAGE_FP8_AUTOTUNE_CACHE``) for a winning config keyed on
+       ``~/.cache/repercep/fp8_autotune.json`` (or
+       ``$REPERCEP_FP8_AUTOTUNE_CACHE``) for a winning config keyed on
        ``(B, H, Sq, Skv, D, causal)``.  Hit: launch the fixed-config
        kernel.  Miss: fall through.
     3. On cache miss: dispatch through the ``@triton.autotune``-decorated
@@ -442,7 +442,7 @@ def fp8_flash_attention(
 
     out = torch.empty_like(q, dtype=torch.float32)
 
-    disable_autotune = os.environ.get("MIRAGE_FP8_DISABLE_AUTOTUNE", "")
+    disable_autotune = os.environ.get("REPERCEP_FP8_DISABLE_AUTOTUNE", "")
     if disable_autotune in ("1", "true", "on"):
         cfg = dict(_FALLBACK_CONFIG)
         autotune_used = False

@@ -1,4 +1,4 @@
-# Mirage v0.1 — announcement drafts
+# Repercep v0.1 — announcement drafts
 
 *Pre-publication. Read `docs/RELEASE_NOTES_v0.1.md` first; this file is
 the social / distribution layer. Pick a channel below and ship.*
@@ -62,12 +62,12 @@ the social / distribution layer. Pick a channel below and ship.*
 ## Option 2 — Hacker News submission
 
 **Title (≤80 chars):**
-> Show HN: Mirage — Cosmos-Predict-7B on AMD MI300X, 2.68× faster than H100 reference
+> Show HN: Repercep — Cosmos-Predict-7B on AMD MI300X, 2.68× faster than H100 reference
 
 **First comment (anchors the discussion to the honest framing):**
 
 > Author here. The 2.68× is a shipped-system-vs-shipped-system comparison:
-> Mirage's adaptive caching + a tuned FP8 Triton kernel composed against
+> Repercep's adaptive caching + a tuned FP8 Triton kernel composed against
 > NVIDIA's published Cosmos reference (~380 s on H100, no caching).
 >
 > Raw hardware-only: MI300X is ~1.24× slower than H100 at the same
@@ -104,7 +104,7 @@ NVIDIA-specific dependencies. (Reference: `docs/adr/0002` and the
 "first publicly reported" diligence catalog in `COSMOS_ON_MI300X.md`.)
 
 #### 2. The wedge (250 words)
-Why MI300X first, not H100 fast-follow. The Mirage Implementation Plan
+Why MI300X first, not H100 fast-follow. The Repercep Implementation Plan
 (§5.4 + §7.1) explicitly named non-NVIDIA silicon as the defensible
 wedge for a world-model runtime — on NVIDIA, NIM and TensorRT-LLM are
 free and bundled; on AMD, there was no production-grade WM serving at
@@ -173,7 +173,7 @@ documented.
 Phase 2 of the plan said: prove the runtime is WM-native, not Cosmos-
 specific. Wan-2.2-T2V-A14B (Alibaba's MoE flagship; 14 B active per
 step; ~52 GiB BF16 weights, 118 GiB total snapshot) runs end-to-end
-through Mirage on the same MI300X. 81 f / 40 step quality reference
+through Repercep on the same MI300X. 81 f / 40 step quality reference
 at ~1700 s steady-state, 85 GiB peak. ~1.6× behind the Wan team's
 single-H100 reference (1041 s with FP8 + offload). To our knowledge,
 the first publicly reported Wan-2.2-T2V-A14B number on any AMD MI300X
@@ -182,7 +182,7 @@ full H100 / 8×H100 / A100 catalog and the small-MI355X-MLPerf
 datapoint.)
 
 #### 6. The Rust core (200 words)
-The Mirage codebase is polyglot by design: Python surface (model
+The Repercep codebase is polyglot by design: Python surface (model
 loading, denoise loop, attention, FastAPI), Rust core (cache
 management, scheduler, request router, all PyO3-bound). v0.1 ships the
 three crates + the v2 serving path that routes through them. The
@@ -215,7 +215,7 @@ when cutting v0.1.
 
 - [ ] Bump `Cargo.toml` workspace version to `0.1.0` (currently `0.0.1`).
 - [ ] Bump `pyproject.toml` version to `0.1.0`.
-- [ ] Tag the release: `git tag -a v0.1.0 -m "Mirage Runtime v0.1.0"` +
+- [ ] Tag the release: `git tag -a v0.1.0 -m "Repercep Runtime v0.1.0"` +
       `git push origin v0.1.0`.
 - [ ] Cut a GitHub release from the tag, paste `RELEASE_NOTES_v0.1.md`.
 - [ ] Update the repo `README.md` headline number from "2.47× headline"

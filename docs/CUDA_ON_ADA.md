@@ -1,6 +1,6 @@
 # CUDA test sweep on NVIDIA RTX 2000 Ada (sm_89) — Session 18
 
-*First publicly reported Mirage-stack execution on Ada-Lovelace
+*First publicly reported Repercep-stack execution on Ada-Lovelace
 silicon.  All previous CUDA work on this repo (Sessions 14-17) was
 developed on H100 SXM5 (sm_90a, 80 GiB HBM3).  This sweep adds Ada
 (sm_89, 16 GiB GDDR6) as a second CUDA arch the runtime is known to
@@ -15,7 +15,7 @@ H100 hosts now actually run AND pass on Ada.
 
 ## TL;DR
 
-The Mirage NVIDIA backend is **arch-portable across the Hopper /
+The Repercep NVIDIA backend is **arch-portable across the Hopper /
 Ada boundary** within the structural and kernel-correctness layer:
 
 - All 9 `test_backend_cuda.py` tests pass on Ada — device
@@ -65,9 +65,9 @@ out of scope.
 
 The 110/5/17 totals omit four test modules that fail at collection
 on this environment for reasons unrelated to CUDA capability:
-`test_router.py`, `test_scheduler.py` (Rust `mirage_router` and
-`mirage_scheduler` extensions not built locally — they ship as
-stubs in `~/.local/lib/python3.12/site-packages/mirage_*/_native.py`),
+`test_router.py`, `test_scheduler.py` (Rust `repercep_router` and
+`repercep_scheduler` extensions not built locally — they ship as
+stubs in `~/.local/lib/python3.12/site-packages/repercep_*/_native.py`),
 and `test_serving.py`, `test_serving_v2.py` (no `fastapi`).  The
 sweep also skips `test_eval_cpu_quality.py` and `test_fvd.py` per
 the standing slow-suite ignore.
@@ -111,7 +111,7 @@ All 5 failures are **infrastructure issues, not CUDA-arch issues**.
 Nothing sm_89-specific failed:
 
 1. `tests/test_runtime.py::test_latent_cache_*` (×3) — the
-   `mirage_cache._native` stub installed in user site-packages has
+   `repercep_cache._native` stub installed in user site-packages has
    `class PagedLatentCache: pass`, so `PagedLatentCache(num_pages=4)`
    raises `TypeError: PagedLatentCache() takes no arguments`.  Fix
    is to build the Rust extension (`cargo build --release` +
@@ -146,7 +146,7 @@ identically on H100 in this install state.
 
 ### FP8 Hopper Triton kernel: numerically arch-portable Ada ↔ Hopper
 
-The Mirage FP8 Triton attention kernel at
+The Repercep FP8 Triton attention kernel at
 `kernels/triton_kernels/fp8_flash_attn_hopper.py` is named "Hopper"
 and was developed on H100 (Session 11 / Session 14, autotune cache
 at `fp8_autotune_hopper.json`).  On Ada (sm_89) it:
@@ -199,14 +199,14 @@ is correct on Ada; the FP8 capability advertisement is correct
 ## F40-style dispatch verification on Ada
 
 `docs/BUILD_LOG.md` F40 records that the diffusers bridge
-`MIRAGE_FP8_ATTENTION=fa` value does not engage on
+`REPERCEP_FP8_ATTENTION=fa` value does not engage on
 `WanTransformer3DModel`.  This sweep verifies the related but
 distinct dispatch-disqualification path: **what does
 `select_attention_op(H100_arch, shape, BF16)` pick when the env
 asks for FP8 / FA on an Ada host where `flash_attn` is not
 installed?**
 
-| `MIRAGE_FP8_ATTENTION` | Selected op | `available` |
+| `REPERCEP_FP8_ATTENTION` | Selected op | `available` |
 |---|---|---|
 | (unset) | `naive-sdpa` | (attr absent) |
 | `1` | `fp8-hopper-triton-flash` | `True` |
@@ -216,7 +216,7 @@ installed?**
 
 Three things this confirms:
 
-1. **The `MIRAGE_FP8_ATTENTION=fa` env value is not in the
+1. **The `REPERCEP_FP8_ATTENTION=fa` env value is not in the
    registry's `_FP8_TRUTHY` set** — it is currently
    `("1", "true", "on", "triton", "scaled_mm", "te",
    "transformer_engine")`.  With `fa`, FP8 is disabled, only the
@@ -227,7 +227,7 @@ Three things this confirms:
    in fact informational at the registry-shape level on any host
    without flash-attn.  The "fa" bridge engagement happens in the
    `diffusers_backend.py` bridge, not in `select_attention_op`.
-2. **`MIRAGE_FP8_ATTENTION=1` / `=triton` correctly route to
+2. **`REPERCEP_FP8_ATTENTION=1` / `=triton` correctly route to
    `fp8-hopper-triton-flash` on Ada**, and that op runs and is
    numerically correct (3.54% vs SDPA).  The disqualification of
    `HopperFlashAttention` (flash-attn missing) and of
@@ -237,7 +237,7 @@ Three things this confirms:
    the shape.
 3. **`NaiveAttention` has no `available` attribute** —
    `op.available` raises `AttributeError`.  The `AttentionOp`
-   Protocol (`src/mirage/attention/protocol.py`) does not declare
+   Protocol (`src/repercep/attention/protocol.py`) does not declare
    `available`; it is a convention some ops implement.  Code that
    introspects an op's availability must use
    `getattr(op, "available", True)`.  Minor finding worth
@@ -258,7 +258,7 @@ coverage for the NVIDIA backend's portability layer**.  The
 `CUDABackend`, `select_attention_op`, FP8 Hopper Triton kernel, and
 device-properties probe are all known to work on at least two
 sm-archs now (sm_89 + sm_90a) rather than one.  When the project
-later wants to advertise "Mirage runs on NVIDIA RTX 40-series /
+later wants to advertise "Repercep runs on NVIDIA RTX 40-series /
 L4 / L40S / sm_89 in general", this sweep is the structural
 substrate that claim can rest on; the perf claim still needs an
 sm_89 card with enough VRAM to run a real model.
@@ -268,7 +268,7 @@ sm_89 card with enough VRAM to run a real model.
 ```bash
 # Use the system Python — torch 2.8.0+cu128 and triton 3.4.0 are
 # already installed at /usr/bin/python3.  No .venv on this host.
-cd <mirage-checkout>
+cd <repercep-checkout>
 PYTHONPATH=$(pwd)/src python3 -c "import torch; \
     print(torch.cuda.get_device_name(0), \
           torch.cuda.get_device_capability(0))"
@@ -291,11 +291,11 @@ PYTHONPATH=$(pwd)/src python3 -m pytest -q \
     --ignore=tests/test_serving_v2.py
 
 # F40-style dispatch verification
-MIRAGE_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src python3 -c "\
+REPERCEP_FP8_ATTENTION=fa PYTHONPATH=$(pwd)/src python3 -c "\
 import torch; \
-from mirage.attention.registry import select_attention_op; \
-from mirage.attention.types import AttentionShape, AttentionKind; \
-from mirage.hardware import H100, DType; \
+from repercep.attention.registry import select_attention_op; \
+from repercep.attention.types import AttentionShape, AttentionKind; \
+from repercep.hardware import H100, DType; \
 op = select_attention_op(H100, \
     AttentionShape(1,8,4096,4096,128,AttentionKind.FULL), \
     DType.BF16); \
@@ -308,11 +308,11 @@ print('op:', op.name, 'available:', getattr(op,'available','(n/a)'))"
   parallels.  Same backend, same kernels, different silicon.
 - `docs/BUILD_LOG.md` F27 — H100 FP8 Hopper Triton vs SDPA
   baseline (3.4% rel diff); compare with Ada 3.54% in this sweep.
-- `docs/BUILD_LOG.md` F40 — `MIRAGE_FP8_ATTENTION=fa` bridge
+- `docs/BUILD_LOG.md` F40 — `REPERCEP_FP8_ATTENTION=fa` bridge
   behaviour on `WanTransformer3DModel`; the verification here is
   the registry-level analogue.
-- `src/mirage/attention/registry.py` — the `_FP8_TRUTHY` env-value
+- `src/repercep/attention/registry.py` — the `_FP8_TRUTHY` env-value
   set and the NVIDIA branch's candidate ordering.
-- `src/mirage/attention/fp8_hopper_triton.py` +
+- `src/repercep/attention/fp8_hopper_triton.py` +
   `kernels/triton_kernels/fp8_flash_attn_hopper.py` — the kernel
   whose Ada-portability is the headline of this sweep.

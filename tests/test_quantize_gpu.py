@@ -1,4 +1,4 @@
-"""CPU-vs-CUDA parity tests for ``mirage.runtime.quantize`` (Item H).
+"""CPU-vs-CUDA parity tests for ``repercep.runtime.quantize`` (Item H).
 
 Sibling of ``test_quantize.py`` — that file validates the algorithm on the
 CPU side; this file validates that the *same* algorithm produces *the same*
@@ -23,7 +23,7 @@ skip_no_cuda = pytest.mark.skipif(not CUDA_AVAILABLE, reason="needs CUDA")
 @skip_no_cuda
 def test_quantize_cpu_cuda_bitwise_qweight_and_scale_ulp() -> None:
     """Same weight, two devices, same int8 bits + 1-ULP-tight scale match."""
-    from mirage.runtime.quantize import quantize_linear_symmetric
+    from repercep.runtime.quantize import quantize_linear_symmetric
 
     torch.manual_seed(0)
     weight_cpu = torch.randn(64, 128) * 2.0
@@ -59,7 +59,7 @@ def test_quantize_cpu_cuda_bitwise_qweight_and_scale_ulp() -> None:
 @skip_no_cuda
 def test_quantized_linear_module_forward_cpu_cuda_parity_bf16() -> None:
     """``QuantizedLinearModule.forward`` on CPU and CUDA agree within BF16 floor."""
-    from mirage.runtime.quantize import QuantizedLinearModule
+    from repercep.runtime.quantize import QuantizedLinearModule
 
     torch.manual_seed(1)
     linear = torch.nn.Linear(8, 16).to(torch.bfloat16)
@@ -82,7 +82,7 @@ def test_quantized_linear_module_forward_cpu_cuda_parity_bf16() -> None:
 @skip_no_cuda
 def test_replace_linears_with_quantized_on_cuda_module() -> None:
     """Replacing Linears on a module that's already on CUDA keeps state on CUDA."""
-    from mirage.runtime.quantize import (
+    from repercep.runtime.quantize import (
         QuantizedLinearModule,
         replace_linears_with_quantized,
     )
@@ -129,7 +129,7 @@ def test_cuda_quant_moved_to_cpu_matches_native_cpu_quant() -> None:
     (tree).  Dequantize on CPU from both sides and assert the result is
     within the budget that 1 ULP of scale * int8-range explains.
     """
-    from mirage.runtime.quantize import dequantize_linear, quantize_linear_symmetric
+    from repercep.runtime.quantize import dequantize_linear, quantize_linear_symmetric
 
     torch.manual_seed(3)
     weight_cpu = torch.randn(32, 48) * 1.5
@@ -140,7 +140,7 @@ def test_cuda_quant_moved_to_cpu_matches_native_cpu_quant() -> None:
 
     # Move the CUDA-quantized tensors to CPU and rebuild the dataclass so
     # ``dequantize_linear`` runs purely on CPU.
-    from mirage.runtime.quantize import QuantizedLinear
+    from repercep.runtime.quantize import QuantizedLinear
 
     q_cuda_on_cpu = QuantizedLinear(
         qweight=q_cuda.qweight.cpu(),

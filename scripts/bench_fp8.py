@@ -41,9 +41,9 @@ _setup_imports()
 
 import torch  # noqa: E402
 
-from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention  # noqa: E402
-from mirage.attention.fp8_triton import FP8TritonAttention  # noqa: E402
-from mirage.attention.naive import NaiveAttention  # noqa: E402
+from repercep.attention.fp8_scaled_mm import FP8ScaledMMAttention  # noqa: E402
+from repercep.attention.fp8_triton import FP8TritonAttention  # noqa: E402
+from repercep.attention.naive import NaiveAttention  # noqa: E402
 
 
 def _bench_one(

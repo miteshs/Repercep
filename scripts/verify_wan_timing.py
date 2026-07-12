@@ -10,7 +10,7 @@ right-sized.
 
 Usage::
 
-    MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
+    REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
         HF_HOME=/workspace/hf-cache \\
         .venv/bin/python scripts/verify_wan_timing.py --N 5
 """
@@ -62,9 +62,9 @@ def _run(cmd: list[str]) -> tuple[float, dict[str, Any] | None]:
     wall = time.monotonic() - t0
     result: dict[str, Any] | None = None
     for line in proc.stdout.splitlines() + proc.stderr.splitlines():
-        if line.startswith("[mirage] RESULT "):
+        if line.startswith("[repercep] RESULT "):
             with contextlib.suppress(json.JSONDecodeError):
-                result = json.loads(line[len("[mirage] RESULT "):])
+                result = json.loads(line[len("[repercep] RESULT "):])
     if proc.returncode != 0:
         print(f"  FAILED rc={proc.returncode}", file=sys.stderr)
         print(proc.stderr[-2000:], file=sys.stderr)

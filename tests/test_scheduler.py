@@ -3,7 +3,7 @@
 These mirror the Rust unit tests so we catch regressions that only show up
 across the PyO3 boundary (string/dict marshaling, GIL release behavior,
 exception type wiring). The Rust unit tests inside
-``crates/mirage-scheduler/src/lib.rs`` cover the algorithmic correctness;
+``crates/repercep-scheduler/src/lib.rs`` cover the algorithmic correctness;
 this file's job is to confirm the Python surface still says what we think.
 """
 
@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from mirage.runtime.scheduler import Scheduler, SchedulerError
+from repercep.runtime.scheduler import Scheduler, SchedulerError
 
 
 def test_submit_and_next_roundtrip() -> None:

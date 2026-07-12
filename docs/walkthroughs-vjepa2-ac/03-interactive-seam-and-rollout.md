@@ -2,14 +2,14 @@
 
 Part 2 gave us `get_vision_features(video) → (B, N, D)`. This part is the seam
 that turns that into a *rolling* world state you step with actions:
-`src/mirage/runtime/interactive.py` (the Protocol) and `src/mirage/models/
-vjepa2_ac.py` (`reset` / `step`). This is Mirage's own code.
+`src/repercep/runtime/interactive.py` (the Protocol) and `src/repercep/models/
+vjepa2_ac.py` (`reset` / `step`). This is Repercep's own code.
 
 ## 3.1 A different seam than Cosmos
 
 The Cosmos path uses `WorldModelEngine.generate(request) -> Iterator[Frame]` —
 one request, one stream, stateless. That cannot express a *loop* where the client
-injects an action each step. So Mirage adds a second Protocol,
+injects an action each step. So Repercep adds a second Protocol,
 `InteractiveWorldModel`:
 
 ```python
@@ -92,10 +92,10 @@ planner** run and be unit-tested on CPU with no weights.
 grows, then caps at `context_frames`:
 
 ```
-[mirage] reset: step=0 context=(2, 4)
-[mirage] step 1: context=(3, 4)
-[mirage] step 2: context=(4, 4)
-[mirage] step 3: context=(5, 4)
+[repercep] reset: step=0 context=(2, 4)
+[repercep] step 1: context=(3, 4)
+[repercep] step 2: context=(4, 4)
+[repercep] step 3: context=(5, 4)
 ```
 
 and `tests/test_interactive.py` (`test_reset_and_step_advance_context`,

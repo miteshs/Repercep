@@ -10,12 +10,12 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path as _Path
 
-from mirage.attention import AttentionKind, AttentionShape
-from mirage.attention.fp8_scaled_mm import FP8ScaledMMAttention
-from mirage.attention.fp8_triton import FP8TritonAttention
-from mirage.attention.naive import NaiveAttention
-from mirage.attention.protocol import AttentionOp
-from mirage.hardware import DType
+from repercep.attention import AttentionKind, AttentionShape
+from repercep.attention.fp8_scaled_mm import FP8ScaledMMAttention
+from repercep.attention.fp8_triton import FP8TritonAttention
+from repercep.attention.naive import NaiveAttention
+from repercep.attention.protocol import AttentionOp
+from repercep.hardware import DType
 
 _HAS_TORCH = importlib.util.find_spec("torch") is not None
 _HAS_TRITON = importlib.util.find_spec("triton") is not None
@@ -163,7 +163,7 @@ def test_fp8_autotune_cache_roundtrip(
 ) -> None:
     """Cache load/save round-trips through the kernel's helpers."""
     cache_path = tmp_path / "fp8_autotune.json"
-    monkeypatch.setenv("MIRAGE_FP8_AUTOTUNE_CACHE", str(cache_path))
+    monkeypatch.setenv("REPERCEP_FP8_AUTOTUNE_CACHE", str(cache_path))
 
     import sys
     from pathlib import Path
@@ -213,7 +213,7 @@ def test_fp8_autotune_cache_corruption_is_ignored(
     """A corrupt JSON cache must not crash the kernel — treat as a cache miss."""
     cache_path = tmp_path / "fp8_autotune.json"
     cache_path.write_text("{ this is not valid json")
-    monkeypatch.setenv("MIRAGE_FP8_AUTOTUNE_CACHE", str(cache_path))
+    monkeypatch.setenv("REPERCEP_FP8_AUTOTUNE_CACHE", str(cache_path))
 
     import sys
     from pathlib import Path

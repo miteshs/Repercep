@@ -58,7 +58,7 @@ frame_1             --action a2-->  conditioned denoise  -->  frame_2   ...
 
 Each step is a (short) denoise of the next chunk, conditioned on the action and
 the previously generated frames. That's a **closed-loop, action-conditioned,
-pixel** world model — the thing Part 2 maps onto Mirage's seam.
+pixel** world model — the thing Part 2 maps onto Repercep's seam.
 
 ## 1.4 Why pixels (the trade vs. V-JEPA)
 
@@ -78,7 +78,7 @@ appeal.
 
 ## 1.5 The honest part
 
-AVID is an **external method**; Mirage would *implement* it on top of Cosmos/Wan.
+AVID is an **external method**; Repercep would *implement* it on top of Cosmos/Wan.
 The load-bearing piece — the **trained adapter** — requires action-labelled video
 for the target domain (robotics, driving, a game), a training run, and a GPU.
 There is no shortcut and no stub that substitutes for it; everything in Part 2 is

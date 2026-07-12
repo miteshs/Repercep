@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Verify whether MIRAGE_FP8_ATTENTION=fa actually engages on Wan.
+"""Verify whether REPERCEP_FP8_ATTENTION=fa actually engages on Wan.
 
-Counter-based probe of the diffusers Mirage-bridge entry points. Patches
-``_mirage_fp8_attention`` and ``_native_fallback`` in
-``mirage.attention.diffusers_backend``, then runs one Wan smoke generation
-(17 f / 8 steps) with ``MIRAGE_FP8_ATTENTION=fa`` active.
+Counter-based probe of the diffusers Repercep-bridge entry points. Patches
+``_repercep_fp8_attention`` and ``_native_fallback`` in
+``repercep.attention.diffusers_backend``, then runs one Wan smoke generation
+(17 f / 8 steps) with ``REPERCEP_FP8_ATTENTION=fa`` active.
 
 If the bridge engages:
-  * ``mirage_fp8_attention`` calls > 0  (diffusers dispatcher routed to us)
+  * ``repercep_fp8_attention`` calls > 0  (diffusers dispatcher routed to us)
   * ``native_fallback (FA-3 path)`` calls > 0  (we delegated to HopperFlashAttention)
   * ``native_fallback (SDPA path)`` should be 0 unless conditions disqualify
 
 If F40 is real (bridge does NOT engage on Wan):
-  * ``mirage_fp8_attention`` calls == 0  (diffusers bypassed the dispatcher)
+  * ``repercep_fp8_attention`` calls == 0  (diffusers bypassed the dispatcher)
   * Wan's attention ran through ``F.scaled_dot_product_attention`` directly,
     which on H100 dispatches to cuDNN-flash internally — but never sees our
     FA-3 build.
 
 Usage::
 
-    MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
+    REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
         .venv/bin/python scripts/trace_wan_attention.py
 """
 
@@ -39,18 +39,18 @@ def main() -> int:
                         help="use TI2V-5B (faster trace, same dispatcher path on H100)")
     args = parser.parse_args()
 
-    # Activate bridge first so register_mirage_fp8_backend() runs at import time.
-    os.environ.setdefault("MIRAGE_FP8_ATTENTION", "fa")
+    # Activate bridge first so register_repercep_fp8_backend() runs at import time.
+    os.environ.setdefault("REPERCEP_FP8_ATTENTION", "fa")
 
-    from mirage.attention import diffusers_backend as db
+    from repercep.attention import diffusers_backend as db
 
     counters: Counter[str] = Counter()
 
-    orig_dispatcher = db._mirage_fp8_attention
+    orig_dispatcher = db._repercep_fp8_attention
     orig_fallback = db._native_fallback
 
     def counting_dispatcher(*a: Any, **k: Any) -> Any:
-        counters["mirage_fp8_attention (dispatcher entry)"] += 1
+        counters["repercep_fp8_attention (dispatcher entry)"] += 1
         return orig_dispatcher(*a, **k)
 
     def counting_fallback(query: Any, key: Any, value: Any, **k: Any) -> Any:
@@ -70,7 +70,7 @@ def main() -> int:
             counters["native_fallback -> SDPA (fallback)"] += 1
         return orig_fallback(query, key, value, **k)
 
-    db._mirage_fp8_attention = counting_dispatcher  # type: ignore[assignment]
+    db._repercep_fp8_attention = counting_dispatcher  # type: ignore[assignment]
     db._native_fallback = counting_fallback  # type: ignore[assignment]
 
     # Also re-register the patched dispatcher with the diffusers backend
@@ -93,9 +93,9 @@ def main() -> int:
     torchF.scaled_dot_product_attention = counting_sdpa  # type: ignore[assignment]
 
     # Now run the Wan smoke. Everything downstream sees the patched fns.
-    from mirage.backend.registry import select_backend
-    from mirage.models.wan import SMALL_REPO, WanConfig, WanEngine
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.models.wan import SMALL_REPO, WanConfig, WanEngine
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     backend = select_backend()
     config = WanConfig(vae_tiling=True)
@@ -103,7 +103,7 @@ def main() -> int:
         config.repo_id = SMALL_REPO
     engine = WanEngine(backend, config)
     print(f"[trace] backend={backend.name}  repo={config.repo_id}", flush=True)
-    print(f"[trace] MIRAGE_FP8_ATTENTION={os.environ.get('MIRAGE_FP8_ATTENTION')}", flush=True)
+    print(f"[trace] REPERCEP_FP8_ATTENTION={os.environ.get('REPERCEP_FP8_ATTENTION')}", flush=True)
     print("[trace] loading model ...", flush=True)
     engine.load()
 
@@ -136,7 +136,7 @@ def main() -> int:
     for label, count in counters.most_common():
         print(f"  {label.ljust(width)} {count}")
     print()
-    bridge_calls = counters["mirage_fp8_attention (dispatcher entry)"]
+    bridge_calls = counters["repercep_fp8_attention (dispatcher entry)"]
     direct_sdpa = counters["torch.F.scaled_dot_product_attention (direct)"]
     fa3_via_bridge = counters["native_fallback -> FA-3 (HopperFlashAttention)"]
     sdpa_via_bridge = counters["native_fallback -> SDPA (fallback)"]

@@ -5,7 +5,7 @@ on `main`, in sync with `origin/main` after push.
 
 **The Session 23 commitment is explicit and dual-track:**
 
-1. **Lane A — Wan-shaped adaptive cache.** Mirror Mirage's Cosmos
+1. **Lane A — Wan-shaped adaptive cache.** Mirror Repercep's Cosmos
    cache lever onto Wan-2.2.  Validate on TI2V-5B (non-MoE) first;
    then A14B with MoE-aware boundary handling.  Widens the wedge
    from Cosmos-specific to world-model-family-general.
@@ -54,7 +54,7 @@ properly.  Session 23: prefer restart over `sg` wrapping.
 
 ### Goal
 
-Make Mirage's adaptive cache lever (the one that produces Cosmos's
+Make Repercep's adaptive cache lever (the one that produces Cosmos's
 3.10× wall reduction on MI300X) work on Wan-2.2 — first on the
 non-MoE TI2V-5B variant, then on the MoE A14B variant with
 boundary-aware behaviour.
@@ -67,7 +67,7 @@ piece, not just a number.
 
 ### Concrete scope, in execution order
 
-#### A1. Implement `denoise_wan_video` (new function in `src/mirage/runtime/denoise.py`)
+#### A1. Implement `denoise_wan_video` (new function in `src/repercep/runtime/denoise.py`)
 
 Template: `denoise_cosmos_video` in the same file (lines 64-371).
 The Cosmos pattern is well-factored: a public wrapper that gates on
@@ -97,7 +97,7 @@ Reference for the Wan pipeline's MoE handling:
 `current_model = self.transformer` / `self.transformer_2` swap is
 exactly what `denoise_wan_video` must replicate).
 
-#### A2. Extend `WanConfig` (in `src/mirage/models/wan.py`)
+#### A2. Extend `WanConfig` (in `src/repercep/models/wan.py`)
 
 Add fields parallel to `CosmosConfig`:
 - `cache_mode: str = "none"` (`"none" | "fixed" | "adaptive"`)
@@ -327,7 +327,7 @@ extends `docs/COSMOS_ON_MI300X.md` § "Quantitative cache quality".
 - **HF cache disk usage.**  At 121 f / 1280×704 mp4, each clip is
   ~2 MiB.  N=1000 × 2 sides = 2000 clips × 2 MiB = ~4 GiB of mp4.
   Pod has 607 GiB free; comfortable.  But if `eval/clips/` lands on
-  a small root partition, redirect to `~/.cache/mirage/eval/` or
+  a small root partition, redirect to `~/.cache/repercep/eval/` or
   similar.
 - **Pod preemption / disconnects.**  The 7-day batch must survive
   agent restarts.  `nohup` + the `.done` checkpoint design handles
@@ -386,7 +386,7 @@ should be visible:
 ## Quick reproducers (Session 22's verified set)
 
 ```bash
-cd /home/mshah/Mirage
+cd /home/mshah/Repercep
 export HF_TOKEN=$(grep '^export HF_TOKEN' ~/extra.sh | sed 's/.*HF_TOKEN=//')
 
 # Cosmos cold e2e on this pod (420.2 s / 52.5 GiB on first invocation)
@@ -399,7 +399,7 @@ sg render -c "sg video -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
         --out benchmark-results/cosmos_warm_check.mp4'"
 
 # AMX CI smoke
-MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu
+REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu
 .venv/bin/python -m pytest tests/test_attention_cpu.py \
     tests/test_amx_int8.py tests/test_amx_fp16.py -q
 
@@ -415,7 +415,7 @@ sg render -c "sg video -c 'PYTHONPATH=$(pwd)/src HF_TOKEN=$HF_TOKEN \
 1. Read this doc.
 2. Skim `docs/SESSION_22_CLOSE.md` for the pod state.
 3. **Lane A:** start with A1 (`denoise_wan_video`).  Template is
-   `denoise_cosmos_video` in `src/mirage/runtime/denoise.py`; the
+   `denoise_cosmos_video` in `src/repercep/runtime/denoise.py`; the
    Wan-specific deltas are in the table above.
 4. **FVD:** F1 first (read `compute_fvd.py` + `verify_quality.py`),
    then F2 (generator script + corpus), then F3 (batch harness).

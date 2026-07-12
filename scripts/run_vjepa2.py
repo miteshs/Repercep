@@ -1,4 +1,4 @@
-"""V-JEPA 2 (Meta, Feb 2025) smoke + benchmark on the Mirage backend.
+"""V-JEPA 2 (Meta, Feb 2025) smoke + benchmark on the Repercep backend.
 
 V-JEPA 2 is an *encoder-predictor* world model — Yann LeCun's group's
 non-diffusion answer to video generation.  It does NOT decode to pixels.
@@ -8,7 +8,7 @@ retrieval, planning, and as a vision tower for VLMs.
 This script:
   1. Loads V-JEPA 2 (HuggingFace ``facebook/vjepa2-vit{l,h,g}-fpc64-256``)
   2. Runs the encoder on a 64-frame synthetic video clip
-  3. Times the forward pass on Mirage's selected backend
+  3. Times the forward pass on Repercep's selected backend
   4. Prints embedding shape + timing
 
 It deliberately uses synthetic video so no torchcodec dep is needed.
@@ -39,7 +39,7 @@ _setup()
 
 import torch  # noqa: E402
 
-from mirage.backend.registry import select_backend  # noqa: E402
+from repercep.backend.registry import select_backend  # noqa: E402
 
 _VARIANTS = {
     "vitl": "facebook/vjepa2-vitl-fpc64-256",  # 0.3B
@@ -69,14 +69,14 @@ def main() -> int:
     device = torch.device(backend.torch_device(0))
     dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[args.dtype]
 
-    print(f"[mirage] backend={backend.name}  device={device}  dtype={dtype}")
-    print(f"[mirage] loading {args.model} ({_VARIANTS[args.model]}) ...")
+    print(f"[repercep] backend={backend.name}  device={device}  dtype={dtype}")
+    print(f"[repercep] loading {args.model} ({_VARIANTS[args.model]}) ...")
     t0 = time.perf_counter()
     from transformers import AutoModel
 
     model = AutoModel.from_pretrained(_VARIANTS[args.model], dtype=dtype).to(device).eval()
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[mirage] loaded in {time.perf_counter() - t0:.1f}s ({n_params / 1e6:.0f} M params)")
+    print(f"[repercep] loaded in {time.perf_counter() - t0:.1f}s ({n_params / 1e6:.0f} M params)")
 
     torch.manual_seed(args.seed)
     # Synthetic video: (B, T, C, H, W) in [0, 255] uint8 ish, but transformer
@@ -86,7 +86,7 @@ def main() -> int:
     video = torch.randn(args.batch, args.frames, 3, args.resolution, args.resolution,
                         device=device, dtype=dtype)
 
-    print(f"[mirage] input shape: {tuple(video.shape)}  dtype: {video.dtype}")
+    print(f"[repercep] input shape: {tuple(video.shape)}  dtype: {video.dtype}")
 
     # Warmup
     for _ in range(args.warmup):
@@ -111,11 +111,11 @@ def main() -> int:
     else:
         embed_shape = tuple(out.last_hidden_state.shape)
 
-    print(f"[mirage] encoder forward: {elapsed * 1000:.1f} ms / call  "
+    print(f"[repercep] encoder forward: {elapsed * 1000:.1f} ms / call  "
           f"(B={args.batch}, T={args.frames}, {args.resolution}x{args.resolution})")
-    print(f"[mirage] embedding shape: {embed_shape}")
+    print(f"[repercep] embedding shape: {embed_shape}")
     if peak_gib is not None:
-        print(f"[mirage] peak HBM: {peak_gib:.2f} GiB")
+        print(f"[repercep] peak HBM: {peak_gib:.2f} GiB")
 
     import json
     result = {
@@ -130,7 +130,7 @@ def main() -> int:
         "embedding_shape": list(embed_shape),
         "peak_hbm_gib": round(peak_gib, 2) if peak_gib is not None else None,
     }
-    print(f"[mirage] RESULT {json.dumps(result)}")
+    print(f"[repercep] RESULT {json.dumps(result)}")
     return 0
 
 

@@ -11,14 +11,14 @@ import importlib.util
 
 import pytest
 
-from mirage.attention import AttentionShape, select_attention_op
-from mirage.attention.fp8_hopper_triton import FP8HopperTritonAttention
-from mirage.attention.hopper_flash import HopperFlashAttention
-from mirage.attention.naive import NaiveAttention
-from mirage.attention.protocol import AttentionOp
-from mirage.attention.transformer_engine import TransformerEngineAttention
-from mirage.backend.cuda import CUDABackend
-from mirage.hardware import H100, DType
+from repercep.attention import AttentionShape, select_attention_op
+from repercep.attention.fp8_hopper_triton import FP8HopperTritonAttention
+from repercep.attention.hopper_flash import HopperFlashAttention
+from repercep.attention.naive import NaiveAttention
+from repercep.attention.protocol import AttentionOp
+from repercep.attention.transformer_engine import TransformerEngineAttention
+from repercep.backend.cuda import CUDABackend
+from repercep.hardware import H100, DType
 
 _HAS_TORCH = importlib.util.find_spec("torch") is not None
 
@@ -36,7 +36,7 @@ def test_transformer_engine_satisfies_protocol() -> None:
 
 
 def test_hopper_flash_op_name() -> None:
-    # Stable name for diagnostic surfaces (mirage info, registry traces).
+    # Stable name for diagnostic surfaces (repercep info, registry traces).
     assert HopperFlashAttention().name == "nvidia-flash"
 
 

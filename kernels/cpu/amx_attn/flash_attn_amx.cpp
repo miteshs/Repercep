@@ -1,5 +1,5 @@
 // =============================================================================
-//  Mirage CPU sibling kernels: flash-attention on Intel AMX BF16
+//  Repercep CPU sibling kernels: flash-attention on Intel AMX BF16
 // =============================================================================
 //
 //  This file implements a FlashAttention-2 style scaled-dot-product-attention
@@ -9,7 +9,7 @@
 //  It is the CPU counterpart of the GPU Triton kernels that live under
 //  `kernels/gpu/...`.  The shapes, dtype contract, and call signature mirror
 //  what the Triton kernel exposes so that the Python wrapper in
-//  `src/mirage/attention/amx_flash.py` can swap them transparently.
+//  `src/repercep/attention/amx_flash.py` can swap them transparently.
 //
 //  -------------------------------------------------------------------------
 //  Algorithm at a glance

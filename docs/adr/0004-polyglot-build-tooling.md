@@ -45,7 +45,7 @@ on developer convenience.
 
 - **Decouple "can we write Rust" from "should we write Rust *now*."** With
   the scaffold in place, the moment the fork resolves we can populate
-  `crates/mirage-cache` (or whichever component goes first) without spending
+  `crates/repercep-cache` (or whichever component goes first) without spending
   a sprint on `pyproject.toml` ↔ `Cargo.toml` build wiring under deadline.
 - **Cheap insurance against the robotics scenario.** Per the handoff:
   Python-core means a 6–9 month Rust rewrite if a robotics OEM lands as
@@ -81,9 +81,9 @@ on developer convenience.
 The first design partner conversation converges and we know whether the
 robotics-OEM branch is live. At that point either:
 
-- **Robotics-OEM in:** populate `crates/mirage-cache` immediately (paged
+- **Robotics-OEM in:** populate `crates/repercep-cache` immediately (paged
   latent-cache manager has the fewest callers, cleanest PyO3 boundary).
-  Then `crates/mirage-scheduler`, then `crates/mirage-router`.
+  Then `crates/repercep-scheduler`, then `crates/repercep-router`.
 - **All datacenter:** stay Python-core. Re-evaluate at Series A planning
   (Month 14–18) with the operational scars we've actually accumulated.
 

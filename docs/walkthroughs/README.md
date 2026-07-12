@@ -1,4 +1,4 @@
-# Mirage walkthroughs — understanding inference, line by line
+# Repercep walkthroughs — understanding inference, line by line
 
 A guided tour of how a generation request becomes video frames, from the
 outermost API call all the way down to the GPU kernel.
@@ -29,7 +29,7 @@ snippets are marked.
 | 1 | [Model + weights](01-model-and-weights.md) | `from_pretrained`, the HuggingFace cache, safetensors sharding, what's *inside* the pipeline (T5 / DiT / VAE / scheduler) |
 | 2 | [Architecture, layer by layer](02-architecture.md) | The Cosmos DiT (`CosmosTransformer3DModel`): patch embed → adaLN/timestep → blocks (self-attn, cross-attn, FF) → unpatchify, with exact tensor shapes |
 | 3 | [The denoise loop](03-denoise-loop.md) | `runtime/denoise.py` line by line — timesteps, latents, the CFG two-call + rewind, the adaptive-cache state machine, VAE decode |
-| 4 | [Dispatch + lowering](04-dispatch-and-lowering.md) | How a block's attention call goes `processor → diffusers dispatch → SDPA→aotriton` (default) **or** the Mirage FP8 bridge → Triton |
+| 4 | [Dispatch + lowering](04-dispatch-and-lowering.md) | How a block's attention call goes `processor → diffusers dispatch → SDPA→aotriton` (default) **or** the Repercep FP8 bridge → Triton |
 | 5 | [The kernel](05-the-kernel.md) | The FP8 Triton flash-attention kernel line by line (tiling, online softmax, FP8 `tl.dot`, autotune), and how Triton lowers to MFMA |
 | 6 | [Execution + output](06-execution-and-output.md) | What runs per step, HBM/timing, VAE → pixels → mp4; the final tensor shape/dtype; the whole path end-to-end |
 
@@ -47,11 +47,11 @@ Read in order. Each part is self-contained enough to revisit.
 
 ## Honest scope
 
-Mirage *wraps* HuggingFace `diffusers` for the Cosmos model itself. So the
+Repercep *wraps* HuggingFace `diffusers` for the Cosmos model itself. So the
 "model" and "layers" (Parts 1–2) are largely diffusers' `CosmosTransformer3DModel`
 and `AutoencoderKLCosmos`, while the denoise loop, the attention
 dispatch/kernels, the backend seam, and the serving layer (Parts 3–6) are
-Mirage's own code. The tour spans both and always says which is which.
+Repercep's own code. The tour spans both and always says which is which.
 
 > Status: **Parts 0–6 complete** — the full Cosmos inference path, outermost API
 > → DiT layers → denoise loop → attention dispatch → gfx942 kernel → streamed

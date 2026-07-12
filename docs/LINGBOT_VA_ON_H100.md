@@ -5,7 +5,7 @@ video-action world model of `docs/LINGBOT_VA_PORT_PLAN.md` — run end-to-end
 (weights → chunked video+action inference → VAE pixel decode) on a RunPod
 H100 SXM. Reference stack (their `wan_va` code, `demo_i2av` config), timed by
 `va_timed.py` (CUDA-synced per-chunk wall time; scratchpad driver, to land with
-the Phase-1 seam port). This is the baseline the Mirage serving work optimizes
+the Phase-1 seam port). This is the baseline the Repercep serving work optimizes
 against; the MI300X column is the companion run.
 
 ## Setup
@@ -53,7 +53,7 @@ bf16 PyTorch async **927 ms/chunk (35 Hz)** → +consistency distillation 466 �
   engines, FlashInfer). The open release ships only the eager bf16 path — so
   the portable optimization layers (paged/ragged KV cache, host-overhead
   amortization, CFG-free or distilled stepping) are exactly the vendor-neutral
-  serving gap Mirage's control-regime thesis names. That gap is ~10x.
+  serving gap Repercep's control-regime thesis names. That gap is ~10x.
 - **38.8 GiB for a single 256x256 session** (pre-allocated 30-chunk KV window
   at CFG batch 2) means one session per H100 as released. Session-state
   engineering — cache sizing, paging, CFG elimination — is the difference

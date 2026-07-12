@@ -1,4 +1,4 @@
-# Mirage Rust workspace.
+# Repercep Rust workspace.
 #
 # This is intentionally a virtual manifest with no members yet. The polyglot
 # scaffold (Cargo + uv + future CMake for kernels) is in place so that when the
@@ -12,21 +12,21 @@
 #   datacenter API and any deterministic-latency edge path.
 #
 # What lives here when populated:
-#   crates/mirage-cache       — paged latent-cache manager (PyO3-bound)
-#   crates/mirage-scheduler   — request scheduler (new component)
-#   crates/mirage-router      — per-request orchestration (split from FastAPI)
+#   crates/repercep-cache       — paged latent-cache manager (PyO3-bound)
+#   crates/repercep-scheduler   — request scheduler (new component)
+#   crates/repercep-router      — per-request orchestration (split from FastAPI)
 #
 # What does NOT live here:
 #   - Triton / CUDA kernels → kernels/ (separate codebase, different rules; see
 #     handoff "Mixing clean-architecture and perf code produces clean-but-slow
 #     or fast-but-unmaintainable").
-#   - Python surface (model loading, denoise loop, serving, CLI) → src/mirage/.
+#   - Python surface (model loading, denoise loop, serving, CLI) → src/repercep/.
 
 [workspace]
 members  = [
-    "crates/mirage-cache",
-    "crates/mirage-scheduler",
-    "crates/mirage-router",
+    "crates/repercep-cache",
+    "crates/repercep-scheduler",
+    "crates/repercep-router",
 ]
 resolver = "3"
 
@@ -35,7 +35,7 @@ version    = "0.0.1"
 edition    = "2024"
 license    = "LicenseRef-Proprietary"
 repository = "https://github.com/miteshs/Mirage"
-authors    = ["Mirage"]
+authors    = ["Repercep"]
 rust-version = "1.85"
 
 # Pinned shared deps. Add a new dep here, not inside individual crates, unless

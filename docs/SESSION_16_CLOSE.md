@@ -19,13 +19,13 @@ the prior 138.4 s / 2.75× baseline.
 
 Driver: source-built FlashAttention-3 (`Dao-AILab/flash-attention/
 hopper`, minimal sm_90 BF16 config) wired into the diffusers attention
-dispatcher via a new `MIRAGE_FP8_ATTENTION=fa` env value.  Torch
+dispatcher via a new `REPERCEP_FP8_ATTENTION=fa` env value.  Torch
 2.8.0+cu128's SDPA dispatches BF16 on sm_90 to cuDNN, but the cuDNN
 path is *not* the same WGMMA-based FA-3 kernel that the Dao-AILab wheel
 ships — measured 1.8–2.05 × gap across S∈{8k, 16k, 32k} in
 `scripts/bench_fp8_hopper.py`.
 
-Mirage now also serves **V-JEPA 2** (Meta's non-diffusion encoder-
+Repercep now also serves **V-JEPA 2** (Meta's non-diffusion encoder-
 predictor world model, Feb 2025) end-to-end on all three targets,
 proving the Backend Protocol is genuinely model-shape-agnostic (not
 diffusion-specific).
@@ -50,8 +50,8 @@ no conflicts.  Post-merge quality-gate fixes landed in `0327c72`:
 * `tests/test_attention_cpu.py` — `AttentionShape` API drift: 5 sites
   were using the older `seq=` field; current shape uses `seq_len_q` +
   `seq_len_kv` with `kind` still a field.  Mechanical rename.
-* `src/mirage/runtime/quantize.py`, `tests/test_quantize.py`,
-  `src/mirage/attention/amx_flash.py` — lint + mypy hygiene.
+* `src/repercep/runtime/quantize.py`, `tests/test_quantize.py`,
+  `src/repercep/attention/amx_flash.py` — lint + mypy hygiene.
 
 Quality gate on H100 + Sapphire Rapids: **ruff clean, mypy --strict
 clean over 65 source files, pytest = 173 passed / 14 skipped / 0
@@ -79,20 +79,20 @@ failed, cargo test = 41 passed across 3 crates.**
   FLASH_ATTENTION_DISABLE_HDIMDIFF{64,192}=TRUE
   ```
 
-* `src/mirage/attention/diffusers_backend.py`:
+* `src/repercep/attention/diffusers_backend.py`:
   - `_native_fallback` now tries `HopperFlashAttention` first when
     conditions allow (no mask/dropout/GQA, BF16/FP16, on CUDA).  Falls
     through to torch SDPA on any error.
-  - `_mirage_fp8_attention` recognises `MIRAGE_FP8_ATTENTION=fa` (alias
+  - `_repercep_fp8_attention` recognises `REPERCEP_FP8_ATTENTION=fa` (alias
     `flash`) as "activate the bridge, skip FP8, use FA-2/3 for every
     call".
   - `maybe_activate_from_env` adds `fa`/`flash` to the truthy set.
 
 * End-to-end Cosmos 121 f / 36 steps on H100, adaptive cache:
   - default (torch SDPA): 138.4 s (prior baseline)
-  - `MIRAGE_FP8_ATTENTION=fa` (FA-3 via bridge): **99.6 ± 3.9 s
+  - `REPERCEP_FP8_ATTENTION=fa` (FA-3 via bridge): **99.6 ± 3.9 s
     mean / 95.2 s best**
-  - `MIRAGE_FP8_ATTENTION=on` (FP8 Triton via bridge): 343.7 s
+  - `REPERCEP_FP8_ATTENTION=on` (FP8 Triton via bridge): 343.7 s
     (validates bridge routes correctly; the FP8 kernel itself is the
     bottleneck, 2.5–3.0× slower than cuDNN-FA3 at production shape)
 
@@ -136,11 +136,11 @@ failed, cargo test = 41 passed across 3 crates.**
 
 * Validated: `from transformer_engine.pytorch.attention import
   DotProductAttention; op(q, k, v)` works on H100 BF16 inputs.
-* **NOT yet measured end-to-end** — Mirage's `TransformerEngineAttention`
+* **NOT yet measured end-to-end** — Repercep's `TransformerEngineAttention`
   wrapper compiles; running it through the Cosmos pipeline is open
   Session 17 work.
 
-### 4. V-JEPA 2 — Mirage now serves a non-diffusion world model
+### 4. V-JEPA 2 — Repercep now serves a non-diffusion world model
 
 * `scripts/run_vjepa2.py` — loads any of the four V-JEPA 2 release
   variants (vitl 0.3B / vith 0.7B / vitg 1B / vitg-384 1B-384res),
@@ -157,7 +157,7 @@ failed, cargo test = 41 passed across 3 crates.**
 * CPU (Sapphire Rapids, 52 threads, 1 socket via taskset):
   - ViT-L: **84.4 s / forward** (BF16, oneDNN-AMX backed SDPA)
 
-* **Strategic significance:** Mirage now serves both
+* **Strategic significance:** Repercep now serves both
   (a) diffusion video models (Cosmos 121f/36 in 99.6 s on H100),
   (b) non-diffusion encoder-predictor world models (V-JEPA 2 326 M in
       155 ms / 1 B in 320 ms),
@@ -230,7 +230,7 @@ failed, cargo test = 41 passed across 3 crates.**
   blew up on a `T5EncoderModel` import.  Restored torch and re-ran the
   full 5-prompt variance on FA-3 instead (now the headline).
 
-* **FP8 end-to-end on H100 (`MIRAGE_FP8_ATTENTION=on`)** — measured at
+* **FP8 end-to-end on H100 (`REPERCEP_FP8_ATTENTION=on`)** — measured at
   343.7 s, much slower than the SDPA baseline.  Confirms the bridge
   routes correctly through the FP8 Triton kernel.  The kernel itself
   is the bottleneck; optimization is open work.
@@ -259,16 +259,16 @@ failed, cargo test = 41 passed across 3 crates.**
 * **F35** — V-JEPA 2 inference at default `attn_implementation=sdpa`
   is faster than `attn_implementation=flash_attention_2` on H100
   (155 ms vs 268 ms).  Cause: head_dim=64 hits a less-optimised path
-  in the FA-2 wheel.  Mirage's `_native_fallback` FA-2/3 promotion
+  in the FA-2 wheel.  Repercep's `_native_fallback` FA-2/3 promotion
   should gate on `head_dim ≥ 128` for safety (TODO).
 
 * **F36** — Cosmos's diffusers pipeline bypasses
-  `mirage.attention.select_attention_op` and goes directly through
+  `repercep.attention.select_attention_op` and goes directly through
   `diffusers._AttentionBackendRegistry`.  Promoting
-  `HopperFlashAttention` ahead of `NaiveAttention` in the Mirage
+  `HopperFlashAttention` ahead of `NaiveAttention` in the Repercep
   registry has zero effect on Cosmos end-to-end.  Capture is via the
-  diffusers bridge (`mirage_fp8_attention` + `_native_fallback`),
-  not the Mirage registry.
+  diffusers bridge (`repercep_fp8_attention` + `_native_fallback`),
+  not the Repercep registry.
 
 * **F37** — FA-3 minimal-config source build without
   `FLASH_ATTENTION_DISABLE_FP8=TRUE` produces a `_C.abi3.so` with an
@@ -321,15 +321,15 @@ failed, cargo test = 41 passed across 3 crates.**
    work.  Reference: oneDNN's `src/cpu/x64/jit_brgemm_*_amx.cpp`
    and Intel's `amx-cookbook`.
 
-5. **Wan-2.2 81f/40-step end-to-end on H100.**  `mirage.models.wan`
+5. **Wan-2.2 81f/40-step end-to-end on H100.**  `repercep.models.wan`
    loader already in tree.  Second WM family validation with FA-3
    bridge active.  Per handoff projected ~1700 s on MI300X — H100
    with FA-3 should be much faster.  ~30 min on GPU.
 
-6. **V-JEPA 2 native Mirage engine.**  Today's `run_vjepa2.py` is
+6. **V-JEPA 2 native Repercep engine.**  Today's `run_vjepa2.py` is
    standalone.  Real integration: a new `EncoderEngine` Protocol
    (since V-JEPA 2 returns embeddings, not frames — `WorldModelEngine`
-   assumes frame output) and a `mirage.models.vjepa2.VJEPA2Engine`
+   assumes frame output) and a `repercep.models.vjepa2.VJEPA2Engine`
    that wires through the serving stack.
 
 7. **Cosmos-Predict2 + NATTEN back-port.**  Per NVIDIA, 2.0–2.6 ×
@@ -354,7 +354,7 @@ failed, cargo test = 41 passed across 3 crates.**
 
 ```bash
 # Fresh box setup
-git clone https://github.com/miteshs/Mirage.git && cd Mirage
+git clone https://github.com/miteshs/Mirage.git && cd Repercep
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch==2.8.0 torchvision \
     --index-url https://download.pytorch.org/whl/cu128
@@ -393,14 +393,14 @@ uv pip install --python .venv torch==2.8.0 torchvision \
 # uv pip install passes to clear the stale wheel sanity check).
 
 # H100 headline reproducer (~100 s warm)
-MIRAGE_FP8_ATTENTION=fa .venv/bin/python scripts/run_cosmos.py \
+REPERCEP_FP8_ATTENTION=fa .venv/bin/python scripts/run_cosmos.py \
     --backend cuda --frames 121 --steps 36 --native-loop \
     --cache-mode adaptive --cache-adaptive-threshold 0.30 \
     --cache-force-full-every 16
 # Expect: generate_seconds ≈ 95-103 s (mean 99.6 ± 3.9 s)
 
 # 5-prompt variance on the headline
-MIRAGE_FP8_ATTENTION=fa .venv/bin/python scripts/verify_timing.py \
+REPERCEP_FP8_ATTENTION=fa .venv/bin/python scripts/verify_timing.py \
     --N 1 --prompts 5
 
 # Hopper microbench (FP8 Triton vs FA-3 vs SDPA)
@@ -410,7 +410,7 @@ MIRAGE_FP8_ATTENTION=fa .venv/bin/python scripts/verify_timing.py \
 .venv/bin/python scripts/run_vjepa2.py --model vitg --warmup 2 --iters 5
 
 # CPU smoke (substrate, slow — minutes per video)
-MIRAGE_AMX_ATTENTION=1 OMP_NUM_THREADS=48 .venv/bin/python \
+REPERCEP_AMX_ATTENTION=1 OMP_NUM_THREADS=48 .venv/bin/python \
     scripts/run_cosmos.py --backend cpu --frames 17 --steps 8
 ```
 
@@ -421,7 +421,7 @@ MIRAGE_AMX_ATTENTION=1 OMP_NUM_THREADS=48 .venv/bin/python \
 ```
 main  (current; bd01f45 + 1 local commit pending push)
   + 8 commits since Session 15:
-    705a594  vjepa2: smoke + bench — non-diffusion world model on Mirage
+    705a594  vjepa2: smoke + bench — non-diffusion world model on Repercep
     bd01f45  docs: H100 FA-3 variance — 99.6 ± 3.9s across 5 prompts
     12cca53  docs: H100 headline drops to 95.3s with FA-3 — 3.99x ref
     8f696e5  attention: FA-2/3 in diffusers bridge — new ...=fa value

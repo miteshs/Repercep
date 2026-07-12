@@ -7,9 +7,9 @@ reference config).  This script measures attention-only forward time
 across that range for the Hopper ops:
 
 - naive-sdpa            (BF16 SDPA -> cuDNN-FA3 on Hopper, current floor)
-- hopper-flash          (the Mirage HopperFlashAttention wrapper:
+- hopper-flash          (the Repercep HopperFlashAttention wrapper:
                          FA-3 if installed, else FA-2, else SDPA)
-- fp8-hopper-triton     (the Mirage FP8 Hopper Triton kernel — the
+- fp8-hopper-triton     (the Repercep FP8 Hopper Triton kernel — the
                          autotuned WGMMA kernel from kernels/triton_kernels/
                          fp8_flash_attn_hopper.py.  F29 lives here.)
 - transformer-engine    (the optional TE op; only if `transformer_engine`
@@ -49,12 +49,12 @@ _setup_imports()
 
 import torch  # noqa: E402
 
-from mirage.attention.fp8_hopper_triton import FP8HopperTritonAttention  # noqa: E402
-from mirage.attention.hopper_flash import HopperFlashAttention  # noqa: E402
-from mirage.attention.naive import NaiveAttention  # noqa: E402
+from repercep.attention.fp8_hopper_triton import FP8HopperTritonAttention  # noqa: E402
+from repercep.attention.hopper_flash import HopperFlashAttention  # noqa: E402
+from repercep.attention.naive import NaiveAttention  # noqa: E402
 
 try:
-    from mirage.attention.transformer_engine import TransformerEngineAttention
+    from repercep.attention.transformer_engine import TransformerEngineAttention
 
     _HAS_TE = True
 except Exception:

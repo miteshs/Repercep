@@ -15,15 +15,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from mirage.backend.rocm import ROCmBackend
-from mirage.models import (
+from repercep.backend.rocm import ROCmBackend
+from repercep.models import (
     WAN_DEFAULT_REPO,
     WAN_NATIVE_FPS,
     WAN_SMALL_REPO,
     WanConfig,
     WanEngine,
 )
-from mirage.runtime.engine import WorldModelEngine
+from repercep.runtime.engine import WorldModelEngine
 
 
 @contextmanager
@@ -155,9 +155,9 @@ def test_wan_engine_accepts_custom_config() -> None:
 
 def test_wan_profile_exports_at_bench_top_level() -> None:
     # The Wan-specific profiler mirrors profile_cosmos in shape and lives in
-    # the same package. Both should re-export from mirage.bench so external
+    # the same package. Both should re-export from repercep.bench so external
     # callers can pick one without touching the submodule path.
-    import mirage.bench as bench
+    import repercep.bench as bench
 
     assert hasattr(bench, "WanProfile")
     assert hasattr(bench, "profile_wan")
@@ -169,7 +169,7 @@ def test_wan_profile_schema_includes_moe_split() -> None:
     # report transformer and transformer_2 timings as separate fields so the
     # handoff is visible in the breakdown — not collapsed into a single
     # dit_loop_s.
-    from mirage.bench.profile import WanProfile
+    from repercep.bench.profile import WanProfile
 
     fields = set(WanProfile.model_fields)
     assert "dit_high_noise_s" in fields
@@ -182,7 +182,7 @@ def test_wan_profile_schema_includes_moe_split() -> None:
 
 
 def test_wan_profile_dit_share_zero_when_total_zero() -> None:
-    from mirage.bench.profile import WanProfile
+    from repercep.bench.profile import WanProfile
 
     prof = WanProfile(
         total_s=0.0,
@@ -239,7 +239,7 @@ def test_wan_engine_load_does_not_call_enable_tiling_when_vae_tiling_false() -> 
 
 
 def test_wan_attention_installer_noops_without_env(monkeypatch: Any) -> None:
-    from mirage.attention.wan_processor import maybe_install_mirage_wan_attention
+    from repercep.attention.wan_processor import maybe_install_repercep_wan_attention
 
     class FakeTransformer:
         def __init__(self) -> None:
@@ -249,19 +249,19 @@ def test_wan_attention_installer_noops_without_env(monkeypatch: Any) -> None:
             self.processor = processor
 
     fake_pipe = types.SimpleNamespace(transformer=FakeTransformer(), transformer_2=None)
-    monkeypatch.delenv("MIRAGE_FP8_ATTENTION", raising=False)
+    monkeypatch.delenv("REPERCEP_FP8_ATTENTION", raising=False)
 
-    assert maybe_install_mirage_wan_attention(fake_pipe) is False
+    assert maybe_install_repercep_wan_attention(fake_pipe) is False
     assert fake_pipe.transformer.processor is None
 
 
-def test_wan_attention_installer_sets_mirage_backend(monkeypatch: Any) -> None:
-    from mirage.attention import diffusers_backend
-    from mirage.attention.wan_processor import maybe_install_mirage_wan_attention
+def test_wan_attention_installer_sets_repercep_backend(monkeypatch: Any) -> None:
+    from repercep.attention import diffusers_backend
+    from repercep.attention.wan_processor import maybe_install_repercep_wan_attention
 
     class FakeWanAttnProcessor:
         _attention_backend: Any
-        _mirage_attention_backend: str
+        _repercep_attention_backend: str
 
         pass
 
@@ -276,26 +276,26 @@ def test_wan_attention_installer_sets_mirage_backend(monkeypatch: Any) -> None:
         transformer=FakeTransformer(),
         transformer_2=FakeTransformer(),
     )
-    monkeypatch.setenv("MIRAGE_FP8_ATTENTION", "fa")
+    monkeypatch.setenv("REPERCEP_FP8_ATTENTION", "fa")
     monkeypatch.setattr(
         diffusers_backend,
-        "register_mirage_fp8_backend",
-        lambda: "mirage-backend",
+        "register_repercep_fp8_backend",
+        lambda: "repercep-backend",
     )
 
     with _fake_wan_processor_module(FakeWanAttnProcessor):
-        assert maybe_install_mirage_wan_attention(fake_pipe) is True
+        assert maybe_install_repercep_wan_attention(fake_pipe) is True
 
     for transformer in (fake_pipe.transformer, fake_pipe.transformer_2):
         assert isinstance(transformer.processor, FakeWanAttnProcessor)
-        assert transformer.processor._attention_backend == "mirage-backend"
-        assert transformer.processor._mirage_attention_backend == "mirage_fp8"
+        assert transformer.processor._attention_backend == "repercep-backend"
+        assert transformer.processor._repercep_attention_backend == "repercep_fp8"
 
 
 def test_wan_engine_load_invokes_attention_installer(monkeypatch: Any) -> None:
     from unittest.mock import MagicMock
 
-    import mirage.attention.wan_processor as wan_processor
+    import repercep.attention.wan_processor as wan_processor
 
     fake_vae = MagicMock(name="vae")
     fake_pipe = MagicMock(name="pipe")
@@ -306,7 +306,7 @@ def test_wan_engine_load_invokes_attention_installer(monkeypatch: Any) -> None:
         calls.append(pipe)
         return True
 
-    monkeypatch.setattr(wan_processor, "maybe_install_mirage_wan_attention", fake_install)
+    monkeypatch.setattr(wan_processor, "maybe_install_repercep_wan_attention", fake_install)
 
     with _fake_diffusers_loader(fake_vae, fake_pipe):
         engine = WanEngine(backend=ROCmBackend())
@@ -338,7 +338,7 @@ def _make_engine_with_fake_pipe(boundary_ratio: float | None) -> tuple[WanEngine
 
 def test_wan_engine_passes_guidance_scale_2_for_moe_variant() -> None:
     """A14B (boundary_ratio != None) must receive guidance_scale_2."""
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     engine, fake_pipe = _make_engine_with_fake_pipe(boundary_ratio=0.875)
     request = GenerationRequest(
@@ -359,7 +359,7 @@ def test_wan_engine_omits_guidance_scale_2_for_non_moe_variant() -> None:
     the pipeline's boundary_ratio is not None`` if the kwarg is passed to a
     non-MoE Wan variant. See BUILD_LOG F39.
     """
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     engine, fake_pipe = _make_engine_with_fake_pipe(boundary_ratio=None)
     request = GenerationRequest(
@@ -373,7 +373,7 @@ def test_wan_engine_omits_guidance_scale_2_for_non_moe_variant() -> None:
 
 
 def test_wan_profile_dit_share_reports_loop_fraction() -> None:
-    from mirage.bench.profile import WanProfile
+    from repercep.bench.profile import WanProfile
 
     # 80% of total in the DiT loop (a typical Wan-shaped breakdown — far more
     # DiT-bound than the 17f/8-step smoke, where VAE+postprocess dominate).

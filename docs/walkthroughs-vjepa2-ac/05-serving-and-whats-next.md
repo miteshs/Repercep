@@ -2,7 +2,7 @@
 
 The Cosmos path streams a finished clip over NDJSON (Cosmos Part 6). That can't
 serve an *interactive* world model — there's no channel to send an action
-mid-stream. So Mirage adds a **bidirectional WebSocket**: `serving/app.py`
+mid-stream. So Repercep adds a **bidirectional WebSocket**: `serving/app.py`
 `/v2/world/session`.
 
 ## 5.1 The WebSocket session (serving/app.py)

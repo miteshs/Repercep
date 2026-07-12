@@ -20,7 +20,7 @@ code." This directory is treated as a separate codebase culturally:
   compiled by `hipcc`/`nvcc`.
 - **No `Protocol` abstractions**, no `Pydantic` models, no
   `cargo clippy -D warnings`. Perf-first.
-- **No imports from `src/mirage/`** — the seam between Mirage proper and a
+- **No imports from `src/repercep/`** — the seam between Repercep proper and a
   kernel is the `AttentionOp` Protocol (and future siblings). Kernels are
   loaded behind that seam; they don't reach back the other way.
 
@@ -29,7 +29,7 @@ code." This directory is treated as a separate codebase culturally:
 ```
 kernels/
   triton/        # Triton-as-Python kernels (DiT attention variants, fused
-                 # action conditioning, etc.). Loaded by src/mirage/attention/.
+                 # action conditioning, etc.). Loaded by src/repercep/attention/.
   cuda/          # CUDA C++ for Hopper/Blackwell features Triton doesn't expose
                  # (TMA, warp specialization, cluster launch). NVIDIA backend
                  # only; deferred to the NVIDIA fast-follow.
@@ -49,9 +49,9 @@ Python; CMake handles native kernels.
 The path is roughly:
 
 1. Implement the kernel in `kernels/triton/<name>.py` (or `kernels/hip/<name>.hip`).
-2. Write a thin loader in `src/mirage/attention/<name>.py` (or the relevant
+2. Write a thin loader in `src/repercep/attention/<name>.py` (or the relevant
    subsystem) that implements `AttentionOp` and calls the kernel.
-3. Register it in `src/mirage/attention/registry.py`.
+3. Register it in `src/repercep/attention/registry.py`.
 4. Benchmark vs the SDPA floor with `scripts/profile_cosmos.py --compare`.
    The win has to be measurable on the *full reference config* (121 f /
    36 steps), not a tiny shape, before promoting it to default.

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from mirage.backend.protocol import Backend
-from mirage.backend.registry import select_backend
-from mirage.backend.rocm import ROCmBackend
-from mirage.hardware import Vendor
+from repercep.backend.protocol import Backend
+from repercep.backend.registry import select_backend
+from repercep.backend.rocm import ROCmBackend
+from repercep.hardware import Vendor
 
 
 def test_rocm_backend_identity() -> None:
@@ -22,7 +22,7 @@ def test_rocm_backend_satisfies_protocol() -> None:
 
 
 def test_select_unknown_backend_raises() -> None:
-    # "tpu" is not a backend Mirage knows about today; CUDA was added in ADR-0006
+    # "tpu" is not a backend Repercep knows about today; CUDA was added in ADR-0006
     # so it no longer makes a good "unknown" example.
     with pytest.raises(ValueError, match="unknown backend"):
         select_backend(prefer="tpu")

@@ -40,9 +40,9 @@ _setup()
 import torch  # noqa: E402
 import torch.nn.functional as F  # noqa: E402, N812
 
-from mirage.backend.registry import select_backend  # noqa: E402
-from mirage.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
-from mirage.runtime.types import Action, ConditioningInput, RolloutParams  # noqa: E402
+from repercep.backend.registry import select_backend  # noqa: E402
+from repercep.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
+from repercep.runtime.types import Action, ConditioningInput, RolloutParams  # noqa: E402
 
 _DTYPES = {"bf16": "bfloat16", "fp16": "float16", "fp32": "float32"}
 

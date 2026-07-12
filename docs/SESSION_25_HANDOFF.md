@@ -18,14 +18,14 @@ today, convergence risk = video-action models (Ant/Robbyant's LingBot-VA,
 announced the same week). Dated 6-week commitments made here are what this
 session executed against.
 
-### LingBot-VA 2.0 on the Mirage seam
-- `src/mirage/models/lingbot_va.py` + `lingbot_va_pipeline.py` — second model
+### LingBot-VA 2.0 on the Repercep seam
+- `src/repercep/models/lingbot_va.py` + `lingbot_va_pipeline.py` — second model
   on `InteractiveWorldModel`, policy-regime planning (generates its own
   actions) vs. V-JEPA's CEM search — two regimes, one Protocol.
 - **H100 numbers, three independent measurements, all in docs/:**
   - Reference `wan_va` stack (their server code): 1384.7 ms/chunk
     (`LINGBOT_VA_ON_H100.md`).
-  - Through the Mirage seam, raw driver: 801.5 ms/chunk, 15.4 GiB/session
+  - Through the Repercep seam, raw driver: 801.5 ms/chunk, 15.4 GiB/session
     (`LINGBOT_VA_SEAM_VERIFY.md`) — faster/lighter by design (CPU-resident
     T5/VAE, no reference-server debug I/O), not a shortcut — same
     imagination-mode rollout, matching action-magnitude distribution.
@@ -41,14 +41,14 @@ session executed against.
   padded channels vs. 6 executed/wire channels for the demo task) —
   `LingBotVAConfig.used_action_dim` carries the latter.
 - MI300X row: **deferred**, not attempted — RunPod had zero MI300X stock all
-  day. Recipe for when it returns is in `mirage-lingbot-va-port` memory.
+  day. Recipe for when it returns is in `repercep-lingbot-va-port` memory.
 
 ### V-JEPA 2-AC latency levers (batching + bf16)
 `docs/LEVERS_2026_07_H100.md` — GPU-verified same-box ladder: sequential fp32
 68.8s → batched fp32 40.6s (1.7×) → **batched bf16 9.42s (7.3× total)**. bf16
 energy parity with fp32 exact to bf16 resolution. Warm-start: a 1-iteration
 steady-state replan beats a cold 3-iteration plan (lower energy, ⅓ the work).
-Code: `src/mirage/models/vjepa2_ac.py` (`plan_batched`, `predictor_compute_dtype`,
+Code: `src/repercep/models/vjepa2_ac.py` (`plan_batched`, `predictor_compute_dtype`,
 `plan_warm_start` config knobs + `_rollout_energy_batched`, the SDPA dtype
 harmonizer).
 
@@ -121,8 +121,8 @@ has the exact verification methodology (SDPA-capture trick to get bit-exact
 ground truth, the layer-by-layer isolation technique) that would be needed
 again for any attention-sinks or approximate-eviction design.
 
-**If picking up MI300X:** `mirage-lingbot-va-port` and
-`mirage-cem-batching-finding` memories have the recipes (image, torch/ROCm
+**If picking up MI300X:** `repercep-lingbot-va-port` and
+`repercep-cem-batching-finding` memories have the recipes (image, torch/ROCm
 version pins, known traps).
 
 ---
@@ -134,14 +134,14 @@ version pins, known traps).
 | `docs/COMPETITIVE_RESPONSE_REACTOR_2026_07.md` | The plan this session executed |
 | `docs/LINGBOT_VA_PORT_PLAN.md` | LingBot-VA port scoping |
 | `docs/LINGBOT_VA_ON_H100.md` | Reference-stack H100 numbers |
-| `docs/LINGBOT_VA_SEAM_VERIFY.md` | Mirage-seam H100 numbers + why faster |
+| `docs/LINGBOT_VA_SEAM_VERIFY.md` | Repercep-seam H100 numbers + why faster |
 | `docs/LEVERS_2026_07_H100.md` | V-JEPA batching+bf16 ladder |
 | `docs/CONTROL_LOOP_BENCH.md` | The leaderboard (both engines, all rows) |
 | `docs/adr/0009-kv-latent-reuse.md` | KV-reuse design + GPU-verify findings |
 
 ## 5. Memory index pointers
 
-`mirage-lingbot-va-port.md`, `mirage-cem-batching-finding.md`,
+`repercep-lingbot-va-port.md`, `repercep-cem-batching-finding.md`,
 `reactor-inc-competitor.md` all updated this session — read those first for
 fast context reload.
 

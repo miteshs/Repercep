@@ -45,7 +45,7 @@ total, the decode being the high-water mark).
 ## 6.3 Postprocess and the Frame contract (denoise.py 371; cosmos.py 403, 298-303)
 
 `video_processor.postprocess_video(video, output_type="pt")` normalizes to
-`(B, T, C, H, W)` in `[0, 1]`. Mirage's `_as_frame_tensor` (`cosmos.py:403`) then
+`(B, T, C, H, W)` in `[0, 1]`. Repercep's `_as_frame_tensor` (`cosmos.py:403`) then
 makes it `(T, H, W, 3)` `uint8` on CPU (permute if channels-first, clamp, ×255).
 Finally `generate()` yields one `Frame` per index:
 
@@ -102,7 +102,7 @@ warm steady-state. ~99 % of it is the DiT loop (F4/F10); the adaptive cache (Par
 Everything above runs end-to-end on an MI300X/H100 with the weights:
 
 ```bash
-MIRAGE_FP8_ATTENTION=1 python scripts/run_cosmos.py \
+REPERCEP_FP8_ATTENTION=1 python scripts/run_cosmos.py \
     --frames 121 --steps 36 --native-loop --cache-mode adaptive --cache-adaptive-threshold 0.30
 # → an mp4 in benchmark-results/, generate_seconds ≈ 142 (MI300X)
 ```

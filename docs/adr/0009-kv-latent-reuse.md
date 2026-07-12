@@ -16,7 +16,7 @@
 - **Date:** 2026-07-11
 - **Relates to:** ADR-0008 (interactive world-model seam),
   `docs/LEVERS_2026_07_H100.md` (batching + bf16, GPU-verified same day),
-  `docs/mirage-cem-batching-finding` memory (this lever ranked #1, June 26).
+  `docs/repercep-cem-batching-finding` memory (this lever ranked #1, June 26).
 
 ## Context
 
@@ -189,7 +189,7 @@ bit-exact against the live module — `q/k/v` match to `0.0` max abs diff — so
 the incremental adapter below reuses provably-correct building blocks, not
 guesses). Full end-to-end multi-layer replica of `predictor.forward()` also
 matches the real forward exactly (`0.0` diff). Finding 3 came from integrating
-that algorithm with Mirage's adapter contract and is covered by CPU parity
+that algorithm with Repercep's adapter contract and is covered by CPU parity
 tests over the same multi-layer token/attention structure.
 
 **Finding 1 — the model's own RoPE is not a composable rotation.** The

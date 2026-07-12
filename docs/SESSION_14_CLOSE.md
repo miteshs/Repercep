@@ -24,7 +24,7 @@ from Session 13 are all unchanged.
 seed=0** — measured on a single H100 SXM5 80GB HBM3 (`sm_90`, 132
 SMs, CUDA 13.0 driver / torch 2.8.0+cu128):
 
-| Config | Wall | vs NVIDIA pub. (~380 s) | vs Mirage MI300X | Peak HBM |
+| Config | Wall | vs NVIDIA pub. (~380 s) | vs Repercep MI300X | Peak HBM |
 |---|--:|--:|--:|--:|
 | Baseline (no cache) | 446.3 s | 0.85× | 1.05× faster than 470 s | 52.5 GiB |
 | **Adaptive cache (thr=0.30)** | **138.4 s** | **2.75×** | 1.11× faster than 154 s | 52.5 GiB |
@@ -37,18 +37,18 @@ SMs, CUDA 13.0 driver / torch 2.8.0+cu128):
 1. **Silicon delta is 5–11 %, not 24 %.** The old
    `docs/METHODOLOGY.md` §3 claim "MI300X is 1.24× slower than H100
    at the same compute" was *stack* difference, not silicon: 470
-   (Mirage diffusers path on MI300X) vs ~380 (NVIDIA's optimized
+   (Repercep diffusers path on MI300X) vs ~380 (NVIDIA's optimized
    TE + Apex + flash-attn-3 path on H100). Stack-vs-stack on the
    same silicon now measures 1.054× on baseline (470 vs 446.3) and
    1.113× on adaptive cache (154 vs 138.4). The 2.68× MI300X claim
    is **strengthened, not weakened** — the win is overwhelmingly
    the optimization stack.
 
-2. **Mirage on H100 with adaptive cache alone beats NVIDIA's
+2. **Repercep on H100 with adaptive cache alone beats NVIDIA's
    published H100 reference by 2.75×.** No FP8 needed. The
    TeaCache-style adaptive cache (loop-level, vendor-neutral) is
    the dominant optimization, and cuDNN-FA3 (via SDPA) is the
-   attention floor on Hopper that the Mirage stack inherits for
+   attention floor on Hopper that the Repercep stack inherits for
    free.
 
 3. **The FP8 Hopper Triton kernel is correct but slower than
@@ -72,7 +72,7 @@ parallel-write pattern overwhelms the backend at scale. Session 16
 recovery: `hf download --max-workers 1` to serialize writes, then
 run `scripts/run_wan.py --frames 81 --steps 40` against the warm
 cache. **This is plumbing, not code.** The WanEngine path through
-`CUDABackend` is verified by existing Mirage tests.
+`CUDABackend` is verified by existing Repercep tests.
 
 ### Code shipped (committed on `session-14-cuda-port`)
 
@@ -86,30 +86,30 @@ a202a1c  Session 14: NVIDIA H100 SXM5 backend — architecture, kernels, docs
 
 Files (paths relative to repo root):
 
-- `src/mirage/backend/cuda.py` — `CUDABackend` satisfying the
+- `src/repercep/backend/cuda.py` — `CUDABackend` satisfying the
   Backend Protocol; sm_XX → DeviceArch; H100/H200 disambiguation
   by HBM; capabilities advertise FP8 (e4m3fn + e5m2, NOT fnuz —
   F25).
-- `src/mirage/attention/hopper_flash.py` — `HopperFlashAttention`
+- `src/repercep/attention/hopper_flash.py` — `HopperFlashAttention`
   wrapping `flash_attn_interface.flash_attn_func` (FA-3, Hopper-
   only) with `flash_attn.flash_attn_func` (FA-2) fallback. FA-2
   installed Session 14; FA-3 source build is Session 16+.
-- `src/mirage/attention/fp8_hopper_triton.py` +
+- `src/repercep/attention/fp8_hopper_triton.py` +
   `kernels/triton_kernels/fp8_flash_attn_hopper.py` — Hopper FP8
   Triton FA-2 kernel (sibling of gfx942). Separate autotune cache
-  at `~/.cache/mirage/fp8_autotune_hopper.json`.
-- `src/mirage/attention/transformer_engine.py` — optional
+  at `~/.cache/repercep/fp8_autotune_hopper.json`.
+- `src/repercep/attention/transformer_engine.py` — optional
   `TransformerEngineAttention` wrapping
   `transformer_engine.pytorch.DotProductAttention`. Loads cleanly
   when TE absent (F28: TE install on Hopper has a cu13/cu12 + torch
   ABI hazard; not yet exercised end-to-end).
-- `src/mirage/attention/registry.py` — NVIDIA vendor branch in
-  `select_attention_op`. `MIRAGE_FP8_ATTENTION` grows `{te,
+- `src/repercep/attention/registry.py` — NVIDIA vendor branch in
+  `select_attention_op`. `REPERCEP_FP8_ATTENTION` grows `{te,
   transformer_engine}` subvalues alongside `{triton, scaled_mm}`.
-- `src/mirage/attention/diffusers_backend.py` — fixed in the
+- `src/repercep/attention/diffusers_backend.py` — fixed in the
   third commit; the diffusers FP8 bridge now dispatches to the
   vendor-correct kernel (caught mid-sweep when Phase 3 first ran).
-- `src/mirage/backend/registry.py` — `CUDABackend()` appended to
+- `src/repercep/backend/registry.py` — `CUDABackend()` appended to
   `_ALL_BACKENDS`. ROCm precedes CUDA so the "MI300X is lead"
   framing holds on dual-vendor hosts (rare).
 - `pyproject.toml` — `[nvidia]` optional dep group; cu128 index
@@ -172,7 +172,7 @@ Files (paths relative to repo root):
    128, 256} × num_stages ∈ {2, 3, 4, 5}), add TMA-based K/V
    loads via `tl.make_tensor_descriptor`. Goal: beat cuDNN-FA3 at
    the Cosmos production shape, restoring
-   `MIRAGE_FP8_ATTENTION=1` as a perf-on setting on Hopper.
+   `REPERCEP_FP8_ATTENTION=1` as a perf-on setting on Hopper.
 5. **FA-3 from source on Hopper** — `cd
    flash-attention/hopper && python setup.py install` (~30 min
    build). Currently HopperFlashAttention falls back to FA-2 (1.09×
@@ -190,7 +190,7 @@ Files (paths relative to repo root):
 
 ```bash
 # H100 environment setup (one-time per fresh box)
-git clone https://github.com/miteshs/Mirage.git && cd Mirage
+git clone https://github.com/miteshs/Mirage.git && cd Repercep
 git checkout session-14-cuda-port    # (or main, once merged)
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch==2.8.0 torchvision \
@@ -198,7 +198,7 @@ uv pip install --python .venv torch==2.8.0 torchvision \
 uv pip install --python .venv -e ".[models,serving,dev]"
 
 # Build Rust crates (after fixing rustup if not present)
-make rust-install        # builds + installs mirage-cache/router/scheduler
+make rust-install        # builds + installs repercep-cache/router/scheduler
 
 # Sanity (should report H100, ~790 TFLOP/s BF16)
 make check-gpu

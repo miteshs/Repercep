@@ -6,11 +6,11 @@ import importlib.util
 
 import pytest
 
-from mirage.attention import AttentionKind, AttentionShape, select_attention_op
-from mirage.attention.naive import NaiveAttention
-from mirage.attention.protocol import AttentionOp
-from mirage.backend.rocm import ROCmBackend
-from mirage.hardware import MI300X, DType
+from repercep.attention import AttentionKind, AttentionShape, select_attention_op
+from repercep.attention.naive import NaiveAttention
+from repercep.attention.protocol import AttentionOp
+from repercep.backend.rocm import ROCmBackend
+from repercep.hardware import MI300X, DType
 
 _HAS_TORCH = importlib.util.find_spec("torch") is not None
 

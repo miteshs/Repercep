@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mirage-runtime"
+name = "repercep-runtime"
 version = "0.0.1"
-description = "Mirage Runtime — a world-model-native inference engine. MI300x-first."
+description = "Repercep Runtime — a world-model-native inference engine. MI300x-first."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "LicenseRef-Proprietary" }
-authors = [{ name = "Mirage" }]
+authors = [{ name = "Repercep" }]
 keywords = ["world-models", "inference", "diffusion", "rocm", "mi300x", "cosmos"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -51,7 +51,7 @@ guardrail = [
 # NVIDIA H100/H200 (Hopper) extras — TransformerEngine is the NVIDIA-canonical
 # FP8 attention path (FA-3 + DelayedScaling recipe via cuDNN). flash-attn is
 # the Dao-AILab build that ships FA-3 alongside FA-2 from `>=2.7`. Both are
-# OPTIONAL — Mirage falls back to the Triton FP8 kernel and the SDPA floor
+# OPTIONAL — Repercep falls back to the Triton FP8 kernel and the SDPA floor
 # without either. See ADR-0006 and docs/COSMOS_ON_H100.md.
 #
 # `flash-attn` is left COMMENTED OUT here because installing it requires
@@ -65,7 +65,7 @@ nvidia = [
 ]
 # Intel CPU AMX extras — Intel Extension for PyTorch (IPEX) for the
 # fused-attention path that explicitly targets AMX_BF16 on Sapphire
-# Rapids and newer.  OPTIONAL — Mirage's AMXSDPAAttention floor still
+# Rapids and newer.  OPTIONAL — Repercep's AMXSDPAAttention floor still
 # gets oneDNN-AMX wins on BF16 matmul without IPEX, and the custom
 # `kernels/cpu/amx_attn/` kernel is in-tree (no third-party dep).
 # See ADR-0007 and docs/COSMOS_ON_CPU.md.
@@ -95,10 +95,10 @@ dev = [
 ]
 
 [project.scripts]
-mirage = "mirage.cli:main"
+repercep = "repercep.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mirage"]
+packages = ["src/repercep"]
 
 # torch resolves from the ROCm wheel index that matches the system ROCm (7.2).
 # This is the default because MI300X is the lead workload (ADR-0001).
@@ -132,7 +132,7 @@ strict = true
 warn_unreachable = true
 warn_redundant_casts = true
 plugins = ["pydantic.mypy"]
-files = ["src/mirage", "tests"]
+files = ["src/repercep", "tests"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -157,9 +157,9 @@ module = [
   # PyO3-built extensions ship `py.typed` markers but no .pyi stubs, so mypy
   # treats them as Any. Stubs are a future-Stage-3.5 item; for now treat the
   # compiled `_native` submodules like other untyped third-party imports.
-  "mirage_cache.*",
-  "mirage_router.*",
-  "mirage_scheduler.*",
+  "repercep_cache.*",
+  "repercep_router.*",
+  "repercep_scheduler.*",
 ]
 ignore_missing_imports = true
 
@@ -177,7 +177,7 @@ ignore = ["ANN401"]
 "scripts/*" = ["ANN", "TCH"]
 # FastAPI resolves route annotations at runtime (get_type_hints at startup),
 # so request/response types cannot live under TYPE_CHECKING here.
-"src/mirage/serving/app.py" = ["TCH"]
+"src/repercep/serving/app.py" = ["TCH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

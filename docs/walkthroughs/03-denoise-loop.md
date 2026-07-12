@@ -1,8 +1,8 @@
 # Part 3 — The denoise loop
 
 Part 2 was one DiT forward (noisy latent → noise prediction). This is the loop
-that calls it 36× and turns pure noise into a clean latent. It's **Mirage's own
-code** — `src/mirage/runtime/denoise.py` (`denoise_cosmos_video`), a from-scratch
+that calls it 36× and turns pure noise into a clean latent. It's **Repercep's own
+code** — `src/repercep/runtime/denoise.py` (`denoise_cosmos_video`), a from-scratch
 re-implementation of diffusers' `CosmosTextToWorldPipeline.__call__` (Part 1)
 with two additions: **CFG batching** and the **adaptive cache**. `CosmosEngine`
 calls it when `use_native_loop=True` (`cosmos.py:261`).
@@ -53,7 +53,7 @@ noise_pred = pipe.transformer(hidden_states=batched_input,
                               encoder_hidden_states=encoder_pair, ...)[0]
 ```
 The diffusers reference runs **two sequential** batch-1 forwards (Part 1, lines
-575 & 586). Mirage folds them into **one batch-2** forward (position 0 = uncond,
+575 & 586). Repercep folds them into **one batch-2** forward (position 0 = uncond,
 1 = cond — matching the reference). The padding mask is deliberately *not*
 pre-batched: the transformer repeats it internally by batch size (note 210-213).
 
@@ -83,7 +83,7 @@ ML note — **CFG**: `cond + w·(cond − uncond)` with `w = guidance_scale = 7.
 extrapolates *away* from the unconditional prediction, sharpening prompt
 adherence. The unconditional branch uses Cosmos's long built-in negative prompt.
 
-## 3.4 The adaptive cache — Mirage's real lever (237-282)
+## 3.4 The adaptive cache — Repercep's real lever (237-282)
 
 This is the 2.75× in the H100 headline. The idea: **late in sampling, consecutive
 steps' inputs barely change, so the DiT's output barely changes — reuse it and
@@ -109,7 +109,7 @@ On a real forward it caches `noise_pred`, resets the accumulator, and updates
 
 **This is TeaCache, and the code says so** (docstring 22-32). The honest caveat:
 TeaCache's clever part is an *offline polynomial rescaler* that predicts output
-drift from input drift; Mirage's v0 uses an **identity rescaler** (raw `rel_l1`
+drift from input drift; Repercep's v0 uses an **identity rescaler** (raw `rel_l1`
 accumulation) — "a sound conservative default" the paper falls back to without a
 rescaler. So: a competent re-implementation, not novel IP — exactly what
 `docs/STRATEGIC_ASSESSMENT.md` argues, and why the cache is listed under "not a
@@ -133,4 +133,4 @@ python -m pytest tests/test_denoise.py -q     # in the [dev] env
 ```
 
 **Next:** Part 4 — follow `dispatch_attention_fn` (Part 2 §2.5) down through
-diffusers' backend registry to either SDPA→aotriton or Mirage's FP8 bridge.
+diffusers' backend registry to either SDPA→aotriton or Repercep's FP8 bridge.

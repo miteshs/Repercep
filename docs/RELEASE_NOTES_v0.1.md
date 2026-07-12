@@ -1,11 +1,11 @@
-# Mirage Runtime v0.1 — Release Notes
+# Repercep Runtime v0.1 — Release Notes
 
 *Draft. Pre-publication. Update the date + clear this banner before publishing.*
 
 **Date:** 2026-05-24 · **Repo:** https://github.com/miteshs/Mirage ·
 **License:** Apache-2.0
 
-Mirage Runtime is the first world-model-native inference engine to ship
+Repercep Runtime is the first world-model-native inference engine to ship
 a public Cosmos-Predict-7B benchmark on AMD silicon. v0.1 is the first
 release; it is **pre-alpha software** but the numbers below are measured
 and independently re-verified on a clean GPU.
@@ -39,14 +39,14 @@ benchmark on any AMD GPU as of 2026-05-22** — see the diligence catalog in
 
 ### Runtime
 
-- **`mirage.models.cosmos.CosmosEngine`** — Cosmos-Predict-7B via the
+- **`repercep.models.cosmos.CosmosEngine`** — Cosmos-Predict-7B via the
   HuggingFace `diffusers.CosmosTextToWorldPipeline` path. Bypasses
   NVIDIA's reference stack entirely (no TransformerEngine, no Apex, no
   NATTEN, no CUDA flash-attn). On ROCm, SDPA dispatches to aotriton
   flash kernels — see ADR-0002 for why.
-- **`mirage.models.wan.WanEngine`** — Wan-2.2-T2V-A14B via the diffusers
+- **`repercep.models.wan.WanEngine`** — Wan-2.2-T2V-A14B via the diffusers
   `Wan2_2Pipeline` path. Second world-model family in the same shape.
-- **`mirage.runtime.denoise.denoise_cosmos_video`** — Mirage-native
+- **`repercep.runtime.denoise.denoise_cosmos_video`** — Repercep-native
   denoising loop with CFG batching, fixed step-skip caching, and
   TeaCache-style adaptive caching. `--cache-mode {none|fixed|adaptive}`.
 
@@ -70,14 +70,14 @@ benchmark on any AMD GPU as of 2026-05-22** — see the diligence catalog in
 
 ### Attention kernels
 
-- **`mirage.attention.fp8_triton.FP8TritonAttention`** — FlashAttention-2
+- **`repercep.attention.fp8_triton.FP8TritonAttention`** — FlashAttention-2
   in Triton with FP8 quantized GEMMs. `@triton.autotune` over a 19-config
   grid; cache keyed on (B, H, S, D, dtype). Best config at Cosmos
   production shape (B=2, H=32, D=128, S≈109k): `BLOCK_M=256, BLOCK_N=128,
   num_warps=4, num_stages=2/3`. **1.16× over SDPA→aotriton** at that
   shape; cross-over around S ≈ 4–8 k below which SDPA wins.
-- **`mirage.attention.diffusers_backend`** — registers `"mirage_fp8"`
-  with diffusers' `_AttentionBackendRegistry`. `MIRAGE_FP8_ATTENTION=1`
+- **`repercep.attention.diffusers_backend`** — registers `"repercep_fp8"`
+  with diffusers' `_AttentionBackendRegistry`. `REPERCEP_FP8_ATTENTION=1`
   flips the active backend in `CosmosEngine.load`.
 - **HIP scaffold** (`kernels/hip/fp8_attn/`) — `hipcc` compiles a
   `v_mfma_f32_16x16x32_fp8_fp8` GEMM and the pybind layer loads
@@ -98,11 +98,11 @@ benchmark on any AMD GPU as of 2026-05-22** — see the diligence catalog in
 ### Rust core
 
 - Cargo workspace at the repo root with three crates:
-  - **`crates/mirage-cache`** — paged latent cache; port of the prior
+  - **`crates/repercep-cache`** — paged latent cache; port of the prior
     pure-Python `PagedLatentCache`.
-  - **`crates/mirage-scheduler`** — request scheduler; 3-bucket priority
+  - **`crates/repercep-scheduler`** — request scheduler; 3-bucket priority
     queue, cancellation skip-set, capacity backpressure.
-  - **`crates/mirage-router`** — per-request state machine + bounded
+  - **`crates/repercep-router`** — per-request state machine + bounded
     frame channels + scheduler-handle trait. Used by the v2 serving
     path; available standalone for other consumers.
 - PyO3 0.25 bindings; abi3-py311; uv-managed venv; `maturin build` +
@@ -133,7 +133,7 @@ benchmark on any AMD GPU as of 2026-05-22** — see the diligence catalog in
 
 ## Honest framing — read this before you cite the 2.68× number
 
-The 2.68× headline compares **Mirage with adaptive caching + autotuned
+The 2.68× headline compares **Repercep with adaptive caching + autotuned
 FP8** against **NVIDIA's published Cosmos-Predict-7B reference on H100**
 (as documented on the HuggingFace model card at
 `huggingface.co/nvidia/Cosmos-Predict1-7B-Text2World`, ~380 s,
@@ -141,12 +141,12 @@ excluding model init, peak 74 GB).
 
 NVIDIA's reference is the published H100 path: the diffusers /
 TransformerEngine / Apex / NATTEN / flash-attn-3 stack with no
-caching disclosed. **Mirage applies adaptive caching + a tuned FP8 kernel
+caching disclosed. **Repercep applies adaptive caching + a tuned FP8 kernel
 on top.** The same optimizations are presumably applicable on H100; we
 do not have an H100 to run them and measure.
 
 The **raw-hardware comparison** — both sides without caching — has
-Mirage's MI300X baseline at 470 s vs NVIDIA's H100 at ~380 s, i.e.
+Repercep's MI300X baseline at 470 s vs NVIDIA's H100 at ~380 s, i.e.
 **MI300X is 1.24× *slower* than H100 at the same compute**. The 2.68×
 emerges from the *shipped optimization stack*, not from raw silicon
 advantage. We are claiming a **shipped-system-vs-shipped-system** lead.

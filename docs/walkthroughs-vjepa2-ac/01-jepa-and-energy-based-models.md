@@ -42,7 +42,7 @@ search** — which is exactly planning. The catch moves to *training* (how do yo
 learn `E` without `Z`?) and *inference* (how do you find the argmin?).
 
 - **Inference** = minimize energy over candidates: gradient descent on `y`, or
-  sampling (Langevin), or **search over a set of candidates** (the route Mirage
+  sampling (Langevin), or **search over a set of candidates** (the route Repercep
   takes — CEM, Part 4).
 - **Training without `Z`**: contrastive (push energy down on real pairs, up on
   fake — needs negative sampling), score matching, or — JEPA's route —
@@ -100,7 +100,7 @@ E(a₁..a_H) = ‖ rollout(s₀, a₁..a_H) − g ‖
 ```
 
 Planning is `argmin_{a} E(a)` — model-predictive control as **energy
-minimization**. Mirage implements it with the **cross-entropy method** (CEM):
+minimization**. Repercep implements it with the **cross-entropy method** (CEM):
 sample action sequences, roll each out, keep the lowest-energy ("elite") ones,
 refit, repeat. That's exactly `_rollout_energy` / `_plan_sequence` / `plan` in
 `models/vjepa2_ac.py` (Part 4) — and the `1.763 → 0.401` you saw in Part 0 is this

@@ -1,4 +1,4 @@
-# `amx_int8_attn` — Intel AMX INT8 flash-attention for Mirage
+# `amx_int8_attn` — Intel AMX INT8 flash-attention for Repercep
 
 INT8 sibling of `kernels/cpu/amx_attn/` (BF16).  Implements a FlashAttention-2
 forward pass using Intel AMX INT8 tile instructions (`TDPBSSD`) plus AVX-512
@@ -64,7 +64,7 @@ top-level `make kernels-cpu-int8` target.
 The user-facing API lives at:
 
 ```
-src/mirage/attention/amx_int8_flash.py
+src/repercep/attention/amx_int8_flash.py
 ```
 
 That module imports `_native`, probes `/proc/cpuinfo` for the `amx_int8`

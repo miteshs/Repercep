@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import pytest
 from pydantic import ValidationError
 
-from mirage.models.vjepa2_ac import (
+from repercep.models.vjepa2_ac import (
     VJepa2ACConfig,
     VJepa2ACEngine,
     _ac_raw_qkv,
@@ -22,9 +22,9 @@ from mirage.models.vjepa2_ac import (
     _AcPredictorAdapter,
     _infer_tokens_per_frame,
 )
-from mirage.runtime.engine import EngineInfo
-from mirage.runtime.interactive import InteractiveWorldModel
-from mirage.runtime.types import (
+from repercep.runtime.engine import EngineInfo
+from repercep.runtime.interactive import InteractiveWorldModel
+from repercep.runtime.types import (
     Action,
     ConditioningInput,
     LatentStep,
@@ -36,7 +36,7 @@ from mirage.runtime.types import (
 if TYPE_CHECKING:
     import torch
 
-    from mirage.backend.protocol import Backend
+    from repercep.backend.protocol import Backend
 
 
 class _NamedBackend:
@@ -453,7 +453,7 @@ def test_sdpa_dtype_harmonizer_casts_qk_to_v() -> None:
     torch = pytest.importorskip("torch")
     import torch.nn.functional as F  # noqa: N812
 
-    from mirage.models.vjepa2_ac import _sdpa_dtype_harmonizer
+    from repercep.models.vjepa2_ac import _sdpa_dtype_harmonizer
 
     q = torch.randn(1, 2, 3, 4, dtype=torch.float32)
     k = torch.randn(1, 2, 3, 4, dtype=torch.float32)

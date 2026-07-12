@@ -10,7 +10,7 @@
 #   make -j
 
 cmake_minimum_required(VERSION 3.21)
-project(mirage_fp8_hip LANGUAGES CXX HIP)
+project(repercep_fp8_hip LANGUAGES CXX HIP)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_HIP_STANDARD 17)
@@ -27,17 +27,17 @@ set(SRC fp8_gemm.hip)
 
 if(Torch_FOUND)
     list(APPEND SRC binding.cpp)
-    add_library(mirage_fp8_hip SHARED ${SRC})
-    target_link_libraries(mirage_fp8_hip PRIVATE ${TORCH_LIBRARIES})
-    target_include_directories(mirage_fp8_hip PRIVATE ${TORCH_INCLUDE_DIRS})
+    add_library(repercep_fp8_hip SHARED ${SRC})
+    target_link_libraries(repercep_fp8_hip PRIVATE ${TORCH_LIBRARIES})
+    target_include_directories(repercep_fp8_hip PRIVATE ${TORCH_INCLUDE_DIRS})
     # Python extensions on Linux are .so without the "lib" prefix.
-    set_target_properties(mirage_fp8_hip PROPERTIES
+    set_target_properties(repercep_fp8_hip PROPERTIES
         PREFIX ""
         SUFFIX ".so")
 else()
     message(STATUS "Torch not found — building HIP kernel as a static library only")
-    add_library(mirage_fp8_hip STATIC ${SRC})
+    add_library(repercep_fp8_hip STATIC ${SRC})
 endif()
 
-target_compile_options(mirage_fp8_hip PRIVATE
+target_compile_options(repercep_fp8_hip PRIVATE
     $<$<COMPILE_LANGUAGE:HIP>:-O3 -ffast-math>)

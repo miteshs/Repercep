@@ -1,4 +1,4 @@
-# Mirage Methodology — measurement protocol and honest framing
+# Repercep Methodology — measurement protocol and honest framing
 
 This document is meant for a sceptical reader. The headline numbers we
 quote (the **2.52× faster than NVIDIA's H100 Cosmos reference** in
@@ -46,11 +46,11 @@ The NVIDIA stack the reference implies (per Cosmos-Predict1's
   not in `INSTALL.md` itself but are referenced by the model code.
 
 **None of these run on ROCm.** The dependency-stack divergence is the
-entire reason Mirage exists on AMD silicon — see ADR-0001 + ADR-0002.
+entire reason Repercep exists on AMD silicon — see ADR-0001 + ADR-0002.
 
 ---
 
-## 2. Mirage measurements
+## 2. Repercep measurements
 
 ### 2.1 Hardware
 
@@ -83,7 +83,7 @@ have the same per-device performance for a single-tenant workload
 | `accelerate` | 1.13.0 |
 | `huggingface-hub` | 1.16.1 |
 | `triton-rocm` | 3.7.0 |
-| Mirage runtime | this repo, `HEAD` at the time of the headline |
+| Repercep runtime | this repo, `HEAD` at the time of the headline |
 
 ### 2.3 Workload
 
@@ -97,7 +97,7 @@ have the same per-device performance for a single-tenant workload
 - Cosmos safety guardrail **disabled** for benchmarking — same as
   NVIDIA's published reference. Production deployments per NVIDIA's
   Open Model License must enable it; the integration is in
-  `mirage.models.cosmos`.
+  `repercep.models.cosmos`.
 
 ### 2.4 Timing protocol
 
@@ -122,7 +122,7 @@ processes contending:
 |---|--:|--:|---|
 | Cosmos 121f/36 `cache=adaptive thr=0.30` | **150.9 s** | **52.5 GiB** | `94852d9d` (Session 9 + 10 identical) |
 | Cosmos 121f/36 `cache=fixed/4` (legacy) | 163.9 s | 52.5 GiB | `d7bf6972` |
-| Cosmos 121f/36 adaptive + `MIRAGE_FP8_ATTENTION=1` | 154.7 s | 52.5 GiB | `8f88f5f8` |
+| Cosmos 121f/36 adaptive + `REPERCEP_FP8_ATTENTION=1` | 154.7 s | 52.5 GiB | `8f88f5f8` |
 | Cosmos 121f/36 no caching, native loop | 465 s baseline / 740 s cold | 52.5 GiB | (not archived) |
 | Wan-2.2-T2V-A14B 17f/8 steps smoke | 326.2 s | 84.3 GiB | `63c8937a` |
 
@@ -148,7 +148,7 @@ This is the section a skeptical reader should read most carefully.
 on H100.** That is not a hardware comparison. It's a system comparison
 between two distinct configurations:
 
-| | MI300X + Mirage adaptive cache | H100 + NVIDIA reference stack |
+| | MI300X + Repercep adaptive cache | H100 + NVIDIA reference stack |
 |---|---|---|
 | Hardware | MI300X (192 GiB, ROCm 7.2) | H100 80 GB (CUDA, TransformerEngine 1.12) |
 | Compute saved by caching | yes (~25 of 36 DiT forwards skipped) | no (full 36 forwards) |
@@ -158,7 +158,7 @@ between two distinct configurations:
 Two honest framings:
 
 **Hardware-only (raw, same workload):**
-- Mirage on MI300X with **no caching** (i.e. the same compute as the
+- Repercep on MI300X with **no caching** (i.e. the same compute as the
   H100 reference): **465 s baseline** measured.
 - H100 reference: ~380 s.
 - **MI300X is 1.22× *slower* than H100 at the same compute.** This is
@@ -171,16 +171,16 @@ Two honest framings:
     equivalent
 
 **System-level (each side's best-published path):**
-- Mirage on MI300X with adaptive caching: **150.9 s**.
+- Repercep on MI300X with adaptive caching: **150.9 s**.
 - H100 with NVIDIA's published reference (no caching disclosed):
   ~380 s.
-- **Mirage's MI300X system is 2.52× faster than NVIDIA's published
+- **Repercep's MI300X system is 2.52× faster than NVIDIA's published
   H100 system** — true. With these caveats:
   - This is the published-vs-published comparison; we can't run TeaCache
     on H100 because we don't have one. The H100 + TeaCache combination
     is presumably also achievable and would close the gap. **We are
     not claiming MI300X is intrinsically 2.52× faster than H100.**
-  - We are claiming that Mirage on AMD silicon, using Phase-2 work
+  - We are claiming that Repercep on AMD silicon, using Phase-2 work
     that is currently absent from NVIDIA's documented Cosmos serving
     path, delivers a 2.52× headline against that documented path. That
     is the legitimate framing.
@@ -190,7 +190,7 @@ Two honest framings:
 vLLM-style serving infrastructure compares to "what people actually
 run" rather than "what an unrealized optimal would be." NVIDIA has not
 shipped a TeaCache-style adaptive cache in the public Cosmos path on
-H100; the AMD ROCm + diffusers + native-loop combination Mirage provides
+H100; the AMD ROCm + diffusers + native-loop combination Repercep provides
 is the only documented path with that cache at all. The fair
 comparison reflects shipped-system vs shipped-system, not
 hypothetical-vs-hypothetical.

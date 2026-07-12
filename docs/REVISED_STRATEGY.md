@@ -1,4 +1,4 @@
-# Mirage — Revised Strategy (2026-06-24)
+# Repercep — Revised Strategy (2026-06-24)
 
 - **Date:** 2026-06-24
 - **Supersedes the *roadmap* in:** `docs/STRATEGIC_ASSESSMENT.md` §5 and
@@ -61,8 +61,8 @@ story dropped from "a plan" to "it runs."
 |---|---|
 | **NVIDIA Cosmos 3** (2026-06-05): open omni world model, Mixture-of-Transformers, modalities = text/image/video/audio/**action**; scales Edge-4B / Nano-16B / Super-64B; **NIM** serving. | NVIDIA now ships **open, action-conditioned** world models *with a serving stack*. This is the lane the assessment named — NVIDIA is now in it. But it is **CUDA/TensorRT/NIM-locked** and **generation-first** (MoT diffusion), not control-first. |
 | **Genie 3** (DeepMind): 24 fps, persistent, real-time — **closed API only**. | The flagship interactive WM is not serveable by anyone but Google. Not a competitor to an OSS runtime; a demand signal. |
-| **Decart / Odyssey / World Labs Marble / Matrix-Game 3**: real-time interactive video, 20–30 fps, 35–50 ms, edge (Decart+Comcast on NVIDIA), Marble commercial. | The real-time **autoregressive video** frontier is busy and NVIDIA-edge-anchored. Mirage's diffusion/JEPA specialization is **not** this lane — do not pitch into it. |
-| **V-JEPA 2-AC** (Meta): zero-shot Franka control, energy-MPC planning, **outperforms diffusion models in control efficiency**. | Validates Mirage's lead-model choice and the **energy-based camp** as a real, distinct, cheaper-for-control paradigm. This is the camp NVIDIA's Cosmos is *not* in. |
+| **Decart / Odyssey / World Labs Marble / Matrix-Game 3**: real-time interactive video, 20–30 fps, 35–50 ms, edge (Decart+Comcast on NVIDIA), Marble commercial. | The real-time **autoregressive video** frontier is busy and NVIDIA-edge-anchored. Repercep's diffusion/JEPA specialization is **not** this lane — do not pitch into it. |
+| **V-JEPA 2-AC** (Meta): zero-shot Franka control, energy-MPC planning, **outperforms diffusion models in control efficiency**. | Validates Repercep's lead-model choice and the **energy-based camp** as a real, distinct, cheaper-for-control paradigm. This is the camp NVIDIA's Cosmos is *not* in. |
 | Serving infra reality: 720p real-time = H200; 1080p/multi-stream = B200. | The *generation* serving cost-center is huge and NVIDIA-silicon-shaped. Competing there on AMD is the old, losing wedge. The *control* serving cost-center (latent rollouts, no decode) is small per-step and **unclaimed**. |
 
 ### 1.3 The two camps (the map that now matters)
@@ -80,7 +80,7 @@ The field has visibly forked into two paradigms with different economics:
   robotics/embodied agents. **Sparse, LeCun/Meta-led on the model side, and on the
   *serving* side essentially nobody.**
 
-Mirage already serves **both** camps through one Backend Protocol seam (Cosmos/Wan in
+Repercep already serves **both** camps through one Backend Protocol seam (Cosmos/Wan in
 the first, V-JEPA-AC in the second). That dual-paradigm coverage is the rare position.
 
 ---
@@ -121,7 +121,7 @@ What is available, in descending order of defensibility:
 
 ## 3. The revised thesis
 
-> **Mirage is the vendor-neutral serving runtime for the *control* regime of world
+> **Repercep is the vendor-neutral serving runtime for the *control* regime of world
 > models** — energy-based, action-conditioned, closed-loop planning (V-JEPA-AC class)
 > — where the workload is latent rollout + energy-MPC, not pixel generation, served on
 > any silicon (AMD/NVIDIA/CPU/edge). It keeps first-class support for the *generation*
@@ -143,7 +143,7 @@ Why this is the defensible framing post-Cosmos-3:
 - It **matches where embodied-AI money is heading** (robot/agent policies in the loop),
   and it **doesn't require us to win the generation race** we can't win.
 
-Mirage's one-line pitch becomes: *"the runtime for world models that act, not just
+Repercep's one-line pitch becomes: *"the runtime for world models that act, not just
 render — on any silicon."*
 
 ---
@@ -174,7 +174,7 @@ render — on any silicon."*
 4. **Bring the *generation* camp's new center of gravity onto the same seam:** a
    **Cosmos 3 action-model** path through `InteractiveWorldModel` (it has a native
    action modality). This hedges the V-JEPA bet, keeps the dual-paradigm story honest,
-   and positions Mirage as the *vendor-neutral* place to serve Cosmos 3's action model
+   and positions Repercep as the *vendor-neutral* place to serve Cosmos 3's action model
    off NVIDIA silicon — exactly the gap NIM leaves.
 
 ### Tier 2 — credibility (minimum, then stop)
@@ -207,7 +207,7 @@ render — on any silicon."*
   (robotics/embodied agents deploying learned world-model planners at scale) are early.
   This may be a 2027–28 market. Kill-criterion: if no design partner or research
   collaborator engages on energy-MPC serving within ~2 quarters of a working demo,
-  treat Mirage as a portfolio/research artifact (assessment option A), not a company.
+  treat Repercep as a portfolio/research artifact (assessment option A), not a company.
 - **NVIDIA-extends-down risk.** Cosmos 3 already has an "action" modality and reasoning;
   NVIDIA could add control-loop serving to NIM. Mitigation: the **vendor-neutral +
   energy-based (non-Cosmos)** angle is the part they're structurally unlikely to
@@ -224,7 +224,7 @@ render — on any silicon."*
 
 ## 6. What to claim / not claim (post-Cosmos-3)
 
-- **Claim:** "Mirage runs V-JEPA 2-AC end-to-end — real weights, latent rollout,
+- **Claim:** "Repercep runs V-JEPA 2-AC end-to-end — real weights, latent rollout,
   energy-MPC planning — on AMD/NVIDIA/CPU through one vendor-neutral seam." True today;
   GPU-verified.
 - **Claim:** "The runtime for world models that *act* — control-regime serving (latent

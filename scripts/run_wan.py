@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run one Wan-2.2 T2V generation on the Mirage runtime (MI300X).
+"""Run one Wan-2.2 T2V generation on the Repercep runtime (MI300X).
 
 This is the Wan analogue of ``scripts/run_cosmos.py`` — it loads the Wan-2.2
-MoE A14B text-to-video pipeline through Mirage's :class:`WanEngine`, generates
+MoE A14B text-to-video pipeline through Repercep's :class:`WanEngine`, generates
 a clip, writes an mp4, and prints a JSON RESULT line.
 
     .venv/bin/python scripts/run_wan.py --frames 17 --steps 8       # fast smoke
@@ -22,7 +22,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Wan-2.2 T2V on Mirage / MI300X")
+    parser = argparse.ArgumentParser(description="Wan-2.2 T2V on Repercep / MI300X")
     parser.add_argument(
         "--prompt",
         default=(
@@ -101,16 +101,16 @@ def main() -> int:
 
     import torch
 
-    from mirage.backend.registry import select_backend
-    from mirage.bench.profile import _Probe, profile_wan
-    from mirage.hardware import Vendor
-    from mirage.models.wan import NATIVE_FPS, SMALL_REPO, WanConfig, WanEngine
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.bench.profile import _Probe, profile_wan
+    from repercep.hardware import Vendor
+    from repercep.models.wan import NATIVE_FPS, SMALL_REPO, WanConfig, WanEngine
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     backend = select_backend(prefer=None if args.backend == "auto" else args.backend)
     device = backend.devices()[0]
     print(
-        f"[mirage] backend={backend.name}  device={device.name}  "
+        f"[repercep] backend={backend.name}  device={device.name}  "
         f"{device.total_memory_gib:.0f} GiB  arch={device.arch}",
         flush=True,
     )
@@ -126,7 +126,7 @@ def main() -> int:
     # logs.
     if args.vae_tiling and backend.vendor is Vendor.INTEL:
         print(
-            "[mirage] FATAL: --vae-tiling is not supported on the CPU backend.\n"
+            "[repercep] FATAL: --vae-tiling is not supported on the CPU backend.\n"
             "  --vae-tiling shreds the FP32 VAE decode on CPU; observed +30 min\n"
             "  on the TI2V-5B 17f/8 smoke. See docs/WAN_ON_CPU.md \xa7\"Methodology\".\n"
             "  Re-run without --vae-tiling.",
@@ -144,11 +144,11 @@ def main() -> int:
     engine = WanEngine(backend, config)
 
     size_hint = "~10 GiB BF16" if args.small else "~52 GiB BF16"
-    print(f"[mirage] loading {config.repo_id} ({size_hint}) ...", flush=True)
+    print(f"[repercep] loading {config.repo_id} ({size_hint}) ...", flush=True)
     t0 = time.perf_counter()
     engine.load()
     load_s = time.perf_counter() - t0
-    print(f"[mirage] model loaded in {load_s:.1f}s", flush=True)
+    print(f"[repercep] model loaded in {load_s:.1f}s", flush=True)
 
     request = GenerationRequest(
         prompt=args.prompt,
@@ -164,7 +164,7 @@ def main() -> int:
         ),
     )
     print(
-        f"[mirage] generating {args.frames} frames @ {args.width}x{args.height}, "
+        f"[repercep] generating {args.frames} frames @ {args.width}x{args.height}, "
         f"{args.steps} steps, seed {args.seed} ...",
         flush=True,
     )
@@ -235,10 +235,10 @@ def main() -> int:
         "peak_hbm_gib": round(peak_gib, 1),
         "output": str(saved),
     }
-    print("[mirage] RESULT " + json.dumps(summary), flush=True)
+    print("[repercep] RESULT " + json.dumps(summary), flush=True)
 
     if prof_payload is not None:
-        print("[mirage] PROFILE " + json.dumps(prof_payload), flush=True)
+        print("[repercep] PROFILE " + json.dumps(prof_payload), flush=True)
         dit_loop = float(prof_payload["dit_loop_s"])
         dit_share = (dit_loop / gen_s * 100) if gen_s else 0.0
         print(
@@ -261,11 +261,11 @@ def main() -> int:
         # autotuning cost (cold cache) that we want excluded from the
         # breakdown. The inline --profile above is sufficient otherwise.
         print(
-            f"[mirage] second-pass profiling ({args.frames}f / {args.steps} steps) ...",
+            f"[repercep] second-pass profiling ({args.frames}f / {args.steps} steps) ...",
             flush=True,
         )
         prof = profile_wan(engine, request, warmup=1)
-        print("[mirage] PROFILE2 " + json.dumps(prof.model_dump()), flush=True)
+        print("[repercep] PROFILE2 " + json.dumps(prof.model_dump()), flush=True)
         print(
             f"  total {prof.total_s:7.1f}s | "
             f"text {prof.text_encode_s:6.2f}s | "
@@ -290,7 +290,7 @@ def _save_video(frame_tensors: list, path: Path, fps: int = 16) -> Path:
         iio.imwrite(path, stacked, fps=fps, codec="libx264")
         return path
     except Exception as exc:
-        print(f"[mirage] mp4 encode unavailable ({exc}); writing PNG frames", flush=True)
+        print(f"[repercep] mp4 encode unavailable ({exc}); writing PNG frames", flush=True)
         from PIL import Image
 
         frame_dir = path.with_suffix("")

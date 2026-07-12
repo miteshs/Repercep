@@ -1,7 +1,7 @@
-"""Build script for the Mirage AMX INT8 flash-attention C++ extension.
+"""Build script for the Repercep AMX INT8 flash-attention C++ extension.
 
 Sibling of the BF16 build script in ``kernels/cpu/amx_attn/setup.py``.  Built
-on demand by the wrapper in ``src/mirage/attention/amx_int8_flash.py``.
+on demand by the wrapper in ``src/repercep/attention/amx_int8_flash.py``.
 
 Invoke as::
 
@@ -29,9 +29,9 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 # Parameterised twin of ``_require_amx_bf16`` in ``../amx_attn/setup.py``.
 # ---------------------------------------------------------------------------
 def _require_cpu_flag(flag: str, kernel_label: str = "amx_int8_attn") -> None:
-    if os.environ.get("MIRAGE_AMX_FORCE_BUILD") == "1":
+    if os.environ.get("REPERCEP_AMX_FORCE_BUILD") == "1":
         print(
-            "[amx-int8] MIRAGE_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
+            "[amx-int8] REPERCEP_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
             "(compile-only smoke).",
             file=sys.stderr,
         )
@@ -94,9 +94,9 @@ EXTRA_LINK_ARGS = ["-fopenmp"]
 
 
 setup(
-    name="mirage_amx_int8_attn",
+    name="repercep_amx_int8_attn",
     version="0.1.0",
-    description="Intel AMX INT8 flash-attention kernel for Mirage "
+    description="Intel AMX INT8 flash-attention kernel for Repercep "
                 "(TDPBSSD-based CPU sibling of the GPU FP8 Triton kernels).",
     ext_modules=[
         CppExtension(

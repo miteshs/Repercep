@@ -2,12 +2,12 @@
 
 Part 1 was the idea (predict embeddings; energy = embedding distance; non-
 contrastive training). This part is the *actual model* — the V-JEPA 2 encoder and
-the two kinds of predictor — and exactly what's real vs. a port in Mirage's
+the two kinds of predictor — and exactly what's real vs. a port in Repercep's
 `models/vjepa2_ac.py`.
 
 > Source: `transformers 5.9.0` `models/vjepa2/modeling_vjepa2.py` +
 > `configuration_vjepa2.py` (the version the project runs). Cited by symbol +
-> line. Mirage's engine is `src/mirage/models/vjepa2_ac.py`.
+> line. Repercep's engine is `src/repercep/models/vjepa2_ac.py`.
 
 ## 2.1 `VJEPA2Model` = encoder + predictor (verified)
 
@@ -56,17 +56,17 @@ get_vision_features: input (1, 4, 3, 16, 16) -> embeddings (1, 8, 32)
 
 Config defaults are ViT-L (`hidden_size=1024`, `num_hidden_layers=24`,
 `num_attention_heads=16`, `patch_size=16`, `crop_size=256`, `frames_per_clip=64`,
-`tubelet_size=2`; configuration_vjepa2.py:64-86). The checkpoint Mirage uses,
+`tubelet_size=2`; configuration_vjepa2.py:64-86). The checkpoint Repercep uses,
 **`facebook/vjepa2-vitg-fpc64-256`**, is the **ViT-g** override (~1408 hidden,
 ~40 layers — ~1 B params). Read the real values with `model.config`.
 
-**`get_vision_features`** (968) is the one entry point Mirage uses:
+**`get_vision_features`** (968) is the one entry point Repercep uses:
 ```python
 def get_vision_features(self, pixel_values_videos):
     return self.forward(pixel_values_videos, skip_predictor=True).last_hidden_state  # (B, N, D)
 ```
 It runs the encoder and **skips the predictor** — exactly what `scripts/run_vjepa2.py`
-calls, and what Mirage's `reset()` calls to embed the seed observation (Part 3).
+calls, and what Repercep's `reset()` calls to embed the seed observation (Part 3).
 
 ## 2.3 The masked-prediction predictor — Part 1's energy, made literal
 
@@ -96,12 +96,12 @@ ships only the encoder + the SSL predictor above). It lives in
 and the previous states. Block-causal (causal over time) is what lets you roll it
 forward one step at a time — the basis of `step()` and planning (Parts 3–4).
 
-In Mirage this is the **port**: `models/vjepa2_ac.py` `_load_ac_predictor(config)`
+In Repercep this is the **port**: `models/vjepa2_ac.py` `_load_ac_predictor(config)`
 raises `NotImplementedError` with the intended wiring in its docstring; the
 contract it must satisfy is a callable `(context, action) → next_state_embedding`
 (the `_Predictor` Protocol in that file).
 
-## 2.5 How Mirage wires it (models/vjepa2_ac.py)
+## 2.5 How Repercep wires it (models/vjepa2_ac.py)
 
 ```python
 DEFAULT_ENCODER_REPO   = "facebook/vjepa2-vitg-fpc64-256"   # the HF encoder above (real)
@@ -113,7 +113,7 @@ def _ensure_predictor(self): # the port
     self._predictor = _load_ac_predictor(self._config)      # -> NotImplementedError today
 ```
 
-So Mirage's `VJepa2ACEngine` = **HF encoder (real, loadable) + the AC predictor
+So Repercep's `VJepa2ACEngine` = **HF encoder (real, loadable) + the AC predictor
 head (the port)**. Everything *above* the model — the rollout, the energy, the
 planner (Parts 3–4) — is real and CPU-tested against an injected stub predictor.
 
@@ -146,5 +146,5 @@ print(m.get_vision_features(pixel_values_videos=video).shape) # -> (1, 8, 32) = 
 `(B, N, D)` is the latent the world state is built from. Swap in the `vitg-fpc64-
 256` config and it's the real encoder.
 
-**Next:** Part 3 — Mirage's `InteractiveWorldModel` seam and `VJepa2ACEngine.reset/
+**Next:** Part 3 — Repercep's `InteractiveWorldModel` seam and `VJepa2ACEngine.reset/
 step`, where that `(B, N, D)` becomes a rolling `WorldState`.

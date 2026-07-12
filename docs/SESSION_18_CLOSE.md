@@ -26,7 +26,7 @@ Rapids (real shell + `// TODO(GNR):` markers for the inner loop), full
 `[cpu]` extra Linux-x86_64-marked, `--vae-tiling` refused on the Intel
 backend with a doc explaining why, `eval_cpu_quality.py` chaining LPIPS +
 FVD on a forced-CPU device.  Registry + backend wired for the new
-`MIRAGE_AMX_ATTENTION=int8` / `=fp16` env subvalues.  Makefile grown three
+`REPERCEP_AMX_ATTENTION=int8` / `=fp16` env subvalues.  Makefile grown three
 ISA-gated sibling targets (`kernels-cpu-bf16` / `-int8` / `-fp16`).
 
 **Cross-platform validation against a real Ada GPU (where it fits).**
@@ -49,7 +49,7 @@ Granite Rapids access.
 
 ### 1. Item A — `QuantizedLinearModule` + `replace_linears_with_quantized`
 
-`src/mirage/runtime/quantize.py` grew the "future PR" the original
+`src/repercep/runtime/quantize.py` grew the "future PR" the original
 docstring referenced:
 
 * `QuantizedLinearModule` — `nn.Module` wrapper around a `QuantizedLinear`,
@@ -81,7 +81,7 @@ the BF16 sibling structure exactly:
   per-token symmetric for Q, K, and P (P recomputed every K-tile because
   online softmax mutates row magnitudes); per-tile symmetric for V (the
   P @ V sum prevents per-row V scales from being pulled out cleanly).
-* `src/mirage/attention/amx_int8_flash.py` — `AMXInt8FlashAttention` wrapper,
+* `src/repercep/attention/amx_int8_flash.py` — `AMXInt8FlashAttention` wrapper,
   same surface as `AMXFlashAttention`.  BF16-in/BF16-out contract; caller
   doesn't see INT8.
 * `kernels/cpu/amx_int8_attn/setup.py` — refuses build on hosts without
@@ -109,7 +109,7 @@ throughput, and throughput tuning is hardware-blocked anyway.
   fallback).  The inner FlashAttention-2 loop and the `_tile_dpfp16ps`
   driver are `// TODO(GNR):` markers (six of them) — to be filled when
   there is a real Granite Rapids host to test against.
-* `src/mirage/attention/amx_fp16_flash.py` — `AMXFP16FlashAttention`,
+* `src/repercep/attention/amx_fp16_flash.py` — `AMXFP16FlashAttention`,
   name `"amx-fp16-flash"`, `_SUPPORTED_DTYPES = {DType.FP16}` (BF16 belongs
   to the existing sibling — each wrapper advertises exactly one dtype).
 * `setup.py` refuses build without `amx_fp16` flag (Granite Rapids only);
@@ -124,7 +124,7 @@ Off-platform `pip install -e ".[cpu]"` (macOS, Apple Silicon, ARM Linux)
 previously errored hard; now resolves cleanly with IPEX simply absent
 on those platforms, falling back to the AMX SDPA floor.
 
-No companion deps added — `src/mirage/bench/profile.py` doesn't use
+No companion deps added — `src/repercep/bench/profile.py` doesn't use
 `psutil`, and `torchao` is deliberately not used by `runtime/quantize.py`
 (the existing docstring explains why).
 
@@ -138,7 +138,7 @@ smoke ~30 minutes; observed 66 min vs estimated 38-45 min without).
 is `Vendor.INTEL`, exiting non-zero with:
 
 ```
-[mirage] FATAL: --vae-tiling is not supported on the CPU backend.
+[repercep] FATAL: --vae-tiling is not supported on the CPU backend.
   --vae-tiling shreds the FP32 VAE decode on CPU; observed +30 min
   on the TI2V-5B 17f/8 smoke. See docs/WAN_ON_CPU.md §"Methodology".
   Re-run without --vae-tiling.
@@ -168,8 +168,8 @@ local-only (must be generated, not committed).
 
 ### 7. INTEG — registry + backend + Makefile wiring
 
-Wired Items B and C into `src/mirage/attention/registry.py` and
-`src/mirage/backend/cpu.py`:
+Wired Items B and C into `src/repercep/attention/registry.py` and
+`src/repercep/backend/cpu.py`:
 
 * Registry INTEL branch grew two new candidate paths.  Env subvalues:
   `=int8` (force INT8 kernel; excluded from the auto-set because per-tile
@@ -246,7 +246,7 @@ vs SDPA — within 0.14 pp of the F27 H100 baseline (3.40%)**.  `tl.float8e4nv`
 works identically on sm_89; the "Hopper" name is silicon-family shorthand,
 not a hard ISA gate.  Recorded as **F42** in `docs/BUILD_LOG.md`.
 
-This is a real wedge: Mirage's FP8 lever extends to a fourth silicon
+This is a real wedge: Repercep's FP8 lever extends to a fourth silicon
 target (Ada Lovelace) **without any porting work** — only the wrapper's
 `get_device_capability()` gate would need to admit `(8, 9)` alongside
 `(9, 0)+`.  Autotune found a different winning tile on Ada
@@ -268,7 +268,7 @@ availability column).
 
 **Verdict: WORKS.**  Companion to G's F42.  Item J wrote a purpose-built
 Ada sibling (`kernels/triton_kernels/fp8_flash_attn_ada.py` +
-`src/mirage/attention/fp8_ada_triton.py`) rather than widening the
+`src/repercep/attention/fp8_ada_triton.py`) rather than widening the
 Hopper wrapper's silicon gate.  Both approaches produce correct output;
 the open question is which to promote to the registry.
 
@@ -293,19 +293,19 @@ Ada (both 48 GiB).
 because it exercises the off-Ada negative path).  Filed as **F44** in
 BUILD_LOG.  `docs/FP8_ON_ADA.md` (new, 1 page) carries the strategic
 note about consumer/workstation Ada cards as the natural deployment
-wedge for Mirage's FP8 lever.
+wedge for Repercep's FP8 lever.
 
 ### The open Ada-FP8 wiring decision
 
 Item G and Item J independently confirmed: **FP8 attention works on Ada
 Lovelace (sm_89), correctly, within the standard FP8 noise floor.**
 This unlocks consumer/workstation Ada GPUs (RTX 4090, L40S, RTX 6000
-Ada) as a fourth silicon target for Mirage's FP8 lever — the rest of
+Ada) as a fourth silicon target for Repercep's FP8 lever — the rest of
 the ecosystem (FA-3 FP8, TE FP8 recipes) skipped over Ada because they
 were Hopper-first.
 
 What's NOT yet decided: which kernel gets promoted into
-`src/mirage/attention/registry.py`'s NVIDIA branch.  Two options
+`src/repercep/attention/registry.py`'s NVIDIA branch.  Two options
 (BUILD_LOG F42 vs F44):
 
 1. **Widen the Hopper wrapper's gate to accept `(8, 9)` and drop
@@ -360,7 +360,7 @@ acquired a real new target during the opportunistic sweep.
    still needs generation.  ~1 week of compute on a real GPU host.
 4. **F40 fix-path 1 (Wan attention dispatcher).**  Session 17 carryover —
    custom `WanAttnProcessor` via diffusers `set_attn_processor` to make
-   `MIRAGE_FP8_ATTENTION=fa` actually engage on Wan.  ~half-day on a
+   `REPERCEP_FP8_ATTENTION=fa` actually engage on Wan.  ~half-day on a
    real H100.  Unrelated to CPU work but the highest-leverage open item.
 5. **Wan-shaped adaptive cache.**  Session 17 carryover.  ~1-2 weeks.
 6. **AMX INT8 optimization pass.**  Once Item B's correctness is
@@ -394,10 +394,10 @@ PYTHONPATH=$(pwd)/src python3 -m pytest \
     -q
 
 # Verify CPU AMX dispatch surfaces (no AMX flag → graceful fallthrough)
-MIRAGE_AMX_ATTENTION=int8 PYTHONPATH=$(pwd)/src python3 -c "
-from mirage.attention.registry import select_attention_op
-from mirage.attention.types import AttentionShape, AttentionKind
-from mirage.hardware import SAPPHIRE_RAPIDS, DType
+REPERCEP_AMX_ATTENTION=int8 PYTHONPATH=$(pwd)/src python3 -c "
+from repercep.attention.registry import select_attention_op
+from repercep.attention.types import AttentionShape, AttentionKind
+from repercep.hardware import SAPPHIRE_RAPIDS, DType
 op = select_attention_op(SAPPHIRE_RAPIDS,
     AttentionShape(1,8,4096,4096,128,AttentionKind.FULL), DType.BF16)
 print('op:', op.name)  # expect amx-sdpa on this VM (no amx_int8 flag)

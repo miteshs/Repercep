@@ -78,10 +78,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from mirage.backend.registry import select_backend
-    from mirage.models.cosmos import CosmosConfig, CosmosEngine
-    from mirage.runtime.denoise import DenoiseStats, denoise_cosmos_video
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.models.cosmos import CosmosConfig, CosmosEngine
+    from repercep.runtime.denoise import DenoiseStats, denoise_cosmos_video
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     backend = select_backend()
     device = backend.devices()[0]
@@ -247,7 +247,7 @@ def main() -> int:
 def _video_to_uint8(video: Any) -> Any:
     """Normalize a diffusers video output to ``(T, H, W, 3)`` uint8 on CPU.
 
-    Mirrors ``mirage.models.cosmos._as_frame_tensor`` so the bench is
+    Mirrors ``repercep.models.cosmos._as_frame_tensor`` so the bench is
     self-contained.
     """
     import torch

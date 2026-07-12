@@ -14,11 +14,11 @@ latent OOM bug — see *Engineering postscript* at the end. The 121-frame
 ## TL;DR
 
 We ran NVIDIA's `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` end-to-end on an AMD
-Instinct MI300X (`gfx942`, ROCm 7.2.0, torch 2.12+rocm7.2) through the Mirage
+Instinct MI300X (`gfx942`, ROCm 7.2.0, torch 2.12+rocm7.2) through the Repercep
 runtime. To our knowledge, as of May 22, 2026, this is the **first publicly
 reported Cosmos benchmark on any AMD GPU.**
 
-| Configuration | NVIDIA H100 (reference stack) | Mirage on AMD MI300X (this work) |
+| Configuration | NVIDIA H100 (reference stack) | Repercep on AMD MI300X (this work) |
 |---|---|---|
 | Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + SDPA→aotriton |
 | 121 frames @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **465 s** measured (warmup-separated) |
@@ -26,38 +26,38 @@ reported Cosmos benchmark on any AMD GPU.**
 | same, native loop + step-skip cache (`skip=2`) | — | **266 s** measured — **1.43× faster than H100 reference**, quality verified |
 | same, native loop + step-skip cache (`skip=4`) | — | **154 s** measured — **2.47× faster than H100 reference**, quality verified at 121 f; re-validated **164 s** on 2026-05-23 (Session 8) and **163.9 s** on 2026-05-23 (Session 9, clean GPU) |
 | same, native loop + **adaptive cache** (TeaCache-style, thr=0.30) | — | **151.4 s** measured Session 11 (150.9 / 151.1 prior) — **2.52× faster than H100 reference**. Inter-frame motion is **28 % lower than the no-cache reference** (4.64 vs 6.48); see §Caching quality. |
-| same + `MIRAGE_FP8_ATTENTION=1` (FP8 backend wired, **autotuned tile**) | — | **142.0 s** measured Session 11 (141.7 s Session 11 worktree) — **2.68× faster than H100 reference**. Autotuned `BLOCK_M=256 BLOCK_N=128 num_warps=4 num_stages=3` wins over SDPA→aotriton by 1.13× at the kernel level. |
+| same + `REPERCEP_FP8_ATTENTION=1` (FP8 backend wired, **autotuned tile**) | — | **142.0 s** measured Session 11 (141.7 s Session 11 worktree) — **2.68× faster than H100 reference**. Autotuned `BLOCK_M=256 BLOCK_N=128 num_warps=4 num_stages=3` wins over SDPA→aotriton by 1.13× at the kernel level. |
 | Cold first run (incl. ROCm autotuning) | — | 738 s |
 | Peak HBM | 74 / 80 GB | **52.5 / 192 GB** |
 
 **Headline:** with **adaptive caching + autotuned FP8** at the full
-reference config, **Mirage on MI300X beats NVIDIA's published H100
+reference config, **Repercep on MI300X beats NVIDIA's published H100
 reference by 2.68× (142.0 s, peak HBM 52.5 GiB)**. With adaptive caching
 alone (no FP8), 2.52× / 151.4 s. Fixed step-skip is still measured and
 supported (`--cache-mode fixed --cache-skip-every 4` at 163.9 s / 2.32×,
 `--cache-skip-every 2` at 266 s / 1.43×).
 
 **The 2.68× framing is a system-vs-system claim:**
-- It compares Mirage on MI300X **with adaptive caching + tuned FP8** to
+- It compares Repercep on MI300X **with adaptive caching + tuned FP8** to
   NVIDIA's **published** H100 baseline (which, per the NVIDIA HF model
   card, doesn't disclose using either optimization).
 - The raw hardware comparison — both sides without caching — has
   MI300X at 470 s vs H100 at ~380 s, i.e. **MI300X is 1.24× *slower*
   than H100 at the same compute**. The 2.68× emerges from the
-  optimization stack Mirage ships, not from raw silicon advantage.
+  optimization stack Repercep ships, not from raw silicon advantage.
 - Adaptive caching *and* TeaCache-style optimization are equally
   applicable on H100; NVIDIA could presumably catch up with a similar
   stack. We are claiming a *shipped-system* lead, not a hardware lead.
 - See `docs/METHODOLOGY.md` for the full apples-to-apples accounting.
 
-Mirage uses *none* of NVIDIA's CUDA-only tooling (no TransformerEngine,
+Repercep uses *none* of NVIDIA's CUDA-only tooling (no TransformerEngine,
 Apex, NATTEN, or CUDA flash-attn) and **~30 % less peak HBM** (52.5 vs
 74 GB). The undertested baseline (no cache, no compile) reaches 81 %
 of H100 reference at 470 s.
 
 ## Caching modes
 
-Mirage ships three caching modes, exposed via `--cache-mode {none|fixed|adaptive}`
+Repercep ships three caching modes, exposed via `--cache-mode {none|fixed|adaptive}`
 on the runner CLI and the corresponding fields on `CosmosConfig`:
 
 - **`none`** — every step runs a full DiT forward. The baseline (470 s
@@ -244,7 +244,7 @@ The apparent reason is the dependency stack of NVIDIA's reference
 - `NATTEN` — CUDA; Hopper/Blackwell-FNA kernels
 - `flash-attn` — Dao-AILab CUDA build
 
-A naive port has to replace all four at once. **Mirage doesn't.** The HuggingFace
+A naive port has to replace all four at once. **Repercep doesn't.** The HuggingFace
 `diffusers` `CosmosTextToWorldPipeline` has none of those dependencies —
 attention is `torch.nn.functional.scaled_dot_product_attention`, which on ROCm
 dispatches to **aotriton-compiled flash kernels** internally. All four blockers
@@ -255,10 +255,10 @@ disappear.
 **Hardware:** AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs, gfx942 / CDNA3);
 ROCm 7.2.0; torch 2.12.0+rocm7.2; 235 GiB host RAM; 20 CPU cores.
 
-**Software:** Mirage Runtime (this repo), `diffusers` 0.37.1 + `transformers`
+**Software:** Repercep Runtime (this repo), `diffusers` 0.37.1 + `transformers`
 5.9.0, BF16 throughout. The `CosmosTextToWorldPipeline` runs unmodified above
-Mirage's `CosmosEngine`; we additionally ship `torch.compile(pipe.transformer)`
-behind a config flag and a per-stage profiler (`mirage.bench.profile`) for
+Repercep's `CosmosEngine`; we additionally ship `torch.compile(pipe.transformer)`
+behind a config flag and a per-stage profiler (`repercep.bench.profile`) for
 measurement.
 
 **Workload:** `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`, BF16, 121 frames
@@ -327,7 +327,7 @@ mandatory; on MI300X it isn't. That gap is the structural advantage.
 NVIDIA's HF model card for `nvidia/Cosmos-Predict1-7B-Text2World` publishes
 **~380 s** end-to-end for 121 frames @ 1280×704 on a single H100, BF16, using
 their reference stack (TransformerEngine + Apex + NATTEN + flash-attn-3).
-Mirage on MI300X via the diffusers path measures **465 s** warmup-separated
+Repercep on MI300X via the diffusers path measures **465 s** warmup-separated
 baseline — **82 % of H100 wall time / 1.22× the H100 latency** — using *none*
 of those CUDA-only components, just stock PyTorch SDPA → aotriton.
 
@@ -345,7 +345,7 @@ max-autotune. Conservatively stacked, the implementation plan's Phase-1 target
 
 ## Strategic context
 
-The Mirage Implementation Plan §5.4 argues the defensible wedge for a
+The Repercep Implementation Plan §5.4 argues the defensible wedge for a
 world-model serving runtime is **non-NVIDIA silicon**, where NVIDIA's bundled,
 vertically integrated stack (NIM, TensorRT-LLM) does not compete and where no
 production-grade WM serving exists. The deep-search above confirms the wedge is
@@ -371,7 +371,7 @@ the diffusers-path strategy that produces them is reproducible from this repo.
 Hardware: AMD Instinct MI300X (192 GiB) or compatible CDNA3; ROCm 7.x.
 
 ```bash
-git clone <repo> mirage && cd mirage
+git clone <repo> repercep && cd repercep
 pip install --user uv
 uv venv --python 3.12 .venv
 uv pip install --python .venv torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2
@@ -399,7 +399,7 @@ make info
 | `transformers` | 5.9.0 |
 | `accelerate` | 1.13.0 (required by diffusers for the T5 encoder's fp32 modules) |
 | `cosmos_guardrail` | 0.3.0 (only when `enable_guardrail=True`) |
-| Mirage | 0.0.1 (this repo) |
+| Repercep | 0.0.1 (this repo) |
 
 ## References
 
@@ -442,7 +442,7 @@ fresh reinstall on 2026-05-23. Between the original 2026-05-22 measurement
 and a re-run on a clean machine the next day, the 121 f / 36 step native
 loop began OOMing at ~189 GiB allocated on a 192 GiB MI300X. The diffusers
 default path (no `--native-loop`) still ran at 52.5 GiB peak on the same
-config, isolating the regression to `mirage.runtime.denoise.denoise_cosmos_video`.
+config, isolating the regression to `repercep.runtime.denoise.denoise_cosmos_video`.
 
 Root cause: `denoise_cosmos_video` was missing `torch.no_grad()` /
 `torch.inference_mode()`. Diffusers' own `CosmosTextToWorldPipeline.__call__`

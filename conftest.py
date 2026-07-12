@@ -1,9 +1,9 @@
 """Worktree-local pytest config: ensure tests import this worktree's source.
 
-The shared `.venv` carries an editable install of `mirage-runtime` pointed at
+The shared `.venv` carries an editable install of `repercep-runtime` pointed at
 whichever worktree happened to run `make install` first.  Without this hook,
 ``pytest`` from a parallel worktree would import the *other* worktree's
-`src/mirage/`.  Insert this worktree's `src/` ahead on `sys.path` so any
+`src/repercep/`.  Insert this worktree's `src/` ahead on `sys.path` so any
 import resolves locally.
 """
 

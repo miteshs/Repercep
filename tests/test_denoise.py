@@ -1,4 +1,4 @@
-"""Regression tests for ``mirage.runtime.denoise``.
+"""Regression tests for ``repercep.runtime.denoise``.
 
 These are structural tests — they don't need a GPU or model — but they pin the
 invariants that recently caused observable runtime OOMs.
@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from mirage.runtime import denoise
+from repercep.runtime import denoise
 
 
 def test_denoise_cosmos_video_runs_under_no_grad_gate() -> None:

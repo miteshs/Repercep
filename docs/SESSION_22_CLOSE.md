@@ -29,7 +29,7 @@ ROCm autotune + ~150 s adaptive cache work) almost exactly — the
 public playbook reproduces on a fresh pod with no fixups.
 
 **AMX CI compile-smoke + 32 routing-test design validates on this
-silicon.**  Session 20's `MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu`
+silicon.**  Session 20's `REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu`
 builds all three AMX kernels (BF16 `-march=sapphirerapids`, INT8
 `-march=sapphirerapids`, FP16 `-march=graniterapids`) on the
 hypervisor-AMX-masked Emerald Rapids VM hosting this pod.  `pytest -q
@@ -56,7 +56,7 @@ GPU on a single MI300X VF) is documented in
 ### 1. Fresh MI300X pod environment
 
 - ROCm 7.2.0 (HIP 7.2.53211) already on host.
-- `uv 0.11.16`, `.venv` at `/home/mshah/Mirage/.venv`, Python 3.12.3.
+- `uv 0.11.16`, `.venv` at `/home/mshah/Repercep/.venv`, Python 3.12.3.
 - `torch 2.12.0+rocm7.2`, `torchvision 0.27.0+rocm7.2`,
   `triton-rocm 3.7.0` (one minor bump from Session 11's `torch 2.12.0+
   rocm7.2 / triton 3.6.0` on the original MI300X pod that produced the
@@ -83,11 +83,11 @@ Single `scripts/run_cosmos.py` invocation, cold first run on this
 pod (full ROCm autotune storm + first-shape kernel compile):
 
 ```text
-[mirage] backend=rocm  device=AMD Instinct MI300X VF  192 GiB  arch=amd:gfx942
-[mirage] loading Cosmos-Predict-7B (~38 GB), guardrail=False ...
-[mirage] model loaded in 10.8s
-[mirage] generating 121 frames @ 1280x704, 36 steps, seed 0 ...
-[mirage] RESULT {
+[repercep] backend=rocm  device=AMD Instinct MI300X VF  192 GiB  arch=amd:gfx942
+[repercep] loading Cosmos-Predict-7B (~38 GB), guardrail=False ...
+[repercep] model loaded in 10.8s
+[repercep] generating 121 frames @ 1280x704, 36 steps, seed 0 ...
+[repercep] RESULT {
   "model": "cosmos-predict1-7b-text2world",
   "device": "AMD Instinct MI300X VF",
   "frames": 121,
@@ -123,7 +123,7 @@ clone and first run.
 ### 3. AMX CI smoke on AMX-masked Emerald Rapids VM
 
 Host CPU is `Intel(R) Xeon(R) Platinum 8568Y+` — silicon family is
-Emerald Rapids (`intel:emr` per `mirage.cli info`), which would
+Emerald Rapids (`intel:emr` per `repercep.cli info`), which would
 normally expose AMX_BF16 + AMX_INT8.  This pod is a **20-core KVM
 slice** and the hypervisor masks the AMX flags entirely:
 
@@ -138,7 +138,7 @@ What IS exposed: AVX-512 BF16 + AVX-512 FP16 + AVX-512 VNNI +
 AVX-VNNI.  AMX-masked.
 
 **Session 20 designed the CI smoke for exactly this case.**
-`MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu` bypasses the CPUID gate
+`REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu` bypasses the CPUID gate
 and runs the compile-only smoke; all three kernels build:
 
 - `kernels/cpu/amx_attn/_native.cpython-312-x86_64-linux-gnu.so`
@@ -216,7 +216,7 @@ driver) all stand unchanged.
 
 The Session 22-specific open items:
 
-1. **`denoise_wan_video` in `src/mirage/runtime/denoise.py`** —
+1. **`denoise_wan_video` in `src/repercep/runtime/denoise.py`** —
    mirror `denoise_cosmos_video` with MoE-aware boundary swap.
    Session 23 starts here.  Template + Wan pipeline signature both
    studied this session; implementation deferred.
@@ -236,13 +236,13 @@ The Session 22-specific open items:
 ## Verified on this MI300X pod (re-runnable)
 
 ```bash
-cd /home/mshah/Mirage
+cd /home/mshah/Repercep
 export HF_TOKEN=$(grep '^export HF_TOKEN' ~/extra.sh | sed 's/.*HF_TOKEN=//')
 
 # Env sanity
 .venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 sg render -c "sg video -c '.venv/bin/python scripts/check_gpu.py'"
-sg render -c "sg video -c '.venv/bin/python -m mirage.cli info'"
+sg render -c "sg video -c '.venv/bin/python -m repercep.cli info'"
 
 # Cosmos cold e2e (this is the run that produced the 420.2 s number)
 sg render -c "sg video -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -254,7 +254,7 @@ sg render -c "sg video -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
         --out benchmark-results/cosmos_cold_run1.mp4'"
 
 # AMX CI smoke + routing tests (works on AMX-masked VMs)
-MIRAGE_AMX_FORCE_BUILD=1 make kernels-cpu
+REPERCEP_AMX_FORCE_BUILD=1 make kernels-cpu
 .venv/bin/python -m pytest tests/test_attention_cpu.py \
     tests/test_amx_int8.py tests/test_amx_fp16.py -q
 

@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient
 
-from mirage.serving.app import create_app
+from repercep.serving.app import create_app
 
 
 def test_health() -> None:

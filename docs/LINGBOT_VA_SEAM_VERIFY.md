@@ -1,9 +1,9 @@
-# LingBot-VA 2.0 through the Mirage seam — Phase-1 GPU verify (2026-07-11)
+# LingBot-VA 2.0 through the Repercep seam — Phase-1 GPU verify (2026-07-11)
 
-`LingBotVAEngine` + `LingBotVAPipeline` (`src/mirage/models/lingbot_va*.py`)
+`LingBotVAEngine` + `LingBotVAPipeline` (`src/repercep/models/lingbot_va*.py`)
 driven end-to-end via `reset → plan → step`, ten chunks, on the same RunPod
 H100 used for the lever bench (`docs/LEVERS_2026_07_H100.md`). This is the
-Phase-1 GPU verify: does the model run *through Mirage's seam*, not just
+Phase-1 GPU verify: does the model run *through Repercep's seam*, not just
 through the reference `VA_Server`. It does — and it's faster and lighter
 than the reference-stack run in `docs/LINGBOT_VA_ON_H100.md`, for reasons
 that are design choices, not measurement noise (see below).

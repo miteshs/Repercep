@@ -1,4 +1,4 @@
-"""Tests for ``mirage.backend.cpu.CPUBackend``."""
+"""Tests for ``repercep.backend.cpu.CPUBackend``."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import platform
 
 import pytest
 
-from mirage.backend.cpu import (
+from repercep.backend.cpu import (
     CPUBackend,
     _detect_arch_and_name,
     _detect_dtypes_and_features,
     _detect_topology,
 )
-from mirage.backend.registry import _ALL_BACKENDS, available_backends, select_backend
-from mirage.hardware import (
+from repercep.backend.registry import _ALL_BACKENDS, available_backends, select_backend
+from repercep.hardware import (
     EMERALD_RAPIDS,
     GRANITE_RAPIDS,
     SAPPHIRE_RAPIDS,
@@ -33,7 +33,7 @@ linux_only = pytest.mark.skipif(
 
 def test_backend_satisfies_protocol() -> None:
     """Structural Protocol conformance — same shape as test_backend_cuda.py."""
-    from mirage.backend.protocol import Backend
+    from repercep.backend.protocol import Backend
 
     backend: Backend = CPUBackend()
     assert backend.vendor is Vendor.INTEL

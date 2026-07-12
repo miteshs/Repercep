@@ -1,4 +1,4 @@
-# Mirage — positioning, moat analysis, and what we should (not) claim
+# Repercep — positioning, moat analysis, and what we should (not) claim
 
 *This doc is the strategic-framing layer. It tells you which claims are
 defensible, which aren't, and where the wedge actually is.  Sibling docs
@@ -17,9 +17,9 @@ Read in that order if you're new.
 
 ---
 
-## TL;DR — Mirage in one sentence
+## TL;DR — Repercep in one sentence
 
-> Mirage is a **world-model-native inference engine** with a vendor-
+> Repercep is a **world-model-native inference engine** with a vendor-
 > neutral backend protocol (AMD MI300X first; NVIDIA H100 + Intel SPR
 > CPU also supported) that serves Cosmos-Predict-7B, Wan-2.2-T2V-A14B,
 > and V-JEPA 2 through a single Python + Rust runtime.
@@ -30,7 +30,7 @@ world-model families on three different silicon vendors.
 
 What it **isn't** (yet): a kernel-level performance leader on raw
 compute, a multi-GPU serving stack, or an FP8-everywhere production
-path.  See § "Where Mirage doesn't differentiate yet."
+path.  See § "Where Repercep doesn't differentiate yet."
 
 ---
 
@@ -43,7 +43,7 @@ path.  See § "Where Mirage doesn't differentiate yet."
 - **Defensible**: yes, against NVIDIA's *published* ~380 s reference,
   with the caveat that this is **system-vs-system, not kernel-vs-kernel**
   (METHODOLOGY §3).
-- **Indefensible misread to guard against**: "Mirage's kernels are 3.81×
+- **Indefensible misread to guard against**: "Repercep's kernels are 3.81×
   faster than NVIDIA's." That's wrong by our own measurement (see
   § "Where the 3.81× actually comes from" below).
 
@@ -66,7 +66,7 @@ path.  See § "Where Mirage doesn't differentiate yet."
 
 - **Numbers**: Cosmos (diffusion video), Wan-2.2 (MoE diffusion video),
   V-JEPA 2 (non-diffusion encoder-predictor) all running through the
-  same `mirage.backend.protocol.Backend` Protocol on AMD ROCm, NVIDIA
+  same `repercep.backend.protocol.Backend` Protocol on AMD ROCm, NVIDIA
   CUDA, and Intel CPU (AMX where exposed). See ADR-0003 and
   `docs/TARGETS_AND_KERNELS.md`.
 - **Defensible**: architectural, hard to replicate quickly. Most
@@ -86,9 +86,9 @@ NVIDIA's H100" has the full table; this is the abbreviated reading.
 | step | wall time | factor vs NVIDIA pub. | what changed |
 |---|---|---|---|
 | NVIDIA published H100 reference | ~380 s | 1.00 × | TE + Apex + NATTEN + FA-3, **no cache** disclosed |
-| Mirage **no-cache** on the same H100 | 446.3 s | 0.85 × (we're *slower*) | diffusers + native loop + FA-3 dispatch, BF16, no cache |
-| Mirage + adaptive cache (thr=0.30) | 138.4 s | **2.75 ×** | TeaCache-style step-skip in `mirage.runtime.denoise.denoise_cosmos_video` |
-| Mirage + adaptive cache + FA-3 source build | **99.6 s** | **3.81 ×** | minimal-config FA-3 wheel dispatching for Hopper WGMMA via `MIRAGE_FP8_ATTENTION=fa` |
+| Repercep **no-cache** on the same H100 | 446.3 s | 0.85 × (we're *slower*) | diffusers + native loop + FA-3 dispatch, BF16, no cache |
+| Repercep + adaptive cache (thr=0.30) | 138.4 s | **2.75 ×** | TeaCache-style step-skip in `repercep.runtime.denoise.denoise_cosmos_video` |
+| Repercep + adaptive cache + FA-3 source build | **99.6 s** | **3.81 ×** | minimal-config FA-3 wheel dispatching for Hopper WGMMA via `REPERCEP_FP8_ATTENTION=fa` |
 
 Read the columns left-to-right and you can see exactly where the
 speedup lives:
@@ -96,27 +96,27 @@ speedup lives:
 - **The cache is the dominant lever (~2.75×).**  Everything else is
   multiplicative on top.
 - **FA-3 over the default cuDNN-FA dispatch is worth another ~1.39×.**
-- **Mirage's own diffusers wrapping is slower than NVIDIA's bespoke
+- **Repercep's own diffusers wrapping is slower than NVIDIA's bespoke
   cosmos-predict1 pipeline at the no-cache config** (446 vs 380 s).
   This is honest — our overhead at the framework layer costs us ~17 %.
 
-What NVIDIA's published reference is **missing** that Mirage adds:
+What NVIDIA's published reference is **missing** that Repercep adds:
 
 1. **Adaptive caching** — a TeaCache-style step-skip loop.  NVIDIA's
    reference doesn't disclose using one. Were they to add one,
    they would presumably get a similar 2-3 × speedup (`docs/
    COSMOS_ON_H100.md` line 73 says this explicitly).
-2. **A Cosmos-shaped denoise loop** — `mirage.runtime.denoise.
+2. **A Cosmos-shaped denoise loop** — `repercep.runtime.denoise.
    denoise_cosmos_video` knows the block topology of
    `CosmosTransformer3DModel` and can short-circuit when the latent
    delta is below threshold.
 
 ### What this means for the claim
 
-- **"Mirage on H100 is 3.81× faster than NVIDIA's published H100
+- **"Repercep on H100 is 3.81× faster than NVIDIA's published H100
   reference"** — TRUE.  This is a system-vs-system, published-vs-
   published comparison.
-- **"Mirage's kernels are faster than NVIDIA's kernels on Hopper"** —
+- **"Repercep's kernels are faster than NVIDIA's kernels on Hopper"** —
   FALSE.  At the kernel level we're at parity or slightly behind. The
   no-cache baseline shows this directly.
 - **"NVIDIA can match this if they ship caching"** — TRUE.  The
@@ -179,7 +179,7 @@ For an external publication, this is the next vouchability item.
   H100 today.  Would replicate the Cosmos lever on the Wan workload.
   ~1-2 weeks of focused work; the F40 fix-path 1 in BUILD_LOG is the
   prerequisite for FA-3 + cache to compound.
-- **TE-FP8 wired through Mirage's bridge.**  Would shift the Cosmos
+- **TE-FP8 wired through Repercep's bridge.**  Would shift the Cosmos
   headline from 99.6 s toward ~115-130 s (different stack, possibly
   same wall but with FP8 quality preserved).  Doesn't widen the gap vs
   NVIDIA's published reference — narrows it if NVIDIA adds caching —
@@ -190,14 +190,14 @@ For an external publication, this is the next vouchability item.
 
 ---
 
-## Where Mirage doesn't differentiate yet
+## Where Repercep doesn't differentiate yet
 
 - **Wan-2.2 on H100 wall time.**  1552.8 s vs Wan team's 1041 s with
   offload + FP8.  We are slower because we don't yet replicate their
   stack.  Apples-to-apples (matching their offload + FP8 wiring)
   produces a *credibility* number ("we match their stack"), not a
   wedge.  Real wedge needs a Wan-shaped cache (next 1-2 weeks).
-- **F40 — Mirage's FA-3 bridge is dead weight on Wan.**  Confirmed
+- **F40 — Repercep's FA-3 bridge is dead weight on Wan.**  Confirmed
   empirically this session: 0 dispatcher engagements vs 780 direct
   `torch.F.scaled_dot_product_attention` calls.  `WanTransformer3DModel`
   bypasses `_AttentionBackendRegistry` entirely.  Three fix paths
@@ -209,8 +209,8 @@ For an external publication, this is the next vouchability item.
 - **Multi-GPU sequence-parallel.**  Unimplemented.  The 8 × H100
   community numbers (Morphic 109.8 s, Voltage Park 60 s, Simplismart
   49 s on Wan) are a league we don't enter.
-- **Production serving driver.**  `mirage.serving.driver` exists; the
-  PyO3 crates `mirage-cache`, `mirage-router`, `mirage-scheduler`
+- **Production serving driver.**  `repercep.serving.driver` exists; the
+  PyO3 crates `repercep-cache`, `repercep-router`, `repercep-scheduler`
   exist.  End-to-end FastAPI / gRPC has never been exercised under
   load.  Bench infrastructure is the headline; productionization is
   unflagged work.
@@ -227,7 +227,7 @@ story, not the other way around.
 | "Single-GPU performance leader" | Extend Cosmos lead with TE-FP8 + push toward sub-90 s | ~1-2 days | low | 99.6 s → ~115-130 s (with FP8 quality) or unchanged if cuDNN-FA3 still wins |
 | "World-model-native breadth + MI300X structural advantage" | Fix F40, add Wan-shaped cache, document MI300X-only paths | ~1-2 weeks for cache + ~half-day for F40 | medium | Wan H100 1552 s → ~700-800 s; story becomes "two world-model families with cache on AMD silicon" |
 | "Apples-to-apples credibility everywhere" | Wan offload + FP8 weight convert, FVD/LPIPS quality numbers, multi-prompt variance on everything | ~1 week | low | No wall-time wedge widens; numbers become bullet-proof against skeptical reading |
-| "Production-ready serving engine" | Productionize `mirage.serving.driver`, benchmark batched throughput, build SLA characterization | ~2-3 weeks | medium | Different axis entirely — RPS/$, latency tails, not headline wall time |
+| "Production-ready serving engine" | Productionize `repercep.serving.driver`, benchmark batched throughput, build SLA characterization | ~2-3 weeks | medium | Different axis entirely — RPS/$, latency tails, not headline wall time |
 | "Multi-GPU contender" | Context-Parallel sequence sharding, play in the 8 × H100 league | ~2-3 weeks | high | Lets us cite community-comparable numbers; no MI300X equivalent ships today |
 
 Doing two stories in parallel is feasible; doing three is overcommit.
@@ -261,7 +261,7 @@ rests on an unmeasured quality assertion, and that's the one thing
 Skip in this window:
 - Multi-GPU.  High-effort, doesn't help the single-silicon story.
 - Wan offload + FP8.  Credibility-only.  Do after the cache lands so
-  the comparison is "cache on Mirage vs offload on Wan team" — that's
+  the comparison is "cache on Repercep vs offload on Wan team" — that's
   the interesting one.
 - TE-FP8 on Cosmos as a *headline* play.  The cache is already the
   dominant lever; FP8 doesn't widen the cache-driven gap.  TE-FP8

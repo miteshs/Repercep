@@ -13,9 +13,9 @@ import platform
 
 import pytest
 
-from mirage.attention.amx_int8_flash import AMXInt8FlashAttention, _detect_amx_int8
-from mirage.attention.types import AttentionKind, AttentionShape
-from mirage.hardware import DType
+from repercep.attention.amx_int8_flash import AMXInt8FlashAttention, _detect_amx_int8
+from repercep.attention.types import AttentionKind, AttentionShape
+from repercep.hardware import DType
 
 linux_only = pytest.mark.skipif(
     platform.system() != "Linux",
@@ -122,7 +122,7 @@ def test_amx_int8_flash_kind_gating() -> None:
 def test_amx_int8_flash_module_surface_matches_bf16_sibling() -> None:
     """The INT8 wrapper must expose the same attribute surface as the
     BF16 sibling so the registry can dispatch them interchangeably."""
-    from mirage.attention import amx_flash, amx_int8_flash
+    from repercep.attention import amx_flash, amx_int8_flash
 
     bf16_cls = amx_flash.AMXFlashAttention
     int8_cls = amx_int8_flash.AMXInt8FlashAttention

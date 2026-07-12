@@ -23,7 +23,7 @@ they offload + FP8, we don't).  Smoke 17 f / 8 step: **37.66 ± 0.31 s
 mean** across 5 prompts × 5 seeds (1.59 % spread, tighter than
 Cosmos's 3.86 %).
 
-**F40 confirmed empirically — `MIRAGE_FP8_ATTENTION=fa` bridge does
+**F40 confirmed empirically — `REPERCEP_FP8_ATTENTION=fa` bridge does
 NOT engage on Wan.**  Counter-based trace landed: 0 dispatcher
 engagements, 780 direct `torch.F.scaled_dot_product_attention` calls
 across one 17 f / 4 step smoke.  `WanTransformer3DModel` bypasses
@@ -77,7 +77,7 @@ analysis, honest source-of-speedup decomposition).
 * `docs/WAN_ON_H100.md` rewritten end-to-end: all TBD / "see F30"
   placeholders replaced with measured numbers; per-stage profile
   table added; Caveats section updated; Reproduce block now has the
-  full `MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_
+  full `REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_
   segments:True --vae-tiling` invocation.
 
 ### 2. `WanConfig.vae_tiling` — required for 80 GiB H100 fit
@@ -122,7 +122,7 @@ same bridge).  Hypothesis: same F36 pattern as Cosmos, where
 Confirmed by direct trace:
 
 ```bash
-MIRAGE_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+REPERCEP_FP8_ATTENTION=fa PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     .venv/bin/python scripts/trace_wan_attention.py --frames 17 --steps 4
 ```
 
@@ -139,7 +139,7 @@ WanTransformer3DModel bypasses _AttentionBackendRegistry.
 780 SDPA calls / 4 steps / 2 CFG forwards × ~98 attention sublayers
 ≈ 195 calls per step per forward, consistent with Wan A14B's
 ~30 transformer blocks × ~3 attention paths per block.  The
-diffusers bridge `MIRAGE_FP8_ATTENTION=fa` is **informational not
+diffusers bridge `REPERCEP_FP8_ATTENTION=fa` is **informational not
 load-bearing** on Wan today.
 
 Three fix paths ranked in BUILD_LOG F40:
@@ -155,7 +155,7 @@ Three fix paths ranked in BUILD_LOG F40:
 ### 5. Cosmos H100 cache quality — Session-15 deferred item closed
 
 Single-pair pixel comparison at the canonical 121 f / 36 / 1280 × 704
-config, both runs with `MIRAGE_FP8_ATTENTION=fa --native-loop` (FA-3
+config, both runs with `REPERCEP_FP8_ATTENTION=fa --native-loop` (FA-3
 + native loop identical; cache is the only difference):
 
 - no-cache reference: 310.3 s wall / 52.5 GiB peak / motion 9.13
@@ -193,7 +193,7 @@ held-out reference set doesn't.
   harness with the same 5-prompt set used for Cosmos in Session 16.
   Reports mean / stdev / range / pct-spread; writes JSON sidecar.
 * **`scripts/trace_wan_attention.py`** — counter-based dispatcher
-  verifier.  Wraps `_mirage_fp8_attention`, `_native_fallback`, and
+  verifier.  Wraps `_repercep_fp8_attention`, `_native_fallback`, and
   `torch.F.scaled_dot_product_attention` with counters; prints a
   verdict.  Used to confirm F40.
 * **4 new unit tests in `tests/test_wan.py`:**
@@ -206,7 +206,7 @@ held-out reference set doesn't.
 
 ### 7. `docs/POSITIONING.md` — new strategic-framing doc
 
-Synthesizes "what Mirage is, what's defensible to claim, what isn't."
+Synthesizes "what Repercep is, what's defensible to claim, what isn't."
 Companion to METHODOLOGY.md (accounting), ANNOUNCEMENT.md
 (distribution), per-target docs (numbers), BUILD_LOG.md (root causes).
 
@@ -215,7 +215,7 @@ Key content:
 - The three landed claims, ranked by external defensibility (Cosmos
   H100 3.81 ×, MI300X structural MoE-resident, world-model breadth)
 - Source of the 3.81 × decomposed: cache 2.75 × × FA-3 1.39 × =
-  3.82 × ≈ measured 3.81 ×.  Mirage **no-cache** baseline on H100 is
+  3.82 × ≈ measured 3.81 ×.  Repercep **no-cache** baseline on H100 is
   actually 1.17 × *slower* than NVIDIA's published reference; the
   cache is the dominant lever.
 - What is and isn't a moat
@@ -242,7 +242,7 @@ Key content:
   hypervisor masks `amx_bf16`.  The build refuses with a clear
   FATAL message; this is correct behavior, not a regression.  The
   CPU smoke validated the engine end-to-end through torch SDPA +
-  oneDNN AVX512_BF16 path, but did NOT exercise Mirage's AMX kernel.
+  oneDNN AVX512_BF16 path, but did NOT exercise Repercep's AMX kernel.
 
 ### 9. Other landed pieces
 
@@ -285,7 +285,7 @@ Key content:
   Fix: probe `pipe.config.boundary_ratio is not None` and
   conditionally include.
 
-* **F40** — `MIRAGE_FP8_ATTENTION=fa` bridge does **NOT** engage on
+* **F40** — `REPERCEP_FP8_ATTENTION=fa` bridge does **NOT** engage on
   `WanTransformer3DModel` end-to-end.  Confirmed by counter-based
   trace: 0 dispatcher engagements, 780 direct
   `torch.F.scaled_dot_product_attention` calls per 17 f / 4 step
@@ -323,7 +323,7 @@ weeks if forced to choose," updated post-Session-17:
 
 1. **(highest leverage) F40 fix-path 1.**  Custom `WanAttnProcessor`
    injected via diffusers `set_attn_processor`.  Makes
-   `MIRAGE_FP8_ATTENTION=fa` actually engage on Wan; without it the
+   `REPERCEP_FP8_ATTENTION=fa` actually engage on Wan; without it the
    bridge is documented dead weight.  ~half-day.  Pre-requisite for
    measuring whether FA-3 delivers any speedup on Wan at all.
 
@@ -378,7 +378,7 @@ weeks if forced to choose," updated post-Session-17:
 
 # H100 — first activate the bridge + tiling defaults
 export HF_HOME=/workspace/hf-cache
-export MIRAGE_FP8_ATTENTION=fa
+export REPERCEP_FP8_ATTENTION=fa
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Wan H100 smoke (warm: ~38 s gen + ~65 s load = ~100 s wall)

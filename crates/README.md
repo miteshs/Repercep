@@ -1,8 +1,8 @@
-# crates/ — Mirage Rust workspace
+# crates/ — Repercep Rust workspace
 
-The Rust core of the Mirage Runtime. **Python is the surface; Rust is the
+The Rust core of the Repercep Runtime. **Python is the surface; Rust is the
 core.** Anything that customers touch (model loading, denoise loop, attention
-op, serving HTTP/gRPC handler, CLI) stays in `src/mirage/`. Anything that
+op, serving HTTP/gRPC handler, CLI) stays in `src/repercep/`. Anything that
 benefits from no GIL, deterministic latency, and one codebase shared between
 the datacenter API and a future closed-loop edge path lives here.
 
@@ -13,23 +13,23 @@ The fork that put this directory on the map is recorded in
 
 | Crate | Scope | Status |
 |---|---|---|
-| `mirage-cache` | Paged latent-cache manager. Port of `src/mirage/runtime/latent_cache.py`. | Stage 3 |
-| `mirage-scheduler` | Request scheduler — priority queue, FIFO within priority, preemption seam. | Stage 3 (greenfield) |
-| `mirage-router` | Per-request state machine, frame ordering across batched requests. | Stage 3 (greenfield) |
+| `repercep-cache` | Paged latent-cache manager. Port of `src/repercep/runtime/latent_cache.py`. | Stage 3 |
+| `repercep-scheduler` | Request scheduler — priority queue, FIFO within priority, preemption seam. | Stage 3 (greenfield) |
+| `repercep-router` | Per-request state machine, frame ordering across batched requests. | Stage 3 (greenfield) |
 
 ## Shared conventions (every crate follows these)
 
 **Library name.** Each crate's Cargo lib name is **unique within the
-workspace** — `mirage_cache_native`, `mirage_router_native`,
-`mirage_scheduler_native` — so the three never collide on the shared
+workspace** — `repercep_cache_native`, `repercep_router_native`,
+`repercep_scheduler_native` — so the three never collide on the shared
 `target/release/lib<name>.so` output. The Python import path is preserved
-at `mirage_<name>._native` via `[tool.maturin] module-name =
-"mirage_<name>._native"` in each crate's `pyproject.toml`, which renames
+at `repercep_<name>._native` via `[tool.maturin] module-name =
+"repercep_<name>._native"` in each crate's `pyproject.toml`, which renames
 the .so as it's packaged into the wheel. Both `cdylib` (the Python
 extension) and `rlib` (so other Rust crates can depend on this one)
 crate-types are emitted. The Python wrapper at
-`src/mirage/runtime/<name>.py` imports from `mirage_<name>._native`
-(e.g. `from mirage_cache._native import …`) regardless of the Cargo lib
+`src/repercep/runtime/<name>.py` imports from `repercep_<name>._native`
+(e.g. `from repercep_cache._native import …`) regardless of the Cargo lib
 name — only the maturin module-name and the `#[pymodule] fn _native`
 function matter for the import path.
 
@@ -50,7 +50,7 @@ code. Subscribers (`tracing-subscriber`) are wired only by tests or the
 Python integration layer.
 
 **Async.** `tokio` (multi-thread runtime). Crates that don't need async
-(today: only `mirage-cache`) don't depend on it. Don't pull `async-std` or
+(today: only `repercep-cache`) don't depend on it. Don't pull `async-std` or
 `smol` — single runtime across the workspace.
 
 **Locks.** `parking_lot::Mutex` / `RwLock` over std equivalents on hot paths.
@@ -58,8 +58,8 @@ Std locks are fine for cold paths; parking_lot is non-poisoning, faster, and
 gives a smaller surface to reason about.
 
 **Naming.**
-- Crate names: `mirage-<role>` (kebab).
-- Public Rust types: `PascalCase`, never prefixed with `Mirage` — the crate
+- Crate names: `repercep-<role>` (kebab).
+- Public Rust types: `PascalCase`, never prefixed with `Repercep` — the crate
   name is the prefix.
 - PyO3 `#[pyclass(name = "…")]` names match the Python wrapper's public API
   so the wrapper is a thin shim, not a translator.
@@ -78,10 +78,10 @@ gives a smaller surface to reason about.
 ## Python wrapper pattern
 
 ```python
-# src/mirage/runtime/latent_cache.py
+# src/repercep/runtime/latent_cache.py
 from __future__ import annotations
 
-from mirage_cache._native import (
+from repercep_cache._native import (
     PagedLatentCache as _Cache,
     LatentCacheError,
     CacheStats,
@@ -118,7 +118,7 @@ make check-all         # ruff + mypy + pytest + cargo fmt-check + clippy + cargo
 
 - Triton / CUDA / HIP kernels — those live in `../kernels/`, with different
   rules (no clippy lints, no mypy expectations, perf-first).
-- Anything Python — `../src/mirage/`. The wrapper file is the only Python
+- Anything Python — `../src/repercep/`. The wrapper file is the only Python
   the Rust crate cares about.
 - The MLIR dialect (Phase 4+, Series A scope) — separate codebase when that
   arrives.

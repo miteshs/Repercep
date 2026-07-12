@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Control-Loop Serving Benchmark v0 — the leaderboard harness.
 
-Drives ANY :class:`mirage.runtime.interactive.InteractiveWorldModel` through
+Drives ANY :class:`repercep.runtime.interactive.InteractiveWorldModel` through
 the closed-loop protocol (``reset -> step* -> plan``) and measures the four
 metrics `docs/CONTROL_LOOP_BENCH.md` defines as the control-regime serving
 leaderboard nobody else publishes:
@@ -42,10 +42,10 @@ _setup()
 
 import torch  # noqa: E402
 
-from mirage.backend.registry import select_backend  # noqa: E402
-from mirage.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
-from mirage.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
-from mirage.runtime.types import (  # noqa: E402
+from repercep.backend.registry import select_backend  # noqa: E402
+from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
+from repercep.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
+from repercep.runtime.types import (  # noqa: E402
     Action,
     ConditioningInput,
     ConditioningKind,
@@ -124,7 +124,7 @@ def bench_control_loop(
     vector per ``step()``, advancing one latent frame). LingBot-VA's ``step()``
     is chunk-shaped instead (a full executed chunk — frame_chunk_size x
     action_per_frame rows of its wire action width — advances one denoise
-    chunk); detected via ``_wire_action_dim`` (see ``mirage.models.lingbot_va``)
+    chunk); detected via ``_wire_action_dim`` (see ``repercep.models.lingbot_va``)
     so one harness drives both regimes without an engine-kind flag threaded
     through every call site.
     """

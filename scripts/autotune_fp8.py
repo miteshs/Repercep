@@ -1,7 +1,7 @@
 """Autotune the FP8 Triton flash-attention kernel at the Cosmos production shape.
 
-Drives the persistent JSON cache at ``~/.cache/mirage/fp8_autotune.json``
-(overridable via ``MIRAGE_FP8_AUTOTUNE_CACHE``). The kernel itself is
+Drives the persistent JSON cache at ``~/.cache/repercep/fp8_autotune.json``
+(overridable via ``REPERCEP_FP8_AUTOTUNE_CACHE``). The kernel itself is
 ``@triton.autotune``-decorated; this script forces a search at the shapes
 we care about and reports the winner.
 
@@ -210,7 +210,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--cache",
-        default=str(Path.home() / ".cache" / "mirage" / "fp8_autotune.json"),
+        default=str(Path.home() / ".cache" / "repercep" / "fp8_autotune.json"),
         help="Path to the persistent autotune cache",
     )
     parser.add_argument(
@@ -232,7 +232,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    os.environ["MIRAGE_FP8_AUTOTUNE_CACHE"] = args.cache
+    os.environ["REPERCEP_FP8_AUTOTUNE_CACHE"] = args.cache
     cache_path = Path(args.cache)
 
     if not torch.cuda.is_available():
@@ -285,9 +285,9 @@ def main() -> int:
         t_sdpa = _bench(_sdpa, q, k, v, iters=args.iters)
 
         # 2. Fixed-config FP8 (pre-autotune sweet spot).
-        os.environ["MIRAGE_FP8_DISABLE_AUTOTUNE"] = "1"
+        os.environ["REPERCEP_FP8_DISABLE_AUTOTUNE"] = "1"
         t_fixed = _bench(fp8_flash_attention, q, k, v, iters=args.iters)
-        os.environ.pop("MIRAGE_FP8_DISABLE_AUTOTUNE", None)
+        os.environ.pop("REPERCEP_FP8_DISABLE_AUTOTUNE", None)
 
         # 3. Autotuned config.
         if args.manual and not args.no_tune:
@@ -376,7 +376,7 @@ def main() -> int:
 
     print()
     print("Notes:")
-    print("- 'fixed-fp8' bypasses the cache (MIRAGE_FP8_DISABLE_AUTOTUNE=1).")
+    print("- 'fixed-fp8' bypasses the cache (REPERCEP_FP8_DISABLE_AUTOTUNE=1).")
     print("- 'autotuned-fp8' reads from the persistent JSON cache; first call")
     print("  for a given shape runs the autotune search, subsequent calls reuse.")
     print("- '> 1.00x vs sdpa' means FP8 wins.")

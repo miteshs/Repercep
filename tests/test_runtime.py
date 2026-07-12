@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from mirage.runtime.engine import WorldModelEngine
-from mirage.runtime.latent_cache import LatentCacheError, PagedLatentCache
-from mirage.runtime.stub_engine import StubEngine
-from mirage.runtime.types import GenerationParams, GenerationRequest
+from repercep.runtime.engine import WorldModelEngine
+from repercep.runtime.latent_cache import LatentCacheError, PagedLatentCache
+from repercep.runtime.stub_engine import StubEngine
+from repercep.runtime.types import GenerationParams, GenerationRequest
 
 
 def test_generation_request_requires_nonempty_prompt() -> None:

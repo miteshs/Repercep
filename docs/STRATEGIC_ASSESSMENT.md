@@ -1,4 +1,4 @@
-# Mirage — Independent Strategic Assessment
+# Repercep — Independent Strategic Assessment
 
 - **Date:** 2026-05-28
 - **Repo HEAD at assessment:** `2e9096e` (`main`, Session 23 handoff)
@@ -19,7 +19,7 @@
 
 ## TL;DR — the one-paragraph verdict
 
-Mirage is genuinely impressive **engineering** and a genuinely rare **honest
+Repercep is genuinely impressive **engineering** and a genuinely rare **honest
 artifact**: a clean, vendor-neutral, multi-target world-model runtime that boots
 Cosmos, Wan-2.2, and V-JEPA 2 on AMD, NVIDIA, and CPU, built in ~4 days and
 documented with more intellectual honesty than almost anything in the inference
@@ -36,7 +36,7 @@ wedge-opener and start building the deferred half of the original vision.
 
 ## 1. Original vision vs. what got built
 
-Reconstructed from `docs/adr/0001`, the referenced `~/Mirage_Implementation_Plan.pdf`,
+Reconstructed from `docs/adr/0001`, the referenced `~/Repercep_Implementation_Plan.pdf`,
 `docs/POSITIONING.md`, and `docs/ANNOUNCEMENT.md`, the vision was:
 
 > A **world-model-native inference engine** — purpose-built for diffusion-temporal
@@ -99,9 +99,9 @@ OEM is in the design-partner pipeline"*).
 
 | The framing | The reality |
 |---|---|
-| "Adaptive caching" as a Mirage capability | An explicit, *conservative* TeaCache re-implementation — the docstring cites the paper and omits TeaCache's clever part (the polynomial rescaler), using a raw identity accumulator. Not novel; the code never claims to be. |
+| "Adaptive caching" as a Repercep capability | An explicit, *conservative* TeaCache re-implementation — the docstring cites the paper and omits TeaCache's clever part (the polynomial rescaler), using a raw identity accumulator. Not novel; the code never claims to be. |
 | "3.81× faster than NVIDIA" | = **cache 2.75× × FA-3 1.39×**. The cache is public IP; FA-3 is NVIDIA's own kernel. At the *kernel* level you're at parity-or-behind; the no-cache baseline was *slower* than NVIDIA's reference (446 vs 380 s; F47 later flips to 1.18× faster on newer torch, n=1). |
-| "FP8 kernel as an optimization" | Cosmos production shape: a **wash** (0.98×) until painfully autotuned to ~1.13× (F20→F21). On Hopper: a **net loss** vs cuDNN-FA3 (F27/F29); the docs say `MIRAGE_FP8_ATTENTION=1` on Hopper is "demonstration that the kernel runs," not a perf setting. |
+| "FP8 kernel as an optimization" | Cosmos production shape: a **wash** (0.98×) until painfully autotuned to ~1.13× (F20→F21). On Hopper: a **net loss** vs cuDNN-FA3 (F27/F29); the docs say `REPERCEP_FP8_ATTENTION=1` on Hopper is "demonstration that the kernel runs," not a perf setting. |
 | "Polyglot Rust core" | Real and partly wired — but on any box without compiled wheels (the default), the v2 path runs entirely on **Python fallbacks**, not Rust. The cache crate is **orphaned** (importable, never instantiated). |
 | "Quality is preserved" | Rests on **small-N FVD (N=5, self-labeled "preliminary")**. Literature standard is N≥1000 (~7 GPU-days here). POSITIONING calls this "the one thing every skeptical external reader will probe first." |
 | HIP FP8 GEMM kernel | Compiles and loads but produces **numerically wrong output** (B-operand load under-samples K: reads 8 of 32 values). Zero test coverage. Open since Session 9. |
@@ -156,7 +156,7 @@ regime.** Why it's structurally defensible where the others aren't:
 
 > **Load-bearing caveat:** the marquee real-time interactive world models today
 > (Google Genie 3, Decart Oasis) are **autoregressive**, not diffusion-temporal.
-> Mirage's specialization (bidirectional attention, latent-volume denoising) targets
+> Repercep's specialization (bidirectional attention, latent-volume denoising) targets
 > the offline/short-horizon diffusion regime (Cosmos T2W, Wan, Marble-style export).
 > Moving toward "interactive" forces a choice: serve the *diffusion* interactive
 > regime (Cosmos video2world, real-time-diffusion research) or broaden to

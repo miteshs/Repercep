@@ -7,7 +7,7 @@
 
 ## Context
 
-Mirage's engine seam today is `mirage.runtime.engine.WorldModelEngine`:
+Repercep's engine seam today is `repercep.runtime.engine.WorldModelEngine`:
 `generate(request) -> Iterator[Frame]` — one request in, one stream of RGB
 frames out. It models *request→response batch generation*, which is exactly
 what the general-purpose video-diffusion servers (xDiT, FastVideo, vLLM-Omni,
@@ -18,7 +18,7 @@ servers structurally do **not** model: a *stateful, action-conditioned, closed
 loop* — the client injects an action each step, a persistent world-state latent
 is advanced and reused, and the metric is closed-loop latency under state
 carryover, not batch wall-time. That is also the energy-based / JEPA world-model
-regime (Yann LeCun's program): Mirage already runs a member of it, V-JEPA 2, but
+regime (Yann LeCun's program): Repercep already runs a member of it, V-JEPA 2, but
 only as a benchmark script (`scripts/run_vjepa2.py`), not as an engine.
 
 Two facts force a new seam rather than an extension of `generate`:
@@ -33,10 +33,10 @@ Two facts force a new seam rather than an extension of `generate`:
 ## Decision
 
 Add a second engine Protocol,
-`mirage.runtime.interactive.InteractiveWorldModel` (`reset → step(action) → … /
+`repercep.runtime.interactive.InteractiveWorldModel` (`reset → step(action) → … /
 plan`), alongside — not replacing — `WorldModelEngine`:
 
-- **Lead implementation:** `mirage.models.vjepa2_ac.VJepa2ACEngine` — V-JEPA 2-AC
+- **Lead implementation:** `repercep.models.vjepa2_ac.VJepa2ACEngine` — V-JEPA 2-AC
   (~300M, block-causal), a latent energy-based world model. `plan()` is
   energy-minimizing MPC: sample candidate action sequences, roll out, score each
   by the embedding-space distance to a goal (the energy), return the best first
@@ -47,7 +47,7 @@ plan`), alongside — not replacing — `WorldModelEngine`:
 - The one-shot `WorldModelEngine.generate` becomes expressible as a thin facade
   over the interactive seam (reset + N auto-stepped frames).
 
-New wire types live in `mirage.runtime.types`: `Action`, `RolloutParams`,
+New wire types live in `repercep.runtime.types`: `Action`, `RolloutParams`,
 `ResetRequest`, `WorldState` (in-process, tensor-carrying, like `Frame`), and
 `LatentStep` (the streamable envelope, like `FrameChunk`).
 

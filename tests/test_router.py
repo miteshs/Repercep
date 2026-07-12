@@ -1,8 +1,8 @@
 """Cross-language tests for the per-request router.
 
-Mirrors the Rust unit tests in `crates/mirage-router/src/lib.rs` at the Python
+Mirrors the Rust unit tests in `crates/repercep-router/src/lib.rs` at the Python
 boundary. The scheduler is mocked with a tiny duck-typed class — the router
-crate has no Cargo dep on `mirage-scheduler` and the Python wrapper similarly
+crate has no Cargo dep on `repercep-scheduler` and the Python wrapper similarly
 accepts any object exposing `submit(id, priority)` and `cancel(id)`.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from mirage.runtime.router import FrameStream, Router, RouterError
+from repercep.runtime.router import FrameStream, Router, RouterError
 
 # ---------------------------------------------------------------------------
 # Mock scheduler (duck-typed; satisfies SchedulerHandle on the Rust side)

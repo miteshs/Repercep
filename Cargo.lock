@@ -190,7 +190,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mirage-cache"
+name = "repercep-cache"
 version = "0.0.1"
 dependencies = [
  "parking_lot",
@@ -201,7 +201,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mirage-router"
+name = "repercep-router"
 version = "0.0.1"
 dependencies = [
  "parking_lot",
@@ -216,7 +216,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mirage-scheduler"
+name = "repercep-scheduler"
 version = "0.0.1"
 dependencies = [
  "parking_lot",

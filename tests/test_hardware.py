@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mirage.hardware import H100, MI300X, BackendCapabilities, DeviceSpec, DType, Vendor
+from repercep.hardware import H100, MI300X, BackendCapabilities, DeviceSpec, DType, Vendor
 
 
 def test_mi300x_arch() -> None:

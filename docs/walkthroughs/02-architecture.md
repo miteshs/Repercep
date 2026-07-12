@@ -4,7 +4,7 @@ This is the denoiser: `CosmosTransformer3DModel`. One call = one "predict the
 noise in this latent" step. We go config → shape journey → `forward()` → one
 block → the attention hand-off, on both axes.
 
-> Source: diffusers 0.38.0 `models/transformers/transformer_cosmos.py` (Mirage
+> Source: diffusers 0.38.0 `models/transformers/transformer_cosmos.py` (Repercep
 > wraps it). Cited by symbol + line; read the real config values on your box with
 > `pipe.transformer.config`.
 
@@ -48,7 +48,7 @@ noise pred    (B, 16, ~31, 88, 160)          ==  latent shape
 \* The **8× spatial** is certain (88×160 latent → 44×80 post-patch). The
 **temporal** factor — and thus the exact token count — comes from the
 checkpoint's VAE (`pipe.vae.config.temporal_compression_ratio`; diffusers' bare
-fallback is 8). Mirage's writeups quote the production attention shape as
+fallback is 8). Repercep's writeups quote the production attention shape as
 **B = 2 (CFG), H = 32, D = 128, S ≈ 109k** (`docs/ANNOUNCEMENT.md`), which implies
 ≈ 31 latent frames (temporal ≈ 4). **`S ≈ 109,000` is the number that matters**:
 a sequence ~100× longer than a typical LLM prompt. That single fact drives
@@ -123,8 +123,8 @@ hidden = dispatch_attention_fn(q, k, v, is_causal=False)             # ← line 
 ```
 
 `dispatch_attention_fn` (line 200) is **the seam where "the model" ends and "the
-kernel" begins.** On ROCm it lands in SDPA → aotriton; with `MIRAGE_FP8_ATTENTION`
-set, Mirage's registered backend routes it to the FP8 Triton kernel. Parts 4 and
+kernel" begins.** On ROCm it lands in SDPA → aotriton; with `REPERCEP_FP8_ATTENTION`
+set, Repercep's registered backend routes it to the FP8 Triton kernel. Parts 4 and
 5 follow it down.
 
 One detail that changes everything: **`is_causal=False`**. Video attention is
@@ -138,7 +138,7 @@ optimization.**
 Per block, per forward: self-attention over S ≈ 109k tokens is **O(S²·d)** — the
 dominant term; the feed-forward is O(S·d·4d); all ×28 blocks ×~72 forwards
 (CFG × steps). In bf16 the activations alone (S × 4096 × 28) are large, which is
-why Mirage wraps the loop in `inference_mode()` (no autograd graph — the F18 OOM
+why Repercep wraps the loop in `inference_mode()` (no autograd graph — the F18 OOM
 fix, ~189 GiB → 52.5 GiB) and why **skipping whole steps** (the adaptive cache,
 Part 3) is the single biggest lever. Param count ≈ 7 B (28 blocks × the four
 self-attn projections + the two cross-attn + the 4× FF, each ~4096²).

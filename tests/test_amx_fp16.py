@@ -14,12 +14,12 @@ import platform
 
 import pytest
 
-from mirage.attention.amx_fp16_flash import (
+from repercep.attention.amx_fp16_flash import (
     AMXFP16FlashAttention,
     _detect_amx_fp16,
 )
-from mirage.attention.types import AttentionKind, AttentionShape
-from mirage.hardware import DType
+from repercep.attention.types import AttentionKind, AttentionShape
+from repercep.hardware import DType
 
 linux_only = pytest.mark.skipif(
     platform.system() != "Linux",
@@ -112,7 +112,7 @@ def test_supports_rejects_neighborhood_kind() -> None:
 
 def test_module_surface_parity_with_bf16_sibling() -> None:
     """The FP16 wrapper exposes the same public surface as the BF16 wrapper."""
-    from mirage.attention import amx_flash, amx_fp16_flash
+    from repercep.attention import amx_flash, amx_fp16_flash
 
     # Class names diverge (BF16 vs FP16); we check the *attribute set* matches
     # so the registry can swap them transparently.

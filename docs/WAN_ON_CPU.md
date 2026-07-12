@@ -16,7 +16,7 @@ not recur. The corrected re-run is open work.
 
 We can drive `Wan-AI/Wan2.2-TI2V-5B-Diffusers` end-to-end on a single
 Intel Xeon Platinum 8468 (Sapphire Rapids, 160 logical cores,
-`OMP_NUM_THREADS=120`, 1.5 TiB DRAM) through Mirage's `WanEngine`. The
+`OMP_NUM_THREADS=120`, 1.5 TiB DRAM) through Repercep's `WanEngine`. The
 Wan engine code is unchanged from the GPU paths; the Intel backend
 falls out of the vendor-neutral Backend Protocol (ADR-0003, ADR-0006,
 ADR-0007). Honest framing: CPU Wan is **not a production latency
@@ -55,7 +55,7 @@ with a methodology miss".
 `Vendor.INTEL`. The error message:
 
 ```
-[mirage] FATAL: --vae-tiling is not supported on the CPU backend.
+[repercep] FATAL: --vae-tiling is not supported on the CPU backend.
   --vae-tiling shreds the FP32 VAE decode on CPU; observed +30 min
   on the TI2V-5B 17f/8 smoke. See docs/WAN_ON_CPU.md §"Methodology".
   Re-run without --vae-tiling.
@@ -83,7 +83,7 @@ recommended on MI300X (~18 GiB peak reduction at no quality cost).
 ## Reproduce
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git mirage && cd mirage
+git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
 uv venv --python 3.12 .venv
 # Plain CPU torch (no CUDA wheel needed for CPU-only)
 uv pip install --python .venv torch torchvision \
@@ -124,18 +124,18 @@ the DiT loop; the VAE decode would not benefit (FP32, not BF16).
   TBD, not because they are pending typing.
 * **No AMX exposed on this VM.** `/proc/cpuinfo` shows
   `avx512_bf16 + avx_vnni` only; the hypervisor masks `amx_bf16`. The
-  Mirage AMX flash kernel build refuses with a clear FATAL message
+  Repercep AMX flash kernel build refuses with a clear FATAL message
   (this is correct behavior, not a regression). The CPU smoke
   validated `WanEngine` end-to-end through the torch SDPA + oneDNN
-  AVX512_BF16 path, but did **not** exercise Mirage's AMX kernel; the
+  AVX512_BF16 path, but did **not** exercise Repercep's AMX kernel; the
   AMX numbers in `docs/COSMOS_ON_CPU.md` for the Cosmos shape are
   shape-dependent and do not transfer to Wan.
 * **Wan-shaped attention path not exercised on CPU.** Same F40 pattern
-  as the H100 path — `WanTransformer3DModel` bypasses Mirage's
+  as the H100 path — `WanTransformer3DModel` bypasses Repercep's
   `_AttentionBackendRegistry` entirely; attention runs through
   `torch.F.scaled_dot_product_attention` direct. On CPU the SDPA
   fallback is the oneDNN path, which is fine; on a host with AMX
-  exposed it still would not engage Mirage's AMX flash kernel until
+  exposed it still would not engage Repercep's AMX flash kernel until
   the F40 fix-path 1 (custom `WanAttnProcessor` via
   `set_attn_processor`) lands. See `docs/BUILD_LOG.md` F40.
 * **No FP8 ISA on any shipped Xeon.** The FP8 paths in the registry

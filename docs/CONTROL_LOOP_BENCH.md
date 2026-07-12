@@ -87,11 +87,11 @@ the active workstream, next row lands here once measured.
 Two sources, both H100, both 2026-07-11: the reference `wan_va` stack through
 our own timed driver (`docs/LINGBOT_VA_ON_H100.md`) and — since the Phase-1
 port landed same day — the **shared `bench_control_loop.py` harness** driving
-the real weights through the Mirage seam (`docs/LINGBOT_VA_SEAM_VERIFY.md` has
+the real weights through the Repercep seam (`docs/LINGBOT_VA_SEAM_VERIFY.md` has
 the raw imagination-mode rollout this corroborates). "Step" for a chunked
 video-action model = one chunk (4 latent frames, 32 actions).
 
-| metric | H100 (reference stack) | H100 (Mirage seam, shared harness) | MI300X (Mirage seam, shared harness) |
+| metric | H100 (reference stack) | H100 (Repercep seam, shared harness) | MI300X (Repercep seam, shared harness) |
 |---|---|---|---|
 | chunk latency (warm) | 1384.7 ms (CFG 5.0, SDPA) | **754.6 ms** (1.3/s) | **1198.1 ms** (0.8/s) |
 | planning-decisions/sec (1 chunk = 1 decision) | 0.72 (derived) | **1.09** (0.92 s/plan, measured) | **0.77** (1.29 s/plan, measured) |
@@ -171,7 +171,7 @@ project exists to fill — roughly a 10× window on this model.**
   `docs/LEVERS_2026_07_H100.md`, 7.3x combined) and on KV-reuse
   (design done — `docs/adr/0009-kv-latent-reuse.md`; real-predictor GPU-verify
   still open) — update this leaderboard's V-JEPA table with those rows next.
-- ~~LingBot-VA through the Mirage seam~~ — done 2026-07-11
+- ~~LingBot-VA through the Repercep seam~~ — done 2026-07-11
   (`docs/LINGBOT_VA_SEAM_VERIFY.md`); both regimes now run under the same
   `bench_control_loop.py` binary (§2 table above).
 - Multi-session concurrency measurements (metric 4 is extrapolated from a

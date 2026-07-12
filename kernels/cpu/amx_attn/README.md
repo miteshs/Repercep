@@ -1,4 +1,4 @@
-# `amx_attn` — Intel AMX BF16 flash-attention for Mirage
+# `amx_attn` — Intel AMX BF16 flash-attention for Repercep
 
 CPU sibling of the GPU Triton flash-attention kernels (`kernels/gpu/...`).
 Implements a FlashAttention-2 forward pass using Intel AMX BF16 tile
@@ -52,7 +52,7 @@ That produces `_native.cpython-*.so` alongside `__init__.py`.
 The user-facing API lives at:
 
 ```
-src/mirage/attention/amx_flash.py
+src/repercep/attention/amx_flash.py
 ```
 
 That module is responsible for importing `_native`, doing the dtype/device

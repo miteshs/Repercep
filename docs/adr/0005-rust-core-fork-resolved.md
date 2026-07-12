@@ -28,10 +28,10 @@ We are choosing Rust-core anyway, ahead of design-partner mix landing.
 Move three components of the Runtime — and only these three — to Rust crates
 under `crates/`, with PyO3 bindings:
 
-- `crates/mirage-cache` — paged latent-cache manager (port of
-  `src/mirage/runtime/latent_cache.py`).
-- `crates/mirage-scheduler` — request scheduler (greenfield).
-- `crates/mirage-router` — per-request state machine + frame ordering
+- `crates/repercep-cache` — paged latent-cache manager (port of
+  `src/repercep/runtime/latent_cache.py`).
+- `crates/repercep-scheduler` — request scheduler (greenfield).
+- `crates/repercep-router` — per-request state machine + frame ordering
   (greenfield).
 
 Everything else stays Python: model loading, the HF/Diffusers integration,
@@ -77,7 +77,7 @@ that gain the most from no-GIL parallelism and deterministic latency.
 ## Consequences
 
 - **Python wrappers preserve every existing public API.** `from
-  mirage.runtime.latent_cache import PagedLatentCache` keeps working
+  repercep.runtime.latent_cache import PagedLatentCache` keeps working
   byte-for-byte; the wrapper just re-exports the PyO3-bound class.
 - **The pre-existing test suite IS the acceptance criterion for the cache.**
   Agent A's mandate: `pytest tests/test_runtime.py` passes unchanged.

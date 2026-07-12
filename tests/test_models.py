@@ -7,9 +7,9 @@ the run/benchmark scripts rather than the unit suite.
 
 from __future__ import annotations
 
-from mirage.backend.rocm import ROCmBackend
-from mirage.models.cosmos import DEFAULT_REPO, CosmosConfig, CosmosEngine
-from mirage.runtime.engine import WorldModelEngine
+from repercep.backend.rocm import ROCmBackend
+from repercep.models.cosmos import DEFAULT_REPO, CosmosConfig, CosmosEngine
+from repercep.runtime.engine import WorldModelEngine
 
 
 def test_cosmos_engine_satisfies_engine_protocol() -> None:

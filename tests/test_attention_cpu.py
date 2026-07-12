@@ -10,9 +10,9 @@ import platform
 
 import pytest
 
-from mirage.attention.amx_sdpa import AMXSDPAAttention
-from mirage.attention.types import AttentionKind, AttentionShape
-from mirage.hardware import SAPPHIRE_RAPIDS, DType, Vendor
+from repercep.attention.amx_sdpa import AMXSDPAAttention
+from repercep.attention.types import AttentionKind, AttentionShape
+from repercep.hardware import SAPPHIRE_RAPIDS, DType, Vendor
 
 linux_only = pytest.mark.skipif(
     platform.system() != "Linux",
@@ -102,7 +102,7 @@ def test_amx_sdpa_bf16_roundtrip() -> None:
 @linux_only
 def test_amx_flash_unavailable_without_kernel_module() -> None:
     """When the C++ extension is not built, ``available`` is False cleanly."""
-    from mirage.attention.amx_flash import AMXFlashAttention
+    from repercep.attention.amx_flash import AMXFlashAttention
 
     op = AMXFlashAttention()
     # If the kernel _native module isn't built (the common case in CI),
@@ -130,7 +130,7 @@ def test_amx_flash_unavailable_without_kernel_module() -> None:
 
 def test_ipex_flash_handles_missing_install() -> None:
     """When IPEX is not installed, ``available`` is False — no crash."""
-    from mirage.attention.ipex_flash import IPEXFlashAttention
+    from repercep.attention.ipex_flash import IPEXFlashAttention
 
     op = IPEXFlashAttention()
     # The op must construct cleanly whether IPEX is present or not.  We do
@@ -144,8 +144,8 @@ def test_ipex_flash_handles_missing_install() -> None:
 
 def test_registry_intel_branch_returns_supported_op(monkeypatch: pytest.MonkeyPatch) -> None:
     """On Intel arch with AMX env unset, SDPA is the selected op."""
-    monkeypatch.delenv("MIRAGE_AMX_ATTENTION", raising=False)
-    from mirage.attention.registry import select_attention_op
+    monkeypatch.delenv("REPERCEP_AMX_ATTENTION", raising=False)
+    from repercep.attention.registry import select_attention_op
 
     shape = AttentionShape(
         batch=1, heads=4, seq_len_q=128, seq_len_kv=128, head_dim=64, kind=AttentionKind.FULL
@@ -159,9 +159,9 @@ def test_registry_intel_branch_returns_supported_op(monkeypatch: pytest.MonkeyPa
 
 def test_registry_unknown_intel_arch_still_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     """A Generic AVX-512 host still gets a valid Intel-branch op."""
-    monkeypatch.delenv("MIRAGE_AMX_ATTENTION", raising=False)
-    from mirage.attention.registry import select_attention_op
-    from mirage.hardware import DeviceArch
+    monkeypatch.delenv("REPERCEP_AMX_ATTENTION", raising=False)
+    from repercep.attention.registry import select_attention_op
+    from repercep.hardware import DeviceArch
 
     skylake_avx512 = DeviceArch(Vendor.INTEL, "avx512", "Generic AVX-512")
     shape = AttentionShape(
@@ -172,14 +172,14 @@ def test_registry_unknown_intel_arch_still_routes(monkeypatch: pytest.MonkeyPatc
 
 
 def test_registry_int8_env_considers_int8_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``MIRAGE_AMX_ATTENTION=int8`` lists the INT8 op first; on a host that
+    """``REPERCEP_AMX_ATTENTION=int8`` lists the INT8 op first; on a host that
     lacks the built kernel it falls through to the SDPA floor cleanly."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "int8")
     # Re-import the registry module so the env read at module load picks up
     # the patched value (the env is captured at import time).
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -195,10 +195,10 @@ def test_registry_int8_env_considers_int8_kernel(monkeypatch: pytest.MonkeyPatch
 
 def test_registry_fp16_env_on_spr_falls_through(monkeypatch: pytest.MonkeyPatch) -> None:
     """``=fp16`` on SPR (no amx_fp16): FP16 kernel disqualifies, falls through."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "fp16")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "fp16")
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -215,10 +215,10 @@ def test_registry_int8_env_routes_unsupported_dtype_to_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """INT8 kernel advertises BF16 input only; an FP32 call must still route."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "int8")
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -265,16 +265,16 @@ def _force_wrapper_available(monkeypatch: pytest.MonkeyPatch, module_name: str, 
 
 def test_int8_routing_when_amx_int8_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     """AMX_INT8 detected + env=int8 -> registry picks the INT8 kernel."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "int8")
     _force_wrapper_available(
         monkeypatch,
-        "mirage.attention.amx_int8_flash",
+        "repercep.attention.amx_int8_flash",
         "AMXInt8FlashAttention",
         "_detect_amx_int8",
     )
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -284,16 +284,16 @@ def test_int8_routing_when_amx_int8_detected(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_fp16_routing_when_amx_fp16_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     """AMX_FP16 detected + env=fp16 -> registry picks the FP16 kernel."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "fp16")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "fp16")
     _force_wrapper_available(
         monkeypatch,
-        "mirage.attention.amx_fp16_flash",
+        "repercep.attention.amx_fp16_flash",
         "AMXFP16FlashAttention",
         "_detect_amx_fp16",
     )
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -303,16 +303,16 @@ def test_fp16_routing_when_amx_fp16_detected(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_bf16_routing_when_amx_bf16_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     """AMX_BF16 detected + env=amx -> registry picks the BF16 kernel."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "amx")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "amx")
     _force_wrapper_available(
         monkeypatch,
-        "mirage.attention.amx_flash",
+        "repercep.attention.amx_flash",
         "AMXFlashAttention",
         "_detect_amx_bf16",
     )
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 
@@ -322,15 +322,15 @@ def test_bf16_routing_when_amx_bf16_detected(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_int8_fallthrough_when_amx_int8_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """env=int8 but AMX_INT8 absent -> chain falls through to SDPA/naive."""
-    monkeypatch.setenv("MIRAGE_AMX_ATTENTION", "int8")
+    monkeypatch.setenv("REPERCEP_AMX_ATTENTION", "int8")
     # Force the detector to report False (mirrors a non-AMX_INT8 host) — this
     # is the dev-VM state today; we make it explicit so the test is hermetic.
-    import mirage.attention.amx_int8_flash as int8_mod
+    import repercep.attention.amx_int8_flash as int8_mod
 
     monkeypatch.setattr(int8_mod, "_detect_amx_int8", lambda: False)
     import importlib
 
-    import mirage.attention.registry as reg
+    import repercep.attention.registry as reg
 
     importlib.reload(reg)
 

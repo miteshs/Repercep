@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run one Cosmos-Predict-7B Text2World generation on the Mirage runtime (MI300X).
+"""Run one Cosmos-Predict-7B Text2World generation on the Repercep runtime (MI300X).
 
 This is the end-to-end "does it actually run" script: it loads Cosmos-Predict-7B
-through Mirage's CosmosEngine, generates a clip, writes an mp4, and prints a
+through Repercep's CosmosEngine, generates a clip, writes an mp4, and prints a
 JSON result line.
 
     .venv/bin/python scripts/run_cosmos.py --frames 17 --steps 8     # fast smoke
@@ -21,7 +21,7 @@ from pathlib import Path
 def _setup_imports() -> None:
     """Add this worktree's ``src/`` and ``kernels/`` to ``sys.path``.
 
-    The shared ``.venv`` carries an editable install of mirage-runtime pointed
+    The shared ``.venv`` carries an editable install of repercep-runtime pointed
     at whichever worktree ran ``make install`` first; without this hook a
     parallel worktree's script would import the wrong source tree. Mirror the
     pattern from ``scripts/bench_fp8.py`` / ``scripts/bench_cosmos_fp8.py``.
@@ -37,7 +37,7 @@ _setup_imports()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Cosmos-Predict-7B on Mirage / MI300X")
+    parser = argparse.ArgumentParser(description="Cosmos-Predict-7B on Repercep / MI300X")
     parser.add_argument(
         "--prompt",
         default=(
@@ -59,7 +59,7 @@ def main() -> int:
     parser.add_argument(
         "--native-loop",
         action="store_true",
-        help="use Mirage's native denoising loop (CFG batching)",
+        help="use Repercep's native denoising loop (CFG batching)",
     )
     parser.add_argument(
         "--cache-skip-every",
@@ -101,15 +101,15 @@ def main() -> int:
 
     import torch
 
-    from mirage.backend.registry import select_backend
-    from mirage.hardware import Vendor
-    from mirage.models.cosmos import CosmosConfig, CosmosEngine, GuardrailError
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.hardware import Vendor
+    from repercep.models.cosmos import CosmosConfig, CosmosEngine, GuardrailError
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     backend = select_backend(prefer=None if args.backend == "auto" else args.backend)
     device = backend.devices()[0]
     print(
-        f"[mirage] backend={backend.name}  device={device.name}  "
+        f"[repercep] backend={backend.name}  device={device.name}  "
         f"{device.total_memory_gib:.0f} GiB  arch={device.arch}",
         flush=True,
     )
@@ -126,13 +126,13 @@ def main() -> int:
         ),
     )
     print(
-        f"[mirage] loading Cosmos-Predict-7B (~38 GB), guardrail={args.guardrail} ...",
+        f"[repercep] loading Cosmos-Predict-7B (~38 GB), guardrail={args.guardrail} ...",
         flush=True,
     )
     t0 = time.perf_counter()
     engine.load()
     load_s = time.perf_counter() - t0
-    print(f"[mirage] model loaded in {load_s:.1f}s", flush=True)
+    print(f"[repercep] model loaded in {load_s:.1f}s", flush=True)
 
     request = GenerationRequest(
         prompt=args.prompt,
@@ -146,7 +146,7 @@ def main() -> int:
         ),
     )
     print(
-        f"[mirage] generating {args.frames} frames @ {args.width}x{args.height}, "
+        f"[repercep] generating {args.frames} frames @ {args.width}x{args.height}, "
         f"{args.steps} steps, seed {args.seed} ...",
         flush=True,
     )
@@ -166,7 +166,7 @@ def main() -> int:
     try:
         frames = list(engine.generate(request))
     except GuardrailError as exc:
-        print(f"[mirage] GUARDRAIL BLOCKED: {exc}", flush=True)
+        print(f"[repercep] GUARDRAIL BLOCKED: {exc}", flush=True)
         return 0
     gen_s = time.perf_counter() - t1
     if cpu_run:
@@ -193,7 +193,7 @@ def main() -> int:
         "peak_hbm_gib": round(peak_gib, 1),
         "output": str(saved),
     }
-    print("[mirage] RESULT " + json.dumps(summary), flush=True)
+    print("[repercep] RESULT " + json.dumps(summary), flush=True)
     return 0
 
 
@@ -208,7 +208,7 @@ def _save_video(frame_tensors: list, path: Path, fps: int = 24) -> Path:
         iio.imwrite(path, stacked, fps=fps, codec="libx264")
         return path
     except Exception as exc:
-        print(f"[mirage] mp4 encode unavailable ({exc}); writing PNG frames", flush=True)
+        print(f"[repercep] mp4 encode unavailable ({exc}); writing PNG frames", flush=True)
         from PIL import Image
 
         frame_dir = path.with_suffix("")

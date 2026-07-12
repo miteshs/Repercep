@@ -27,7 +27,7 @@ def main() -> int:
     parser.add_argument(
         "--native-loop",
         action="store_true",
-        help="Mirage-native denoising loop (CFG batching)",
+        help="Repercep-native denoising loop (CFG batching)",
     )
     parser.add_argument(
         "--cache-skip-every",
@@ -59,10 +59,10 @@ def main() -> int:
     parser.add_argument("--prompt", default="A drone shot flying over a coastal highway at sunset.")
     args = parser.parse_args()
 
-    from mirage.backend.registry import select_backend
-    from mirage.bench.profile import profile_cosmos
-    from mirage.models.cosmos import CosmosConfig, CosmosEngine
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.bench.profile import profile_cosmos
+    from repercep.models.cosmos import CosmosConfig, CosmosEngine
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     backend = select_backend()
     request = GenerationRequest(
@@ -76,7 +76,7 @@ def main() -> int:
         ),
     )
     print(
-        f"[mirage] profiling Cosmos: {args.frames}f / {args.steps} steps, warmup={args.warmup}",
+        f"[repercep] profiling Cosmos: {args.frames}f / {args.steps} steps, warmup={args.warmup}",
         flush=True,
     )
 
@@ -113,7 +113,7 @@ def main() -> int:
         )
         _report("compiled", comp)
         print(
-            f"[mirage] SPEEDUP  DiT loop {base.dit_loop_s / comp.dit_loop_s:.2f}x   "
+            f"[repercep] SPEEDUP  DiT loop {base.dit_loop_s / comp.dit_loop_s:.2f}x   "
             f"end-to-end {base.total_s / comp.total_s:.2f}x"
         )
     else:
@@ -137,7 +137,7 @@ def main() -> int:
 
 
 def _report(label, profile):
-    print(f"[mirage] PROFILE {label} " + json.dumps(profile.model_dump()), flush=True)
+    print(f"[repercep] PROFILE {label} " + json.dumps(profile.model_dump()), flush=True)
     print(
         f"  [{label}] total {profile.total_s:7.1f}s | "
         f"text {profile.text_encode_s:6.2f}s | "

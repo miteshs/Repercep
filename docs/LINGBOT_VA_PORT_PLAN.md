@@ -2,7 +2,7 @@
 
 - **Why:** `COMPETITIVE_RESPONSE_REACTOR_2026_07.md` §4 item 3 — the second model on
   the `InteractiveWorldModel` seam. Kills the V-JEPA-AC single-model-bet risk
-  (`REVISED_STRATEGY.md` §5) and positions Mirage as the self-host, any-silicon
+  (`REVISED_STRATEGY.md` §5) and positions Repercep as the self-host, any-silicon
   runtime for the video-action model class Reactor would host in the cloud.
 - **Sources verified locally:** `robbyant/lingbot-va` cloned and read (scratchpad;
   key file `wan_va/wan_va_server.py` — the reference single-GPU inference server),
@@ -88,7 +88,7 @@ serving layer keeps one live branch per session.
   components (`load_vae/load_tokenizer/load_text_encoder/load_transformer` +
   `FlowMatchScheduler` + the two denoise loops — vendored minimally, or the repo
   used as a dependency). Box: GCP A100-40G or RunPod H100 (per
-  `mirage-gpu-verify-recipe` / `mirage-runpod-bench-platform`). Deps (their
+  `repercep-gpu-verify-recipe` / `repercep-runpod-bench-platform`). Deps (their
   `requirements.txt`, verified): torch 2.9.0, transformers **4.55.2**, diffusers
   0.36.0, numpy 1.26.4. flash-attn is never *called* with `attn_mode="torch"` but
   `wan_va/modules/model.py` hard-imports it (`try: flash_attn_interface / except:
@@ -96,7 +96,7 @@ serving layer keeps one live branch per session.
   the wheel. Demo config key: `demo_i2av` (`VA_CONFIGS`), single GPU via
   `NGPU=1 CONFIG_NAME=demo_i2av script/run_launch_va_server_sync.sh`; the
   checkpoint bundle is **24.4 GB** on HF (public, ungated). Verify: i2va demo
-  parity through the Mirage seam.
+  parity through the Repercep seam.
 - **Phase 2 (bench):** RunPod H100 + MI300X rows — chunk latency (their published
   H-series number: 142 ms/chunk, 225 Hz async), steps/sec under state carryover,
   KV-cache memory per session, N resident sessions per GPU. MI300X via

@@ -24,7 +24,7 @@ Three ideas, no heavy math:
    LeCun's argument: most pixels are unpredictable noise (exact leaf positions,
    texture); forcing a model to render them wastes capacity. Predicting the
    *representation* keeps only what's predictable and useful for planning.
-   **V-JEPA 2** is the video instantiation; Mirage already runs its encoder
+   **V-JEPA 2** is the video instantiation; Repercep already runs its encoder
    (`scripts/run_vjepa2.py`).
 
 2. **It's an energy-based model (EBM).** An EBM learns a scalar **energy**
@@ -55,9 +55,9 @@ stateful loop. Anchors:
 
 | Stage | Where | Note |
 |-------|-------|------|
-| Seam (Protocol) | `src/mirage/runtime/interactive.py` (`InteractiveWorldModel`) | `reset → step(action) → … / plan` — distinct from `WorldModelEngine` |
+| Seam (Protocol) | `src/repercep/runtime/interactive.py` (`InteractiveWorldModel`) | `reset → step(action) → … / plan` — distinct from `WorldModelEngine` |
 | Wire types | `runtime/types.py` (`Action`, `RolloutParams`, `WorldState`, `LatentStep`, `ResetRequest`) | `WorldState` carries the live latent (never crosses the wire, like `Frame`) |
-| Engine | `src/mirage/models/vjepa2_ac.py` (`VJepa2ACEngine`) | encoder + AC predictor (injectable; weight load is the port) |
+| Engine | `src/repercep/models/vjepa2_ac.py` (`VJepa2ACEngine`) | encoder + AC predictor (injectable; weight load is the port) |
 | `reset` | `vjepa2_ac.py` `reset()` | encode the seed observation → initial `WorldState` (latent context) |
 | `step` | `vjepa2_ac.py` `step()` | predictor(context, action) → next latent; append to the block-causal window |
 | `plan` | `vjepa2_ac.py` `plan()` / `_plan_sequence` / `_rollout_energy` | CEM/MPC: minimize `‖rollout_terminal − goal‖` over action sequences |
@@ -131,12 +131,12 @@ Verified output (the planner provably drives the latent energy *down* toward a
 random goal):
 
 ```
-[mirage] backend=cpu dtype=float32 action_dim=4
-[mirage] reset: step=0 context=(2, 4)
-[mirage] step 1: context=(3, 4)
-[mirage] step 2: context=(4, 4)
-[mirage] step 3: context=(5, 4)
-[mirage] plan: energy 1.763 -> 0.401 (first action dim=4)
+[repercep] backend=cpu dtype=float32 action_dim=4
+[repercep] reset: step=0 context=(2, 4)
+[repercep] step 1: context=(3, 4)
+[repercep] step 2: context=(4, 4)
+[repercep] step 3: context=(5, 4)
+[repercep] plan: energy 1.763 -> 0.401 (first action dim=4)
 ```
 
 That `1.763 → 0.401` is energy-based planning working end to end: CEM searched

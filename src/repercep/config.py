@@ -1,0 +1,45 @@
+"""Runtime configuration.
+
+All settings are overridable via ``REPERCEP_*`` environment variables, e.g.
+``REPERCEP_DTYPE=fp16`` or ``REPERCEP_DEVICE_INDEX=0``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from repercep.hardware import DType
+
+
+def _default_weights_dir() -> Path:
+    return Path.home() / ".cache" / "repercep" / "weights"
+
+
+class RuntimeConfig(BaseSettings):
+    """Top-level runtime configuration.
+
+    Reads ``REPERCEP_*`` environment variables; unknown keys are rejected so a
+    typo in an env var fails loud rather than being silently ignored.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="REPERCEP_", extra="forbid")
+
+    device_index: int = Field(0, ge=0, description="Which accelerator to bind to.")
+    dtype: DType = Field(DType.BF16, description="Compute dtype for the model.")
+    attention_backend: str = Field(
+        "auto",
+        description="'auto' lets the backend pick; or pin 'rocm-ck-flash' / 'naive-sdpa'.",
+    )
+    max_batch_size: int = Field(1, ge=1, description="Upper bound on concurrent requests.")
+    latent_cache_gib: float = Field(8.0, gt=0, description="HBM budget for the paged latent cache.")
+    weights_dir: Path = Field(
+        default_factory=_default_weights_dir,
+        description="Local directory for downloaded model weights.",
+    )
+    hf_token: str | None = Field(
+        None,
+        description="HuggingFace token for gated weights (Cosmos). Prefer REPERCEP_HF_TOKEN.",
+    )

@@ -3,7 +3,7 @@
 
 Run with the project venv:  .venv/bin/python scripts/check_gpu.py
 
-Intentionally has no Mirage imports so it works before the package is
+Intentionally has no Repercep imports so it works before the package is
 installed — it is the first thing to run on a fresh box.  Auto-detects
 which vendor's stack torch is built against and reports accordingly:
 

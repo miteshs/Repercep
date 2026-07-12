@@ -1,5 +1,5 @@
 // =============================================================================
-//  Mirage CPU sibling kernels: flash-attention on Intel AMX FP16 (Granite Rapids)
+//  Repercep CPU sibling kernels: flash-attention on Intel AMX FP16 (Granite Rapids)
 // =============================================================================
 //
 //  This is the FP16 sibling of `kernels/cpu/amx_attn/flash_attn_amx.cpp`.

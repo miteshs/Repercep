@@ -1,4 +1,4 @@
-# Mirage — Optimization Strategy
+# Repercep — Optimization Strategy
 
 **Workload:** Cosmos-Predict-7B Text2World · **Hardware:** AMD Instinct MI300X (gfx942)
 
@@ -6,7 +6,7 @@
 
 Per the implementation plan: build the benchmark, establish the baseline,
 optimize against *measured* cost. No optimization lands without a before/after
-number from `mirage.bench` against the baseline below.
+number from `repercep.bench` against the baseline below.
 
 ## 2. The measured baseline — 2026-05-22
 
@@ -42,7 +42,7 @@ What this sets:
 
 Measured so far (49 f / 12 steps, warmup-separated):
 - `torch.compile` on the DiT — **1.13× loop / 1.12× end-to-end**.
-- Mirage-native loop with CFG batching — **1.02× loop / 1.05× end-to-end**.
+- Repercep-native loop with CFG batching — **1.02× loop / 1.05× end-to-end**.
   Smaller than projected: at Cosmos-7B scale each transformer call is
   compute-bound, so packaging two batch-1 forwards as one batch-2 forward
   doesn't reduce GEMM work — see BUILD_LOG F14.
@@ -60,7 +60,7 @@ Measured so far (49 f / 12 steps, warmup-separated):
 - **FP8 attention (CDNA3 MFMA)** — Session 8, 2026-05-23. Two ops shipped:
   fused `fp8-triton-flash` (FA-2 algorithm + FP8 MFMA tiles) and unfused
   `fp8-scaled-mm` (`torch._scaled_grouped_mm`). Opt-in via
-  `MIRAGE_FP8_ATTENTION=1`. Attention-only forward time vs SDPA, B=1 H=8
+  `REPERCEP_FP8_ATTENTION=1`. Attention-only forward time vs SDPA, B=1 H=8
   D=128, warmup-separated:
   | seq_len | SDPA | fp8-triton-flash | speedup | rel mean err |
   |--:|--:|--:|--:|--:|
@@ -69,15 +69,15 @@ Measured so far (49 f / 12 steps, warmup-separated):
   | **16384** | **15.97 ms** | **8.34 ms** | **1.92×** | 3.2% |
   Crossover S≈4-8k; the FP8 path wins above that on the bench micro-shape.
 - **FP8 wired into Cosmos's diffusers path** — Session 10, 2026-05-23
-  (Phase 2.5). A ``"mirage_fp8"`` backend is now registered with
+  (Phase 2.5). A ``"repercep_fp8"`` backend is now registered with
   ``diffusers.models.attention_dispatch._AttentionBackendRegistry`` via
-  ``src/mirage/attention/diffusers_backend.py``;
-  ``MIRAGE_FP8_ATTENTION=1`` switches the active backend at
+  ``src/repercep/attention/diffusers_backend.py``;
+  ``REPERCEP_FP8_ATTENTION=1`` switches the active backend at
   ``CosmosEngine.load()``. End-to-end 121 f / 36 step / adaptive caching:
   | Config | Wall | Motion stat |
   |---|--:|--:|
   | adaptive (native dispatcher) | **150.9 s** | 4.64 |
-  | adaptive + ``MIRAGE_FP8_ATTENTION=1`` | 155.1 s | 4.65 |
+  | adaptive + ``REPERCEP_FP8_ATTENTION=1`` | 155.1 s | 4.65 |
   **No wall-time win at Cosmos's production shape**, despite the 1.92×
   bench number — the bench was at B=1, H=8; Cosmos runs B=2, H=32. A
   follow-up bench at the actual production shape (B=2, H=32, D=128,
@@ -98,7 +98,7 @@ Measured so far (49 f / 12 steps, warmup-separated):
 - **FP8 kernel autotune lands** — Agent I, 2026-05-23. The kernel now
   ``@triton.autotune``-s over a 19-config grid keyed on
   ``(Sq, Skv, BLOCK_D, H, CAUSAL)``, with a persistent JSON cache at
-  ``~/.cache/mirage/fp8_autotune.json`` so the winner survives across
+  ``~/.cache/repercep/fp8_autotune.json`` so the winner survives across
   processes (one tune per shape per host, then free forever). A manual
   ``--manual`` search mode is also wired up — it benches a hand-picked
   12-config grid with controlled warmup/rep, more robust under GPU
@@ -169,7 +169,7 @@ decode-heavy model variants). Techniques, if needed later:
 - **Continuous batching** where temporal dependencies allow (plan, Phase 2).
 - **Stage pipelining** — T5 / DiT / VAE as pipeline stages: while the VAE
   decodes request A, the DiT denoises request B.
-- **Paged latent cache** (already stubbed in `mirage.runtime.latent_cache`) —
+- **Paged latent cache** (already stubbed in `repercep.runtime.latent_cache`) —
   frame-aware reuse of latent tiles.
 - **Exploit the ~140 GiB of free HBM** — large batches, multiple model
   variants / LoRAs co-resident, zero CPU offload. An H100 at 80 GiB must
@@ -186,7 +186,7 @@ decode-heavy model variants). Techniques, if needed later:
 ## 5. Sequencing & targets
 
 1. **Profile properly** — per-stage, warmup-separated (one-time ROCm kernel
-   autotuning vs. steady state). `mirage.bench` + torch profiler / `rocprof`.
+   autotuning vs. steady state). `repercep.bench` + torch profiler / `rocprof`.
 2. **Tier 1 training-free wins** — `torch.compile`, CFG batching, solver swap,
    feature caching. Best near-term ratio, no new weights.
 3. **Tier 2 VAE** — tiling + streaming decode.
@@ -195,7 +195,7 @@ decode-heavy model variants). Techniques, if needed later:
 
 Plan targets: **2–3× over naive PyTorch + Diffusers in Phase 1**, **3–5× in
 Phase 2** (with continuous batching + FP8). Every change is measured by
-`mirage.bench` against the 738 s baseline in §2.
+`repercep.bench` against the 738 s baseline in §2.
 
 ## 6. Explicitly NOT yet
 
@@ -208,7 +208,7 @@ Phase 2** (with continuous batching + FP8). Every change is measured by
 ## 7. Wan-2.2 — measured baseline (Session 11, 2026-05-23)
 
 The Cosmos baseline above is the leading workload; Wan-2.2-T2V-A14B is
-the second WM family Mirage serves end-to-end (`docs/WAN_ON_MI300X.md`).
+the second WM family Repercep serves end-to-end (`docs/WAN_ON_MI300X.md`).
 The MoE topology (two ~14 B-param expert transformers, ~14 B active /
 step, ~27 B total) is structurally heavier than Cosmos's single-DiT
 shape; the diffusers path is identical (no FP8, no compile, no native
@@ -216,7 +216,7 @@ loop today).
 
 **81 f / 40 step / 1280×720 — the canonical Wan reference shape:**
 
-| | Wan team single H100 (FP8 + offload) | Mirage MI300X (BF16, no offload) |
+| | Wan team single H100 (FP8 + offload) | Repercep MI300X (BF16, no offload) |
 |---|--:|--:|
 | Wall, one-shot measured | — | **2576 s** (cold; contested) |
 | Per-step steady-state | ~26 s / step (implied: 1041 / 40) | **~41 s / step** (last 11 steps of primary run; first 2 of profile pass — bracketed to 41.14–41.17 s) |
@@ -226,7 +226,7 @@ loop today).
 | Quantization | FP8 weights (model_dtype convert) | None (BF16 transformer + FP32 VAE) |
 | Offload | `--offload_model True` (inactive MoE expert → CPU) | None (both experts resident) |
 
-Mirage at the diffusers BF16 path is **~1.6× behind H100's optimized
+Repercep at the diffusers BF16 path is **~1.6× behind H100's optimized
 single-GPU number**, but **~1.6× ahead of single A100's diffusers BF16
 number** (2735.7 s in the same Wan team table). The H100's advantage
 comes mostly from FP8 weight conversion + inactive-expert CPU offload;
@@ -239,12 +239,12 @@ on H100 would not fit in 80 GB.
   TeaCache + Sage results land 2.5–3× speedup over a similar baseline
   ([Morphic](https://morphic.com/blog/boosting-wan2-2-i2v-56-faster),
   [Voltage Park](https://www.voltagepark.com/blog/accelerating-wan2-2-from-4-67s-to-1-5s-per-denoising-step-through-targeted-optimizations)).
-  Mirage's adaptive cache today is keyed on `CosmosTransformer3DModel`
+  Repercep's adaptive cache today is keyed on `CosmosTransformer3DModel`
   block shapes; the Wan port is a Phase-2 follow-up.
 - **CFG batching for the low-noise expert phase.** CFG is unbatched
   today (2 transformer forwards / step); the 35 low-noise steps are
   where batching pays back most.
-- **FP8 attention** — the diffusers `mirage_fp8` backend (Session 10)
+- **FP8 attention** — the diffusers `repercep_fp8` backend (Session 10)
   generalizes to `WanTransformer3DModel` without code changes; needs
   shape autotuning at Wan's grid (different B / H from Cosmos).
 - **CPU offload of the inactive MoE expert** — would cut peak HBM

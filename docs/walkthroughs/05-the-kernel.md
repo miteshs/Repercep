@@ -2,7 +2,7 @@
 
 This is the bottom: `kernels/triton_kernels/fp8_flash_attn.py` — the FP8
 flash-attention Triton kernel for gfx942. No abstractions, no Protocols (the
-loader `src/mirage/attention/fp8_triton.py` wraps it as an `AttentionOp`). Both
+loader `src/repercep/attention/fp8_triton.py` wraps it as an `AttentionOp`). Both
 axes here are tight together: the ML is "attention without materializing S²," the
 systems is "FP8 MFMA + tiling + autotune."
 
@@ -75,7 +75,7 @@ compute unit. Hand-writing that in HIP means calling
 "six weeks of perf engineering" vs "an afternoon" for Triton (and exactly what the
 in-tree `kernels/hip/fp8_attn/` proof-of-life attempts, and gets *wrong* — its
 B-operand load under-samples K; see `docs/STRATEGIC_ASSESSMENT.md`). Triton is how
-Mirage gets 80% of hand-tuned MFMA for an afternoon's work.
+Repercep gets 80% of hand-tuned MFMA for an afternoon's work.
 
 ## 5.4 Autotune — why one tile shape isn't enough (F20 → F21)
 
@@ -92,7 +92,7 @@ hard way:
   path shaves to reach the 142 s MI300X headline.
 
 `@triton.autotune` (331) searches the grid keyed on `(Sq, Skv, BLOCK_D, H,
-CAUSAL)`; a **persistent JSON cache** (`~/.cache/mirage/fp8_autotune.json`, 57-94)
+CAUSAL)`; a **persistent JSON cache** (`~/.cache/repercep/fp8_autotune.json`, 57-94)
 records the winner per `(B,H,Sq,Skv,D,causal)` so it's one search per shape per
 host, then free across processes (atomic tmp-rename write, corruption-tolerant
 load). `fp8_flash_attention` (393) resolves: env-disable → fallback tile;
@@ -104,7 +104,7 @@ This is a real, working FA-2 FP8 kernel — and a **modest** win on AMD (~1.13×
 SDPA→aotriton at the Cosmos shape) and a **loss** on Hopper (cuDNN-FA3 is a far
 harder bar — F27/F29, which is why Part 4's `=fa` mode exists). Per
 `docs/STRATEGIC_ASSESSMENT.md`: the headline speedup is the *cache* (Part 3), not
-this kernel; at the kernel level Mirage is at parity-or-behind. Knowing that is
+this kernel; at the kernel level Repercep is at parity-or-behind. Knowing that is
 the difference between reading "3.81×" correctly and overclaiming it.
 
 ## Run it (CPU; the kernel itself needs a GPU)
@@ -115,7 +115,7 @@ and grid logic are CPU-testable:
 ```bash
 python -m pytest tests/test_attention_fp8.py -q -k "autotune or cache or grid"
 # on a GPU box, exercise the real kernel end-to-end:
-#   MIRAGE_FP8_ATTENTION=1 python scripts/run_cosmos.py --frames 121 --steps 36 --native-loop --cache-mode adaptive
+#   REPERCEP_FP8_ATTENTION=1 python scripts/run_cosmos.py --frames 121 --steps 36 --native-loop --cache-mode adaptive
 ```
 
 **Next:** Part 6 — the clean latent becomes pixels (VAE decode), then a streamed

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mirage.runtime.engine import EngineInfo
-from mirage.runtime.types import (
+from repercep.runtime.engine import EngineInfo
+from repercep.runtime.types import (
     Action,
     ConditioningInput,
     LatentStep,
@@ -53,7 +53,7 @@ def test_interactive_session_streams_steps() -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from mirage.serving.app import create_app
+    from repercep.serving.app import create_app
 
     with (
         TestClient(create_app(interactive_engine=_StubInteractive())) as client,
@@ -74,7 +74,7 @@ def test_interactive_session_requires_engine() -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from mirage.serving.app import create_app
+    from repercep.serving.app import create_app
 
     with (
         TestClient(create_app()) as client,

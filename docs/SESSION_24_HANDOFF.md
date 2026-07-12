@@ -24,14 +24,14 @@ argues for the latter; that's a call, not a settled fact.
 
 ## The thesis (from `docs/STRATEGIC_ASSESSMENT.md`)
 
-The honest finding: Mirage's headline speedups are **not a moat** under scrutiny
+The honest finding: Repercep's headline speedups are **not a moat** under scrutiny
 — the cache is public (TeaCache, already in vLLM-Omni/FastVideo), "only-on-AMD"
 is eroding (AMD ships xDiT/SGLang-Diffusion + MLPerf'd Wan2.2), and at the kernel
-level Mirage is at parity-or-behind. The defensible, unbuilt regime is the half
+level Repercep is at parity-or-behind. The defensible, unbuilt regime is the half
 of the original vision that was deferred: **action-conditioned, closed-loop
 world-model serving** — which general-purpose request/response diffusion servers
 structurally don't model, and which is exactly the energy-based / JEPA program
-(LeCun). Mirage already serves a member of that family (V-JEPA 2, script-only),
+(LeCun). Repercep already serves a member of that family (V-JEPA 2, script-only),
 so the on-ramp is short. The assessment is the adversarial counterweight to
 `docs/POSITIONING.md`; read both.
 
@@ -113,11 +113,11 @@ weight-dependent paths skip cleanly.
   session's additive `serving/app.py` change. The same `create_app` + lifespan +
   driver is exercised green by `test_serving_interactive.py`, and all routes are
   intact. It should pass in the full `[dev]` env.
-- **The strategy docs (`~/Mirage_Implementation_Plan.pdf`,
+- **The strategy docs (`~/Repercep_Implementation_Plan.pdf`,
   `~/Mirage_Cowork_Handoff.md`) are still off-repo by design** (HANDOFF §9) and
   are NOT backed up in git. If they live only on a pod, back them up off-pod
   (a *private* repo/gist — not this public OSS repo).
-- This session ran from a non-Mirage pod (Mirage was cloned into `/tmp`); no
+- This session ran from a non-Repercep pod (Repercep was cloned into `/tmp`); no
   weights, mp4s, autotune caches, or FVD sets were touched or produced.
 
 ## Cross-references
@@ -125,6 +125,6 @@ weight-dependent paths skip cleanly.
 - `docs/STRATEGIC_ASSESSMENT.md` — the moat argument this session acts on
 - `docs/adr/0008-interactive-world-model-seam.md` — the seam decision + phased plan
 - `docs/POSITIONING.md` — the first-person framing the assessment is a counterweight to
-- `src/mirage/runtime/interactive.py`, `src/mirage/models/vjepa2_ac.py`,
-  `src/mirage/serving/app.py` (`/v2/world/session`), `scripts/run_vjepa2_ac.py`
+- `src/repercep/runtime/interactive.py`, `src/repercep/models/vjepa2_ac.py`,
+  `src/repercep/serving/app.py` (`/v2/world/session`), `scripts/run_vjepa2_ac.py`
 - Tests: `tests/test_interactive.py`, `tests/test_serving_interactive.py`

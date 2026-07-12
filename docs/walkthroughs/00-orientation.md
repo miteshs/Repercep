@@ -6,7 +6,7 @@
 > This Part 0 is the intuition-level skeleton; Parts 2–5 do the real mechanics.
 
 This part gives you the whole skeleton in one sitting: the fundamentals of what a
-video diffusion model *does*, then the exact call path through Mirage from an API
+video diffusion model *does*, then the exact call path through Repercep from an API
 request to streamed frames, with `file:line` anchors you'll revisit in later
 parts. Nothing here needs a GPU.
 
@@ -47,11 +47,11 @@ the shape of the computation:
    forwards (or 36 batched-by-2; Part 3).
 
 5. **The whole optimization game** is: do fewer/cheaper DiT forwards without
-   wrecking quality. Mirage's two levers — **adaptive caching** (skip steps whose
+   wrecking quality. Repercep's two levers — **adaptive caching** (skip steps whose
    input barely changed) and **FP8 attention kernels** — both attack exactly this.
    Everything in Parts 3–5 is in service of step 2 and 3 above.
 
-That's the entire algorithm. The rest of this tour is *how Mirage executes it*.
+That's the entire algorithm. The rest of this tour is *how Repercep executes it*.
 
 ---
 
@@ -62,13 +62,13 @@ loop, and leaves as a stream of frames. The anchors:
 
 | Stage | Where | Note |
 |-------|-------|------|
-| Request type | `src/mirage/runtime/types.py` (`GenerationRequest`, `GenerationParams`) | prompt, frames, steps, seed — validated at the edge (Pydantic, `extra="forbid"`) |
-| HTTP entry | `src/mirage/serving/app.py:192` (`/v1/generate/stream`) | streams `FrameChunk` as NDJSON; v2 path routes through the Rust core |
-| Engine | `src/mirage/models/cosmos.py:239` (`CosmosEngine.generate`) | loads the pipeline, runs the loop, yields `Frame`s |
+| Request type | `src/repercep/runtime/types.py` (`GenerationRequest`, `GenerationParams`) | prompt, frames, steps, seed — validated at the edge (Pydantic, `extra="forbid"`) |
+| HTTP entry | `src/repercep/serving/app.py:192` (`/v1/generate/stream`) | streams `FrameChunk` as NDJSON; v2 path routes through the Rust core |
+| Engine | `src/repercep/models/cosmos.py:239` (`CosmosEngine.generate`) | loads the pipeline, runs the loop, yields `Frame`s |
 | Pipeline load | `cosmos.py:149` (`load` → `CosmosTextToWorldPipeline.from_pretrained`) | weights from the HF cache (Part 1) |
-| Denoise loop | `src/mirage/runtime/denoise.py` (`denoise_cosmos_video`) | the real loop: CFG batching + adaptive cache (Part 3) |
+| Denoise loop | `src/repercep/runtime/denoise.py` (`denoise_cosmos_video`) | the real loop: CFG batching + adaptive cache (Part 3) |
 | DiT forward | diffusers `CosmosTransformer3DModel` (wrapped, not in this repo) | the transformer (Part 2) |
-| Attention | `src/mirage/attention/` + `kernels/triton_kernels/` | dispatch + kernel (Parts 4–5) |
+| Attention | `src/repercep/attention/` + `kernels/triton_kernels/` | dispatch + kernel (Parts 4–5) |
 | Decode + output | VAE decode → `_as_frame_tensor` (`cosmos.py:403`) → `Frame` | pixels out (Part 6) |
 
 Also: `scripts/run_cosmos.py` is the end-to-end runner you'd actually invoke on a
@@ -103,14 +103,14 @@ CosmosTransformer3DModel block
        └─ dispatch_attention_fn        (diffusers' attention backend registry)
             ├─ default → torch.nn.functional.scaled_dot_product_attention
             │             └─ on ROCm: aotriton flash kernel   ← the GPU kernel
-            └─ MIRAGE_FP8_ATTENTION → Mirage "mirage_fp8" backend
+            └─ REPERCEP_FP8_ATTENTION → Repercep "repercep_fp8" backend
                           └─ FP8 Triton flash kernel           ← kernels/triton_kernels/
                                 └─ Triton → LLVM → MFMA (gfx942)  ← the actual ISA
 ```
 
-The key Mirage insight (and a recurring bug source — F19/F40 in `BUILD_LOG.md`):
-the model calls diffusers' *own* dispatcher, not Mirage's attention registry, so
-Mirage hooks the kernel in by **registering a backend with diffusers' dispatcher**
+The key Repercep insight (and a recurring bug source — F19/F40 in `BUILD_LOG.md`):
+the model calls diffusers' *own* dispatcher, not Repercep's attention registry, so
+Repercep hooks the kernel in by **registering a backend with diffusers' dispatcher**
 (`attention/diffusers_backend.py`) rather than by intercepting the model. Part 4
 is entirely about this seam.
 
@@ -141,8 +141,8 @@ python scripts/run_vjepa2_ac.py --stub --plan --steps 4
 And you can read the real loop you're about to study:
 
 ```bash
-sed -n '64,200p' src/mirage/runtime/denoise.py     # the denoise loop (Part 3)
-sed -n '239,304p' src/mirage/models/cosmos.py       # CosmosEngine.generate
+sed -n '64,200p' src/repercep/runtime/denoise.py     # the denoise loop (Part 3)
+sed -n '239,304p' src/repercep/models/cosmos.py       # CosmosEngine.generate
 ```
 
 ---
@@ -151,7 +151,7 @@ sed -n '239,304p' src/mirage/models/cosmos.py       # CosmosEngine.generate
 
 - A generation is **iterative denoising of a latent volume** by a **DiT**, decoded
   by a **VAE**, with **CFG** doubling the per-step work.
-- The Mirage path is `request → CosmosEngine.generate → denoise_cosmos_video →
+- The Repercep path is `request → CosmosEngine.generate → denoise_cosmos_video →
   (DiT forward → attention → kernel) × steps → VAE → Frame stream`.
 - "Lowering to the kernel" is `attention processor → diffusers dispatch →
   SDPA/aotriton or FP8 Triton → MFMA`.

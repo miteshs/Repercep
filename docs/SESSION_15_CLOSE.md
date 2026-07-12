@@ -97,7 +97,7 @@ again (see F31 below).
 See that branch's commits + `docs/adr/0007-cpu-backend.md` for the
 full architecture record.  Headline:
 
-- New `mirage.backend.cpu.CPUBackend` (Vendor.INTEL).  Detects
+- New `repercep.backend.cpu.CPUBackend` (Vendor.INTEL).  Detects
   Sapphire / Emerald / Granite Rapids via /proc/cpuinfo
   family+model.  Generic AVX-512 + generic x86-64 fallback arches.
   Capabilities advertise BF16 + INT8 (no FP8 ISA on any shipped Xeon).
@@ -114,13 +114,13 @@ full architecture record.  Headline:
     `_tile_dpbf16ps` / `_tile_stored` intrinsics from `<immintrin.h>`.
     Wrapper, ADR, build script, tests are all correct.
 - Registry's new INTEL branch in `select_attention_op` mirrors the
-  GPU FP8 env-gating: `MIRAGE_AMX_ATTENTION` ∈ {1, true, on, amx,
+  GPU FP8 env-gating: `REPERCEP_AMX_ATTENTION` ∈ {1, true, on, amx,
   ipex} promotes the AMX-aware op when shape qualifies; unset keeps
   the SDPA floor active.
-- `mirage.attention.diffusers_backend_amx` registers
-  `"mirage_amx"` with the diffusers attention dispatcher — sibling
+- `repercep.attention.diffusers_backend_amx` registers
+  `"repercep_amx"` with the diffusers attention dispatcher — sibling
   of the GPU FP8 bridge.
-- `mirage.runtime.quantize` — per-channel symmetric INT8 weight
+- `repercep.runtime.quantize` — per-channel symmetric INT8 weight
   quantization helpers (lands first; the AMX INT8 attention kernel
   itself is Session 16+).
 - `docs/adr/0007-cpu-backend.md` — full ADR.
@@ -135,7 +135,7 @@ Full text in `BUILD_LOG.md` Session 15 entry.  Short:
 
 * **F31** — MooseFS server-side write-rate quota at
   `mfs#us-mo-1.runpod.net` tripped after Wan-A14B parallel download +
-  editable Mirage install; ~55+ min wedged.  Mitigation pattern
+  editable Repercep install; ~55+ min wedged.  Mitigation pattern
   documented (HF cache + venv + build dirs all relocate to local
   overlay; only source + model snapshots stay on MooseFS).
 * **F32** — `HF_HUB_OFFLINE=1` still writes `refs/main`; a
@@ -174,7 +174,7 @@ Full text in `BUILD_LOG.md` Session 15 entry.  Short:
 3. **H4 FP8 Hopper autotune bench.**  Apply this branch + run
    `scripts/bench_fp8.py` and full 121f/36 sweep.  Goal: beat
    cuDNN-FA3 at the Cosmos production shape, restoring
-   `MIRAGE_FP8_ATTENTION=1` as a perf-on default on Hopper.
+   `REPERCEP_FP8_ATTENTION=1` as a perf-on default on Hopper.
 4. **H1 multi-prompt variance proper.**  Patch `verify_timing.py` to
    flush per-run prints (or run with `PYTHONUNBUFFERED=1`).  Re-run
    `--N 3 --prompts 5` to get a clean adaptive variance band.  Phase C
@@ -192,7 +192,7 @@ Full text in `BUILD_LOG.md` Session 15 entry.  Short:
 
 ```bash
 # Fresh box setup
-git clone https://github.com/miteshs/Mirage.git && cd Mirage
+git clone https://github.com/miteshs/Mirage.git && cd Repercep
 git checkout session-14-cuda-port    # for H100 follow-ups
 # OR
 git checkout cpu-amx-port            # for CPU substrate
@@ -216,7 +216,7 @@ hf download nvidia/Cosmos-1.0-Diffusion-7B-Text2World
     --cache-force-full-every 16
 
 # CPU smoke (substrate, not perf — minutes per video)
-MIRAGE_AMX_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
+REPERCEP_AMX_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
     --backend cpu --frames 17 --steps 8
 
 # Multi-prompt variance with stdout flushing

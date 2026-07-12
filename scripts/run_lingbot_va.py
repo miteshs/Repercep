@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the REAL LingBot-VA 2.0 through the Mirage interactive seam.
+"""Drive the REAL LingBot-VA 2.0 through the Repercep interactive seam.
 
 The Phase-1 GPU verify: imagination-mode rollout via
 ``LingBotVAEngine.reset → plan → step`` (one ``infer_chunk`` per step, the
@@ -35,9 +35,9 @@ _setup()
 
 import torch  # noqa: E402
 
-from mirage.backend.registry import select_backend  # noqa: E402
-from mirage.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
-from mirage.runtime.types import (  # noqa: E402
+from repercep.backend.registry import select_backend  # noqa: E402
+from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
+from repercep.runtime.types import (  # noqa: E402
     Action,
     ConditioningInput,
     ConditioningKind,

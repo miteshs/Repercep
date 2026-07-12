@@ -51,7 +51,7 @@ action sequences**, exactly Part 1 §1.5.
 `scripts/run_vjepa2_ac.py --stub --plan` (Part 0) printed:
 
 ```
-[mirage] plan: energy 1.763 -> 0.401 (first action dim=4)
+[repercep] plan: energy 1.763 -> 0.401 (first action dim=4)
 ```
 
 With the stub dynamics `next = last + action`, after H steps the terminal latent

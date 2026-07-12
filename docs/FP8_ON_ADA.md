@@ -2,7 +2,7 @@
 
 **Status:** Works. Time-boxed half-day port landed 2026-05-25 (Item J).
 
-Ada Lovelace is the third silicon target for Mirage's fused FP8
+Ada Lovelace is the third silicon target for Repercep's fused FP8
 flash-attention kernel, alongside CDNA3 (gfx942 / MI300X) and Hopper
 (sm_90a / H100). It is the *fourth* FP8 target overall once you count
 the unfused `fp8_scaled_mm` path.
@@ -22,7 +22,7 @@ neither Hopper-only intrinsics (TMA descriptors, `wgmma` fences,
 
 In practice this means most of the FP8 ecosystem (FA-3 FP8,
 Transformer Engine) was built Hopper-first and the Ada FP8 path is
-under-exercised. This wrapper closes the gap for Mirage and gives the
+under-exercised. This wrapper closes the gap for Repercep and gives the
 project a real fourth silicon target without requiring TE or FA-3.
 
 ## Files
@@ -30,7 +30,7 @@ project a real fourth silicon target without requiring TE or FA-3.
 | File | Role |
 |------|------|
 | `kernels/triton_kernels/fp8_flash_attn_ada.py` | Triton kernel |
-| `src/mirage/attention/fp8_ada_triton.py` | `AttentionOp` wrapper |
+| `src/repercep/attention/fp8_ada_triton.py` | `AttentionOp` wrapper |
 | `tests/test_fp8_attention_ada.py` | Correctness + structural tests |
 
 Kernel and wrapper are direct siblings of the Hopper versions
@@ -45,7 +45,7 @@ same `FP8_MAX=448`. Divergences:
 - **`num_stages`.** Synchronous `mma.sync` doesn't benefit from deep
   software pipelining the way `wgmma` does; sweep is (2, 3) vs
   Hopper's (2, 3, 4, 5).
-- **Cache file.** `~/.cache/mirage/fp8_autotune_ada.json`, distinct
+- **Cache file.** `~/.cache/repercep/fp8_autotune_ada.json`, distinct
   from the Hopper and CDNA3 files because the optimal configs differ.
 - **Silicon gate.** The wrapper probes `torch.cuda.get_device_capability`
   and disqualifies unless `(8, 9)`. sm_80 / sm_86 (Ampere) have no FP8
@@ -93,15 +93,15 @@ on the same models.
 
 ## Not yet wired into the registry
 
-The wrapper is **not** registered in `src/mirage/attention/registry.py`
-or routed in `src/mirage/backend/cuda.py` yet — those files are owned
+The wrapper is **not** registered in `src/repercep/attention/registry.py`
+or routed in `src/repercep/backend/cuda.py` yet — those files are owned
 by the INTEG agent (see Item J handoff). Following hooks would be the
 natural wiring point:
 
-1. Add `from mirage.attention.fp8_ada_triton import FP8AdaTritonAttention`
+1. Add `from repercep.attention.fp8_ada_triton import FP8AdaTritonAttention`
    to the NVIDIA selection branch.
 2. Insert ahead of `naive-sdpa` but behind `nvidia-flash` for non-FP8
-   workloads; ahead of `nvidia-flash` only when `MIRAGE_FP8_ATTENTION`
+   workloads; ahead of `nvidia-flash` only when `REPERCEP_FP8_ATTENTION`
    is set.
 3. Update `BackendCapabilities.attention_ops` and `supports_fp8` for
    `(8, 9)` hosts.

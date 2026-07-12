@@ -1,4 +1,4 @@
-# Mirage — Targets and Kernels
+# Repercep — Targets and Kernels
 
 **Last updated:** 2026-05-25 (post-Session-15 merge to `main`)
 
@@ -16,30 +16,30 @@ toolchain.  Read this when you want to know *what runs on what*.
 │                                                                                  │
 │   scripts/run_cosmos.py      scripts/run_wan.py      serving/app.py (FastAPI)    │
 │   scripts/bench_*.py         scripts/verify_*.py     serving/proto/*.proto (gRPC)│
-│   scripts/profile_cosmos.py  mirage.cli (info)       v2: /generate/stream NDJSON │
+│   scripts/profile_cosmos.py  repercep.cli (info)       v2: /generate/stream NDJSON │
 └──────────────────────────────────────────────────────────────────────────────────┘
                                        │
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │  CONTROL PLANE  (Rust + PyO3 crates, maturin-installed into .venv)               │
 │                                                                                  │
-│   crates/mirage-cache       PagedLatentCache (frame-aware eviction)    [Rust]    │
-│   crates/mirage-scheduler   priority + admission control               [Rust]    │
-│   crates/mirage-router      request routing                            [Rust]    │
-│   src/mirage/runtime/types.py   Frame, GenerationRequest (pydantic)    [Python]  │
+│   crates/repercep-cache       PagedLatentCache (frame-aware eviction)    [Rust]    │
+│   crates/repercep-scheduler   priority + admission control               [Rust]    │
+│   crates/repercep-router      request routing                            [Rust]    │
+│   src/repercep/runtime/types.py   Frame, GenerationRequest (pydantic)    [Python]  │
 └──────────────────────────────────────────────────────────────────────────────────┘
                                        │
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │  MODEL ENGINES                                                                   │
 │                                                                                  │
-│   mirage.models.cosmos.CosmosEngine     ── diffusers CosmosTextToWorldPipeline   │
-│   mirage.models.wan.WanEngine           ── diffusers WanPipeline (A14B)          │
-│   mirage.runtime.engine.WorldModelEngine (Protocol)                              │
+│   repercep.models.cosmos.CosmosEngine     ── diffusers CosmosTextToWorldPipeline   │
+│   repercep.models.wan.WanEngine           ── diffusers WanPipeline (A14B)          │
+│   repercep.runtime.engine.WorldModelEngine (Protocol)                              │
 └──────────────────────────────────────────────────────────────────────────────────┘
                                        │
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│  NATIVE DENOISE LOOP  (Mirage's lever vs the reference)                          │
+│  NATIVE DENOISE LOOP  (Repercep's lever vs the reference)                          │
 │                                                                                  │
-│   mirage.runtime.denoise.denoise_cosmos_video        [Python]                    │
+│   repercep.runtime.denoise.denoise_cosmos_video        [Python]                    │
 │     • CFG batching   (one batch=2 forward instead of two sequential)             │
 │     • Adaptive cache (TeaCache-style, threshold=0.30) ── skips DiT forward       │
 │       when input similarity to prior step is above threshold                     │
@@ -50,12 +50,12 @@ toolchain.  Read this when you want to know *what runs on what*.
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │  ATTENTION DISPATCH  (the wedge below SDPA)                                      │
 │                                                                                  │
-│   mirage.attention.diffusers_backend       ── registers "mirage_fp8"             │
-│   mirage.attention.diffusers_backend_amx   ── registers "mirage_amx"             │
+│   repercep.attention.diffusers_backend       ── registers "repercep_fp8"             │
+│   repercep.attention.diffusers_backend_amx   ── registers "repercep_amx"             │
 │     ↓ both register with diffusers._AttentionBackendRegistry, replacing          │
 │       diffusers' default SDPA dispatch when the env var is set.                  │
 │                                                                                  │
-│   mirage.attention.registry.select_attention_op(arch, shape, dtype)              │
+│   repercep.attention.registry.select_attention_op(arch, shape, dtype)              │
 │     ↓ vendor-branched candidate list, env-gated FP8/AMX promotion,               │
 │       falls back to NaiveAttention (SDPA) if no specialised op qualifies         │
 └──────────────────────────────────────────────────────────────────────────────────┘
@@ -84,7 +84,7 @@ toolchain.  Read this when you want to know *what runs on what*.
   &nbsp;&nbsp;&nbsp; *kernel language:* Triton (`.py`)
   &nbsp;&nbsp;&nbsp; *binding:* torch dispatcher; the PyTorch ROCm wheel ships aotriton
 
-**Opt-in via `MIRAGE_FP8_ATTENTION=1`:**
+**Opt-in via `REPERCEP_FP8_ATTENTION=1`:**
 - `FP8TritonAttention` → `kernels/triton_kernels/fp8_flash_attn.py`
   &nbsp;&nbsp;&nbsp; *kernel language:* Triton (`.py`)
   &nbsp;&nbsp;&nbsp; Fused FA-2 in FP8 (E4M3) with per-shape autotune cache.
@@ -109,7 +109,7 @@ toolchain.  Read this when you want to know *what runs on what*.
   &nbsp;&nbsp;&nbsp; *kernel language:* cuDNN (vendor CUDA C++)
   &nbsp;&nbsp;&nbsp; torch 2.8+ dispatches BF16 on sm_90 to cuDNN-FA3 automatically.
 
-**Opt-in via `MIRAGE_FP8_ATTENTION`:**
+**Opt-in via `REPERCEP_FP8_ATTENTION`:**
 - `FP8HopperTritonAttention` → `kernels/triton_kernels/fp8_flash_attn_hopper.py`
   &nbsp;&nbsp;&nbsp; *kernel language:* Triton (`.py`), WGMMA tiles
   &nbsp;&nbsp;&nbsp; Hopper sibling of the CDNA3 kernel; autotunes over
@@ -137,7 +137,7 @@ toolchain.  Read this when you want to know *what runs on what*.
   &nbsp;&nbsp;&nbsp; BF16 on SPR+ auto-dispatches to AMX_BF16 `TDPBF16PS`
   instructions through oneDNN's brgemm primitive.
 
-**Opt-in via `MIRAGE_AMX_ATTENTION=1`:**
+**Opt-in via `REPERCEP_AMX_ATTENTION=1`:**
 - `AMXFlashAttention` → `kernels/cpu/amx_attn/flash_attn_amx.cpp`
   &nbsp;&nbsp;&nbsp; *kernel language:* C++17 + `<immintrin.h>` intrinsics + OpenMP
   &nbsp;&nbsp;&nbsp; **Toolchain:**
@@ -149,7 +149,7 @@ toolchain.  Read this when you want to know *what runs on what*.
   - Linux `arch_prctl(ARCH_REQ_XCOMP_PERM)` one-shot for AMX tile state
   - Build: `torch.utils.cpp_extension.BuildExtension` via gcc-13 with
     `-march=sapphirerapids -mamx-bf16 -mamx-tile -mavx512bf16`
-  - Wrapper: `src/mirage/attention/amx_flash.py`
+  - Wrapper: `src/repercep/attention/amx_flash.py`
   &nbsp;&nbsp;&nbsp; **Status (2026-05-25):** built ✓, correct ✓ (0.18 % rel err vs
   SDPA), wins 3.8× at S=1024 / loses 0.5–0.7× at S≥2048 (oneDNN tuning gap —
   optimization candidate).
@@ -169,11 +169,11 @@ toolchain.  Read this when you want to know *what runs on what*.
 | H100 (FA-3 path, 2026-05-25) | **99.6 ± 3.9 s** (5-prompt mean ± std; min 95.2 s) | Cosmos 121f/36, adaptive cache + FA-3 via bridge | **3.81×** mean / 3.99× best |
 | H100 (FA-2 path) | **132.5 s** | Cosmos 121f/36, adaptive cache + FA-2 via bridge | 2.87× |
 | H100 (torch SDPA, prior baseline) | **138.4 s** | Cosmos 121f/36, adaptive cache alone | 2.75× |
-| H100 (FP8 Triton, current) | **343.7 s** | Cosmos 121f/36, adaptive + Mirage FP8 kernel | 1.10× (FP8 kernel needs surgery) |
+| H100 (FP8 Triton, current) | **343.7 s** | Cosmos 121f/36, adaptive + Repercep FP8 kernel | 1.10× (FP8 kernel needs surgery) |
 | Intel CPU SPR | **875.6 s** | Cosmos 17f/8, AMX-aware path, 48 threads | substrate |
 
 The 95.3 s headline requires FA-3 built from source (the PyPI flash-attn
-wheel ships FA-2 only) and `MIRAGE_FP8_ATTENTION=fa` set to activate the
+wheel ships FA-2 only) and `REPERCEP_FP8_ATTENTION=fa` set to activate the
 bridge:
 
 ```bash
@@ -191,7 +191,7 @@ cd flash-attention/hopper && \
   MAX_JOBS=8 uv pip install --python /path/to/.venv --no-build-isolation .
 
 # Headline reproducer
-MIRAGE_FP8_ATTENTION=fa .venv/bin/python scripts/run_cosmos.py --backend cuda \
+REPERCEP_FP8_ATTENTION=fa .venv/bin/python scripts/run_cosmos.py --backend cuda \
     --frames 121 --steps 36 --native-loop \
     --cache-mode adaptive --cache-adaptive-threshold 0.30 \
     --cache-force-full-every 16

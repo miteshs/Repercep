@@ -1,4 +1,4 @@
-# Part 2 — Mapping AVID onto Mirage
+# Part 2 — Mapping AVID onto Repercep
 
 The design: how an `AvidEngine` would implement the **same**
 `InteractiveWorldModel` seam as V-JEPA 2-AC, but with `step` running a **cached
@@ -71,7 +71,7 @@ Two real reuses and the design hooks:
 
 ## 2.5 Where the action enters (the hook, design)
 
-The action must reach the DiT's noise prediction. Mirage already has the seam:
+The action must reach the DiT's noise prediction. Repercep already has the seam:
 conditioning/attention flow through diffusers' dispatcher (Cosmos Part 4) and
 `CosmosAttnProcessor` (Cosmos Part 2 §2.5). Two injection options:
 

@@ -1,4 +1,4 @@
-"""V-JEPA 2-AC interactive rollout + energy-MPC planning on the Mirage backend.
+"""V-JEPA 2-AC interactive rollout + energy-MPC planning on the Repercep backend.
 
 V-JEPA 2-AC is the action-conditioned world model (ADR-0008): it predicts the
 next *state embedding* given an action and plans by minimizing a latent-space
@@ -12,7 +12,7 @@ Two modes:
     **without any weights** — this is the wiring/CI demonstration.
   * without ``--stub`` it builds the real engine; that needs the V-JEPA 2-AC
     checkpoints + a GPU and will raise ``NotImplementedError`` until the weight
-    loaders in ``mirage.models.vjepa2_ac`` are filled in (the docstrings there
+    loaders in ``repercep.models.vjepa2_ac`` are filled in (the docstrings there
     are the spec).
 
 Usage::
@@ -41,9 +41,9 @@ _setup()
 
 import torch  # noqa: E402
 
-from mirage.backend.registry import select_backend  # noqa: E402
-from mirage.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
-from mirage.runtime.types import Action, ConditioningInput, RolloutParams  # noqa: E402
+from repercep.backend.registry import select_backend  # noqa: E402
+from repercep.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
+from repercep.runtime.types import Action, ConditioningInput, RolloutParams  # noqa: E402
 
 _DTYPES = {"bf16": "bfloat16", "fp16": "float16", "fp32": "float32"}
 
@@ -91,16 +91,16 @@ def main() -> int:
         )
     else:
         engine = VJepa2ACEngine(backend, cfg)
-        print("[mirage] no --stub: this needs the V-JEPA 2-AC weights (ADR-0008).", flush=True)
+        print("[repercep] no --stub: this needs the V-JEPA 2-AC weights (ADR-0008).", flush=True)
 
-    print(f"[mirage] backend={backend.name} dtype={cfg.dtype} action_dim={cfg.action_dim}")
+    print(f"[repercep] backend={backend.name} dtype={cfg.dtype} action_dim={cfg.action_dim}")
     state = engine.reset(ConditioningInput(), RolloutParams(horizon=args.horizon))
-    print(f"[mirage] reset: step={state.step_index} context={tuple(state.context.shape)}")
+    print(f"[repercep] reset: step={state.step_index} context={tuple(state.context.shape)}")
 
     for _ in range(args.steps):
         action = Action(values=torch.randn(cfg.action_dim).tolist())
         state, step = engine.step(state, action)
-        print(f"[mirage] step {step.step_index}: context={tuple(state.context.shape)}")
+        print(f"[repercep] step {step.step_index}: context={tuple(state.context.shape)}")
 
     result = {
         "backend": backend.name,
@@ -124,11 +124,11 @@ def main() -> int:
         e_planned = float(engine._rollout_energy(state, sequence, goal))
         action = engine.plan(state, goal, horizon=args.horizon)
         n_act = len(action.values)
-        print(f"[mirage] plan: energy {e_zero:.3f} -> {e_planned:.3f} (first action dim={n_act})")
+        print(f"[repercep] plan: energy {e_zero:.3f} -> {e_planned:.3f} (first action dim={n_act})")
         result["energy_zero"] = round(e_zero, 4)
         result["energy_planned"] = round(e_planned, 4)
 
-    print(f"[mirage] RESULT {json.dumps(result)}")
+    print(f"[repercep] RESULT {json.dumps(result)}")
     return 0
 
 

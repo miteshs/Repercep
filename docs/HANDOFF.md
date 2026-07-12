@@ -1,4 +1,4 @@
-# Mirage Runtime — Handoff
+# Repercep Runtime — Handoff
 
 **Date:** 2026-05-25 · **Repo:** https://github.com/miteshs/Mirage ·
 **HEAD:** `main`, in sync with `origin/main` (4 commits past Session-16
@@ -55,7 +55,7 @@ claim).  Headlines from Session 17:
   H100 (without it, OOMs in `AutoencoderKLWan.forward` per-frame
   `torch.cat`).  Output bit-stable; F38 in BUILD_LOG.
 - **F40 confirmed empirically** via counter-based trace
-  (`scripts/trace_wan_attention.py`).  `MIRAGE_FP8_ATTENTION=fa`
+  (`scripts/trace_wan_attention.py`).  `REPERCEP_FP8_ATTENTION=fa`
   bridge engages 0 times on Wan; `WanTransformer3DModel` bypasses
   `_AttentionBackendRegistry` and calls `torch.F.scaled_dot_
   product_attention` directly.  Three fix paths ranked in BUILD_LOG
@@ -75,7 +75,7 @@ claim).  Headlines from Session 17:
 morning):** read `docs/SESSION_16_CLOSE.md` first.  Headline:
 **Cosmos H100 = 99.6 ± 3.9 s / 3.81× NVIDIA's published reference**
 across 5 prompts at 121 f / 36 steps, FA-3 source build + diffusers
-bridge wired (`MIRAGE_FP8_ATTENTION=fa`), V-JEPA 2 served end-to-end
+bridge wired (`REPERCEP_FP8_ATTENTION=fa`), V-JEPA 2 served end-to-end
 on all three targets.
 
 **If you're picking up from Session 13 close (2026-05-24):** read
@@ -119,11 +119,11 @@ Everything in §3–§9 is reference material. §10 (new this session) is the
 
 ## 1. Mission
 
-Mirage is a **world-model-native inference engine** — a serving stack
+Repercep is a **world-model-native inference engine** — a serving stack
 purpose-built for diffusion-temporal video models, not for autoregressive
 token decode. The LLM-era serving stack (vLLM, TensorRT-LLM, Diffusers,
 torch.compile) leaves 30–60 % of silicon performance on the table for world
-models; Mirage closes that gap.
+models; Repercep closes that gap.
 
 - **Lead workload:** NVIDIA **Cosmos-Predict1-7B Text2World** via the
   HuggingFace `diffusers.CosmosTextToWorldPipeline` path.
@@ -148,7 +148,7 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 
 | | Wall time | vs NVIDIA H100 reference (~380 s) |
 |---|--:|--:|
-| Mirage baseline (diffusers + SDPA→aotriton) | **465 s** (740 s on 2026-05-23 re-run) | 0.82× / 0.51× |
+| Repercep baseline (diffusers + SDPA→aotriton) | **465 s** (740 s on 2026-05-23 re-run) | 0.82× / 0.51× |
 | Same + `torch.compile` on the DiT (≤64 f) | ~410 s projected (49 f shows 1.13× DiT) | ~0.93× (projected) |
 | Same + native loop + step-skip `cache_skip=2` | **266 s** | **1.43× faster** |
 | Same + native loop + step-skip `cache_skip=4` | **154 s** Session 7 / **163.9 s** Session 9 clean | **2.47×** / **2.32×** |
@@ -162,7 +162,7 @@ All measured on a single AMD Instinct MI300X VF (192 GiB HBM3, 304 CUs,
 reproduce on a clean GPU within ±0.5 s of the agent / prior-session
 measurements. Seed-0 determinism holds (same MD5 across 4 sessions for
 the adaptive-no-FP8 mp4). The 2.68× is a *system-vs-system* claim
-(Mirage + adaptive cache + tuned FP8 vs NVIDIA's published-unstacked
+(Repercep + adaptive cache + tuned FP8 vs NVIDIA's published-unstacked
 H100); the raw-hardware comparison has MI300X 1.24× *slower* than H100
 at the same compute. See `docs/METHODOLOGY.md` for the apples-to-apples
 breakdown.
@@ -202,15 +202,15 @@ Watchable artifacts (gitignored, local-only):
 | Architecture component map | `docs/architecture.md` |
 | Key decisions with rationale | `docs/adr/0001..0005` |
 | Polyglot build scaffold (Cargo workspace, kernels/, ADR-0004) | `Cargo.toml`, `crates/`, `kernels/` |
-| The seam between Mirage and a GPU vendor | `src/mirage/backend/protocol.py` |
-| The seam between Mirage and an attention kernel | `src/mirage/attention/protocol.py` + `registry.py` |
-| Cosmos engine + Mirage-orchestrated guardrail | `src/mirage/models/cosmos.py` |
-| **Wan-2.2 engine** (second WM family) | `src/mirage/models/wan.py` |
-| Mirage-native denoising loop (CFG batching, fixed + adaptive caching) | `src/mirage/runtime/denoise.py` |
-| **FP8 attention kernel** (Triton fused FA-2) | `src/mirage/attention/fp8_triton.py` + `kernels/triton_kernels/fp8_flash_attn.py` |
+| The seam between Repercep and a GPU vendor | `src/repercep/backend/protocol.py` |
+| The seam between Repercep and an attention kernel | `src/repercep/attention/protocol.py` + `registry.py` |
+| Cosmos engine + Repercep-orchestrated guardrail | `src/repercep/models/cosmos.py` |
+| **Wan-2.2 engine** (second WM family) | `src/repercep/models/wan.py` |
+| Repercep-native denoising loop (CFG batching, fixed + adaptive caching) | `src/repercep/runtime/denoise.py` |
+| **FP8 attention kernel** (Triton fused FA-2) | `src/repercep/attention/fp8_triton.py` + `kernels/triton_kernels/fp8_flash_attn.py` |
 | **HIP FP8 GEMM proof-of-life** (compiles, runs, output values TODO) | `kernels/hip/fp8_attn/` |
-| Per-stage profiler | `src/mirage/bench/profile.py` |
-| Frame-streaming HTTP + gRPC contract | `src/mirage/serving/` |
+| Per-stage profiler | `src/repercep/bench/profile.py` |
+| Frame-streaming HTTP + gRPC contract | `src/repercep/serving/` |
 | End-to-end runners | `scripts/run_cosmos.py`, `scripts/run_wan.py` |
 | Benchmark harnesses (head-to-head) | `scripts/bench_caching.py`, `scripts/bench_fp8.py` |
 | Per-stage measurement runner | `scripts/profile_cosmos.py` |
@@ -222,7 +222,7 @@ Watchable artifacts (gitignored, local-only):
 Requires an AMD GPU host with ROCm 7.x and Python 3.11+.
 
 ```bash
-git clone https://github.com/miteshs/Mirage.git mirage && cd mirage
+git clone https://github.com/miteshs/Mirage.git repercep && cd repercep
 pip install --user uv
 uv venv --python 3.12 .venv
 # torch + torchvision MUST come from the ROCm wheel index (not PyPI)
@@ -260,8 +260,8 @@ Quality gate: `make lint && make typecheck && make test` — all green
 - ✓ **F15 safety gate** — `compile_max_frames=64`; original SIGSEGV didn't
   repro on current torch+ROCm; recompile storm gated instead.
 - ✓ **FP8 attention kernel + diffusers backend wiring (Phase 2.5).**
-  Triton FA-2 kernel + Mirage `mirage_fp8` backend registered with
-  diffusers' `_AttentionBackendRegistry`. `MIRAGE_FP8_ATTENTION=1` flips
+  Triton FA-2 kernel + Repercep `repercep_fp8` backend registered with
+  diffusers' `_AttentionBackendRegistry`. `REPERCEP_FP8_ATTENTION=1` flips
   the active backend on `CosmosEngine.load`. Quality preserved at
   Cosmos production shape (motion 4.65 vs 4.64).
   **NOT a wall-time win at Cosmos production shape today:** adaptive+FP8
@@ -305,8 +305,8 @@ Quality gate: `make lint && make typecheck && make test` — all green
    (refreshed 2026-05-23 with the adaptive-cache headline and the
    `inference_mode` postscript). The first-public-Cosmos-on-AMD-GPU framing
    is the OSS-first GTM lever the implementation plan calls for (§2.4).
-2. **Wire the Rust core into `src/mirage/serving/app.py`** — the three
-   crates (`mirage-cache`, `mirage-scheduler`, `mirage-router`) are
+2. **Wire the Rust core into `src/repercep/serving/app.py`** — the three
+   crates (`repercep-cache`, `repercep-scheduler`, `repercep-router`) are
    importable but the FastAPI handlers still call the engine directly.
    Stage-4 work.
 3. **Continuous batching** — scheduler-level. Depends on the app.py
@@ -327,7 +327,7 @@ Quality gate: `make lint && make typecheck && make test` — all green
 - **Multi-GPU** — host is a single MI300X VF; no multi-GPU paths exercised.
 - **Cosmos guardrail** integration handles two `cosmos_guardrail` 0.3.0 vs
   current `huggingface_hub` / NLTK 3.9 version skews (`_ensure_guardrail_assets`
-  and `_materialize_nltk_data` in `src/mirage/models/cosmos.py`).
+  and `_materialize_nltk_data` in `src/repercep/models/cosmos.py`).
 - **HF token** for gated weights — stored at `~/.cache/huggingface/token`
   (off the repo). Account: `miteshs`.
 
@@ -335,45 +335,45 @@ Quality gate: `make lint && make typecheck && make test` — all green
 
 ## 6. Anchors in the code (where the architecture lives)
 
-- **The one seam.** `mirage.backend.protocol.Backend` (Protocol). Everything
+- **The one seam.** `repercep.backend.protocol.Backend` (Protocol). Everything
   above it imports the Protocol, never a concrete vendor backend
   (ADR-0003). `ROCmBackend` is the only concrete impl today.
-- **Attention.** `mirage.attention.protocol.AttentionOp` + `select_attention_op`.
+- **Attention.** `repercep.attention.protocol.AttentionOp` + `select_attention_op`.
   Naive SDPA is the floor; `ROCmFlashAttention` is the CK wrapper (inert
   until the CK package is built). On ROCm, SDPA already routes through
   aotriton flash kernels (ADR-0002).
-- **Runtime.** `mirage.runtime`. `WorldModelEngine` Protocol, Pydantic
+- **Runtime.** `repercep.runtime`. `WorldModelEngine` Protocol, Pydantic
   request/response types, `StubEngine` (noise frames — for serving
   development), `PagedLatentCache` (frame-aware eviction skeleton).
-- **Cosmos engine.** `mirage.models.cosmos.CosmosEngine`. Wraps the
-  diffusers pipeline; orchestrates the guardrail (Mirage-side, not
+- **Cosmos engine.** `repercep.models.cosmos.CosmosEngine`. Wraps the
+  diffusers pipeline; orchestrates the guardrail (Repercep-side, not
   pipeline-side — see Session 3 in BUILD_LOG).
-- **Native denoising loop.** `mirage.runtime.denoise.denoise_cosmos_video`.
+- **Native denoising loop.** `repercep.runtime.denoise.denoise_cosmos_video`.
   CFG batching + step-skip caching live here. This is where adaptive
   caching, feature caching, and any future loop-level optimization belongs.
-- **Benchmark + profile.** `mirage.bench.harness` (end-to-end timing),
-  `mirage.bench.profile` (per-stage; forward-hook + method-wrap; works
+- **Benchmark + profile.** `repercep.bench.harness` (end-to-end timing),
+  `repercep.bench.profile` (per-stage; forward-hook + method-wrap; works
   on compiled DiTs).
-- **Serving.** `mirage.serving.app` (FastAPI / NDJSON frame streaming) +
-  `mirage/serving/proto/mirage.proto` (gRPC contract).
+- **Serving.** `repercep.serving.app` (FastAPI / NDJSON frame streaming) +
+  `repercep/serving/proto/repercep.proto` (gRPC contract).
 
 ---
 
 ## 7. Pointers for common next operations
 
 - **Adding NVIDIA support:** done in Session 14 — see
-  `src/mirage/backend/cuda.py`, `src/mirage/attention/hopper_flash.py`,
-  `src/mirage/attention/fp8_hopper_triton.py`,
-  `src/mirage/attention/transformer_engine.py`, ADR-0006, and
+  `src/repercep/backend/cuda.py`, `src/repercep/attention/hopper_flash.py`,
+  `src/repercep/attention/fp8_hopper_triton.py`,
+  `src/repercep/attention/transformer_engine.py`, ADR-0006, and
   `docs/COSMOS_ON_H100.md`. Confirmed the port is exactly what
   ADR-0003 promised — one Backend class + one registry entry +
   attention ops below the seam, no changes to model loading, the
   denoise loop, the engine, or the serving handlers.
 - **Adding a new WM model:** implement `WorldModelEngine` Protocol. Mirror
-  the structure of `mirage.models.cosmos`. Reuse the native loop and
+  the structure of `repercep.models.cosmos`. Reuse the native loop and
   caching by parameterizing them on the pipeline's components.
 - **Adding a loop-level optimization:** land it in
-  `mirage.runtime.denoise.denoise_cosmos_video`, gated by a
+  `repercep.runtime.denoise.denoise_cosmos_video`, gated by a
   `CosmosConfig` flag. Use the per-stage profiler to A/B against the
   baseline.
 - **Pushing a measured speedup claim:** always re-verify with
@@ -397,22 +397,22 @@ ca709fe  attention: wire FP8 kernel into Cosmos via a diffusers-side backend
 10c7b9a  Phase 2 integration: docs + numbers from the clean-GPU benchmark sweep
 61486e1  caching: adaptive (TeaCache-style) + F15 compile gate at 121f
 d916800  attention: FP8 path on CDNA3 — Triton flash kernel + scaled_mm fallback + HIP scaffold
-ed1ed27  mirage.models.wan: Wan-2.2 T2V-A14B as the second world-model family
+ed1ed27  repercep.models.wan: Wan-2.2 T2V-A14B as the second world-model family
 300dc57  docs: refresh for OSS-announce + log Session 8 (polyglot scaffold, OOM fix)
 e7f66b0  denoise: wrap loop body in torch.inference_mode() — fixes 121f/36 OOM
 af9210d  Stage 3 integration: build pipeline, unique lib names, py.typed markers
-8c9bcfe  crates/mirage-router: greenfield request router in Rust+PyO3
-f280ada  crates/mirage-scheduler: greenfield priority scheduler in Rust+PyO3
-6e61c0e  crates/mirage-cache: port PagedLatentCache from Python to Rust+PyO3
+8c9bcfe  crates/repercep-router: greenfield request router in Rust+PyO3
+f280ada  crates/repercep-scheduler: greenfield priority scheduler in Rust+PyO3
+6e61c0e  crates/repercep-cache: port PagedLatentCache from Python to Rust+PyO3
 92e91b5  Stage 2: resolve Rust-core fork, populate workspace deps, scaffold 3 crates
 e012293  Scaffold polyglot build tooling — Cargo workspace, kernels/, ADR-0004
-90aa374  Add docs/HANDOFF.md — single doc to read first when picking up Mirage
+90aa374  Add docs/HANDOFF.md — single doc to read first when picking up Repercep
 41f3f59  Reinstate cache=4 headline: cache tolerance is config-size-dependent (F16+F17)
 2b8a6d9  Retract cache_skip=4 headline: cached output is visibly degraded (F16)   [later corrected]
 987d4cd  Clean warmup-separated 121f cache=4: 154s — 2.47x faster than H100 reference
 010f969  Cached 121f / 36 step run: 164s — MI300X beats H100 reference (~380s) by 2.3x
 63d52f1  Measured 121f baseline (465s) + native-loop step-skip caching
-9f85125  Initial Mirage Runtime — first published Cosmos-Predict-7B on AMD MI300X
+9f85125  Initial Repercep Runtime — first published Cosmos-Predict-7B on AMD MI300X
 ```
 
 The `2b8a6d9` retraction was reverted (`41f3f59`) when we realised the
@@ -428,8 +428,8 @@ smaller smoke configs. See the *Engineering postscript* in
 `docs/COSMOS_ON_MI300X.md` for the full diagnosis trail.
 
 `e012293`–`af9210d` are the polyglot scaffold (Stages 1–3): Cargo
-workspace at the repo root, three Rust crates (`mirage-cache`,
-`mirage-scheduler`, `mirage-router`) with PyO3 bindings, maturin build
+workspace at the repo root, three Rust crates (`repercep-cache`,
+`repercep-scheduler`, `repercep-router`) with PyO3 bindings, maturin build
 pipeline, ADR-0004 (scaffold-only) and ADR-0005 (fork resolved). The
 Python surface (model loading, denoise loop, attention, serving) stays
 Python; Rust owns the orchestration core.
@@ -440,7 +440,7 @@ Python; Rust owns the orchestration core.
 
 For why MI300X first, why diffusers path, why this constitutes a real
 wedge in 2026, see the source strategy docs:
-- `~/Mirage_Implementation_Plan.pdf` (the 30-page strategic plan)
+- `~/Repercep_Implementation_Plan.pdf` (the 30-page strategic plan)
 - `~/Mirage_Cowork_Handoff.md` (decisions-only orientation note)
 
 These are not in the repo (they're personal strategy docs), but the
@@ -457,7 +457,7 @@ strategy-driven rather than tactical.
 | 2 (2026-05-22) | Optimization Tier 1 | `torch.compile` 1.13× DiT |
 | 3 (2026-05-22) | Cosmos guardrail | Safety integrated |
 | 4 (2026-05-22) | Competitive scan + validation | Apples-to-apples baseline |
-| 5 (2026-05-22) | Mirage-native loop + CFG batching | F9 / F14 measured |
+| 5 (2026-05-22) | Repercep-native loop + CFG batching | F9 / F14 measured |
 | 6 (2026-05-22) | Full-config baseline + step-skip | 465 s baseline, 154 s w/ `skip=4` |
 | 7 (2026-05-23) | 121 f / 36 step caching | **2.47× H100, headline** |
 | 8 (2026-05-23) | Polyglot scaffold + Rust core + OOM fix | Stage 1–3, F18 `inference_mode` |
@@ -468,7 +468,7 @@ strategy-driven rather than tactical.
 | 13 (2026-05-24) | Threshold sweep + multi-prompt variance + 5-pair FVD | Adaptive 154.48 ± 5.96 s across 5 prompts; FVD 166.3 (small-N preliminary); F24 (FVD harness) |
 | 14 (2026-05-24) | **NVIDIA H100 port — architecture + kernels** | CUDABackend lands; Hopper FA-3 + FP8 Triton + TE optional; ADR-0006 closes the "Revisit if" of ADR-0001; F25 + F26 |
 | 15 (2026-05-24) | **CPU AMX substrate + H100 follow-ups** | CPUBackend (Vendor.INTEL) + AMX BF16 flash kernel + ADR-0007; F29 FP8 Hopper autotune grid expansion (BLOCK_M=192, num_stages=5, num_warps=12 on 256x256); FA-3 wheel built from source on Hopper; F31 (MooseFS write-quota incident) + F32 (HF Hub offline-mode metadata writes) recorded |
-| 16 (2026-05-25 early) | **FA-3 source build + bridge + V-JEPA 2** | Cosmos H100 = **99.6 ± 3.9 s / 3.81× NVIDIA pub** (5 prompts × 5 seeds); FA-3 minimal-config wheel wired via `MIRAGE_FP8_ATTENTION=fa`; TE source-build path validated; V-JEPA 2 served end-to-end on all 3 targets; F33–F37 |
+| 16 (2026-05-25 early) | **FA-3 source build + bridge + V-JEPA 2** | Cosmos H100 = **99.6 ± 3.9 s / 3.81× NVIDIA pub** (5 prompts × 5 seeds); FA-3 minimal-config wheel wired via `REPERCEP_FP8_ATTENTION=fa`; TE source-build path validated; V-JEPA 2 served end-to-end on all 3 targets; F33–F37 |
 | 17 (2026-05-25) | **Wan-2.2 H100 + F40 confirmed + quality measured** | Wan smoke = 37.66 ± 0.31 s; Wan 81f/40 = **1552.8 s / 72.6 GiB**; `WanConfig.vae_tiling` added; **F40 confirmed empirically** via counter-based trace (FA-3 bridge engages 0× on Wan); Cosmos H100 cache quality measured (LPIPS 0.61, trajectory-divergent per F23); `docs/POSITIONING.md` created; F38–F41 |
 
 Findings (F1–F41) are cross-referenced in `docs/BUILD_LOG.md`. ADRs
@@ -487,7 +487,7 @@ sg render -c "sg video -c 'make check-gpu'"
 
 # Headline reproducer (~3 min, single GPU)
 sg render -c "sg video -c '\
-    MIRAGE_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
+    REPERCEP_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
         --frames 121 --steps 36 --native-loop \
         --cache-mode adaptive --cache-adaptive-threshold 0.30 \
         --cache-force-full-every 16'"

@@ -1,6 +1,6 @@
-# Mirage walkthroughs — V-JEPA 2-AC, the interactive / energy-based path
+# Repercep walkthroughs — V-JEPA 2-AC, the interactive / energy-based path
 
-A guided tour of the *other* kind of world model in Mirage: not a one-shot
+A guided tour of the *other* kind of world model in Repercep: not a one-shot
 diffusion video generator (that's the [Cosmos walkthrough](../walkthroughs/)),
 but a **stateful, action-conditioned, closed-loop** world model that predicts in
 **latent space** and *plans* by **energy minimization** — Yann LeCun's JEPA /

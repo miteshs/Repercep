@@ -88,7 +88,7 @@ the irreducible ML investment.**
 
 ## 3.7 Honest closing
 
-AVID is the design that **unifies Mirage's diffusion stack** (the loop, the
+AVID is the design that **unifies Repercep's diffusion stack** (the loop, the
 adaptive cache, the FP8 kernels, the VAE) **with its interactive seam** — the one
 world-model family that uses *all* the existing machinery, on the same
 `InteractiveWorldModel` interface as V-JEPA 2-AC. It is genuinely **buildable on

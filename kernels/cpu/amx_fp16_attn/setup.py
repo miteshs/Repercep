@@ -1,4 +1,4 @@
-"""Build script for the Mirage AMX FP16 flash-attention C++ extension.
+"""Build script for the Repercep AMX FP16 flash-attention C++ extension.
 
 Granite Rapids (GNR) sibling of `kernels/cpu/amx_attn/setup.py`.  GNR is the
 first Intel silicon that exposes `AMX_FP16` (`_tile_dpfp16ps`) -- SPR and
@@ -35,9 +35,9 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 # only valid on hardware that ships TDPFP16PS.
 # ---------------------------------------------------------------------------
 def _require_amx_fp16() -> None:
-    if os.environ.get("MIRAGE_AMX_FORCE_BUILD") == "1":
+    if os.environ.get("REPERCEP_AMX_FORCE_BUILD") == "1":
         print(
-            "[amx-fp16] MIRAGE_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
+            "[amx-fp16] REPERCEP_AMX_FORCE_BUILD=1 — bypassing CPUID gate "
             "(compile-only smoke).",
             file=sys.stderr,
         )
@@ -101,9 +101,9 @@ EXTRA_LINK_ARGS = ["-fopenmp"]
 
 
 setup(
-    name="mirage_amx_fp16_attn",
+    name="repercep_amx_fp16_attn",
     version="0.1.0",
-    description="Intel AMX FP16 flash-attention kernel for Mirage "
+    description="Intel AMX FP16 flash-attention kernel for Repercep "
                 "(Granite Rapids sibling of amx_attn).",
     ext_modules=[
         CppExtension(

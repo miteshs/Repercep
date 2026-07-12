@@ -1,4 +1,4 @@
-"""Tests for ``mirage.runtime.quantize``."""
+"""Tests for ``repercep.runtime.quantize``."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ def test_quantize_linear_basic() -> None:
     """Quantize a small weight, dequant, and assert within INT8 rounding tolerance."""
     import torch
 
-    from mirage.runtime.quantize import dequantize_linear, quantize_linear_symmetric
+    from repercep.runtime.quantize import dequantize_linear, quantize_linear_symmetric
 
     torch.manual_seed(0)
     weight = torch.randn(64, 128) * 2.0  # not normalised; tests scale calc
@@ -33,7 +33,7 @@ def test_quantize_linear_preserves_bias() -> None:
     """Bias passes through unchanged (we don't quantize it — see docstring)."""
     import torch
 
-    from mirage.runtime.quantize import quantize_linear_symmetric
+    from repercep.runtime.quantize import quantize_linear_symmetric
 
     weight = torch.randn(8, 16)
     bias = torch.randn(8, dtype=torch.bfloat16)
@@ -47,7 +47,7 @@ def test_quantize_linear_handles_zero_row() -> None:
     """All-zero row gets a clamped scale, not a NaN."""
     import torch
 
-    from mirage.runtime.quantize import quantize_linear_symmetric
+    from repercep.runtime.quantize import quantize_linear_symmetric
 
     weight = torch.zeros(4, 8)
     weight[1] = torch.tensor([1.0, -1.0, 0.5, -0.5, 0.25, -0.25, 0.125, -0.125])
@@ -66,7 +66,7 @@ def test_quantize_linear_rejects_wrong_dim() -> None:
     """Only 2-D weights are supported."""
     import torch
 
-    from mirage.runtime.quantize import quantize_linear_symmetric
+    from repercep.runtime.quantize import quantize_linear_symmetric
 
     with pytest.raises(ValueError, match="expected 2-D"):
         quantize_linear_symmetric(torch.randn(8))
@@ -76,7 +76,7 @@ def test_quantize_module_linears_filters_by_name() -> None:
     """``name_filter`` selects a substring match against dotted module names."""
     import torch
 
-    from mirage.runtime.quantize import quantize_module_linears
+    from repercep.runtime.quantize import quantize_module_linears
 
     class Toy(torch.nn.Module):
         def __init__(self) -> None:
@@ -102,7 +102,7 @@ def test_quantize_linear_bfloat16_input() -> None:
     """Quant + dequant of a BF16 weight stays within BF16-then-quant tolerance."""
     import torch
 
-    from mirage.runtime.quantize import dequantize_linear, quantize_linear_symmetric
+    from repercep.runtime.quantize import dequantize_linear, quantize_linear_symmetric
 
     torch.manual_seed(1)
     weight = (torch.randn(16, 32) * 1.5).to(torch.bfloat16)
@@ -127,7 +127,7 @@ def test_quantize_linear_bf16_roundtrip_within_scale() -> None:
     """
     import torch
 
-    from mirage.runtime.quantize import dequantize_linear, quantize_linear_symmetric
+    from repercep.runtime.quantize import dequantize_linear, quantize_linear_symmetric
 
     torch.manual_seed(2)
     weight = (torch.randn(32, 64) * 0.8).to(torch.bfloat16)
@@ -151,7 +151,7 @@ def test_quantized_linear_module_matches_linear_bf16() -> None:
     """
     import torch
 
-    from mirage.runtime.quantize import (
+    from repercep.runtime.quantize import (
         QuantizedLinearModule,
         dequantize_linear,
         quantize_linear_symmetric,
@@ -181,7 +181,7 @@ def test_quantized_linear_module_error_vs_original_bounded() -> None:
     """Sanity: error vs the *original* Linear is bounded by per-row scale * ||x||."""
     import torch
 
-    from mirage.runtime.quantize import QuantizedLinearModule
+    from repercep.runtime.quantize import QuantizedLinearModule
 
     torch.manual_seed(4)
     linear = torch.nn.Linear(8, 16, bias=False).to(torch.bfloat16)
@@ -203,7 +203,7 @@ def test_quantized_linear_module_preserves_bias() -> None:
     """Bias passes through the swap and is reachable from ``parameters()``."""
     import torch
 
-    from mirage.runtime.quantize import QuantizedLinearModule
+    from repercep.runtime.quantize import QuantizedLinearModule
 
     linear = torch.nn.Linear(8, 4).to(torch.bfloat16)
     qmod = QuantizedLinearModule.from_linear(linear)
@@ -221,7 +221,7 @@ def test_replace_linears_with_quantized_swaps_in_place() -> None:
     """Every ``nn.Linear`` is replaced; non-Linear children are untouched."""
     import torch
 
-    from mirage.runtime.quantize import (
+    from repercep.runtime.quantize import (
         QuantizedLinearModule,
         replace_linears_with_quantized,
     )
@@ -260,7 +260,7 @@ def test_replace_linears_with_quantized_filters_by_name() -> None:
     """With ``name_filter="dit"``, the VAE linear is left alone."""
     import torch
 
-    from mirage.runtime.quantize import (
+    from repercep.runtime.quantize import (
         QuantizedLinearModule,
         replace_linears_with_quantized,
     )
@@ -288,7 +288,7 @@ def test_replace_linears_preserves_bias_through_swap() -> None:
     """Bias on the original Linear shows up on the wrapper after swap."""
     import torch
 
-    from mirage.runtime.quantize import replace_linears_with_quantized
+    from repercep.runtime.quantize import replace_linears_with_quantized
 
     m = torch.nn.Sequential(
         torch.nn.Linear(8, 16, bias=True),

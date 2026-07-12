@@ -1,5 +1,5 @@
 // =============================================================================
-//  Mirage CPU sibling kernels: flash-attention on Intel AMX INT8
+//  Repercep CPU sibling kernels: flash-attention on Intel AMX INT8
 // =============================================================================
 //
 //  This file implements a FlashAttention-2 style scaled-dot-product-attention
@@ -82,7 +82,7 @@
 //
 //    The per-row scheme matches the per-token-symmetric scheme used by
 //    oneDNN's IPEX smooth-quant and by the per-row scheme in
-//    `src/mirage/runtime/quantize.py`, so the numerics are coherent with
+//    `src/repercep/runtime/quantize.py`, so the numerics are coherent with
 //    the rest of the runtime.  V's coarser per-tile scale costs a little
 //    range but is mathematically clean; revisit per-row + per-channel
 //    scale absorption when we move past correctness-first.
@@ -113,7 +113,7 @@
 //  -------------------------------------------------------------------------
 //
 //    * Quantization is dynamic and per-tile.  Static weight quant lives in
-//      `src/mirage/runtime/quantize.py` and is the right path for Linear
+//      `src/repercep/runtime/quantize.py` and is the right path for Linear
 //      layers; here the activation rows change every step and there is no
 //      offline "weight" to pre-quantize -- Q, K, and V are all activations.
 //    * Per-tile dequant scales are broadcast through the inner loops with

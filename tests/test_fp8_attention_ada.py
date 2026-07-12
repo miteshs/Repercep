@@ -20,10 +20,10 @@ import importlib.util
 
 import pytest
 
-from mirage.attention.fp8_ada_triton import FP8AdaTritonAttention
-from mirage.attention.protocol import AttentionOp
-from mirage.attention.types import AttentionKind, AttentionShape
-from mirage.hardware import DType
+from repercep.attention.fp8_ada_triton import FP8AdaTritonAttention
+from repercep.attention.protocol import AttentionOp
+from repercep.attention.types import AttentionKind, AttentionShape
+from repercep.hardware import DType
 
 _HAS_TORCH = importlib.util.find_spec("torch") is not None
 
@@ -47,7 +47,7 @@ def test_fp8_ada_triton_satisfies_protocol() -> None:
 
 
 def test_fp8_ada_triton_op_name() -> None:
-    # Stable name for diagnostic surfaces (mirage info, registry traces).
+    # Stable name for diagnostic surfaces (repercep info, registry traces).
     assert FP8AdaTritonAttention().name == "fp8-ada-triton-flash"
 
 

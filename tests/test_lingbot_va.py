@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from mirage.models.lingbot_va import LingBotVAConfig, LingBotVAEngine
-from mirage.runtime.interactive import InteractiveWorldModel
-from mirage.runtime.types import Action, ConditioningInput, RolloutParams, WorldState
+from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine
+from repercep.runtime.interactive import InteractiveWorldModel
+from repercep.runtime.types import Action, ConditioningInput, RolloutParams, WorldState
 
 if TYPE_CHECKING:
     import torch
 
-    from mirage.backend.protocol import Backend
+    from repercep.backend.protocol import Backend
 
 
 class _NamedBackend:

@@ -6,7 +6,7 @@
 
 ## Context
 
-Mirage leads on MI300X (ADR-0001) but the Implementation Plan's seed deliverable
+Repercep leads on MI300X (ADR-0001) but the Implementation Plan's seed deliverable
 includes a second hardware target, and the long-term thesis is multi-vendor
 codegen. We must lead on one vendor *without* making the second a rewrite.
 
@@ -16,8 +16,8 @@ backends."
 
 ## Decision
 
-A single seam — `mirage.backend.protocol.Backend`, a `typing.Protocol` — is the
-only place Mirage touches a GPU vendor. It owns:
+A single seam — `repercep.backend.protocol.Backend`, a `typing.Protocol` — is the
+only place Repercep touches a GPU vendor. It owns:
 
 - capability declaration (`capabilities()` → `BackendCapabilities`)
 - device discovery (`devices()` → `DeviceSpec` tuple)

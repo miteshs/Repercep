@@ -23,7 +23,7 @@ the "apples-to-apples accounting" section explicitly acknowledges that
 **the 2.68× claim is system-vs-system, not stack-vs-stack on the same
 silicon.** The H100 number (~380 s) is NVIDIA's published reference
 stack (TransformerEngine + Apex + NATTEN + flash-attn-3) on a Hopper
-GPU we do not have. Mirage's own stack — diffusers + adaptive cache +
+GPU we do not have. Repercep's own stack — diffusers + adaptive cache +
 FP8 Triton — has never been measured on H100, because no H100 has been
 attached to the project.
 
@@ -47,29 +47,29 @@ We are choosing (b).
 Land the NVIDIA H100 backend as a **parallel target**, not a
 fast-follow. AMD MI300X remains the lead workload. Specifically:
 
-1. Add `mirage.backend.cuda.CUDABackend` satisfying the Backend
+1. Add `repercep.backend.cuda.CUDABackend` satisfying the Backend
    Protocol (ADR-0003). Detect via `torch.version.cuda is not None`.
    Map sm_XX → DeviceArch (sm_90 → Hopper, sm_80 → Ampere, sm_89 →
    Ada). Declare capabilities: FP8 (e4m3fn + e5m2 — IEEE-ish, NOT the
    AMD fnuz variant), flash-attention via flash-attn-3, torch.compile.
 
 2. Add three Hopper attention ops:
-   - `mirage.attention.hopper_flash.HopperFlashAttention` wrapping
+   - `repercep.attention.hopper_flash.HopperFlashAttention` wrapping
      `flash_attn_interface.flash_attn_func` (FA-3) with
      `flash_attn.flash_attn_func` (FA-2) fallback.
-   - `mirage.attention.fp8_hopper_triton.FP8HopperTritonAttention` +
+   - `repercep.attention.fp8_hopper_triton.FP8HopperTritonAttention` +
      `kernels/triton_kernels/fp8_flash_attn_hopper.py` — Hopper FP8
      Triton FA-2, sibling of the gfx942 kernel, with separate autotune
-     cache at `~/.cache/mirage/fp8_autotune_hopper.json`.
-   - `mirage.attention.transformer_engine.TransformerEngineAttention`
+     cache at `~/.cache/repercep/fp8_autotune_hopper.json`.
+   - `repercep.attention.transformer_engine.TransformerEngineAttention`
      wrapping `transformer_engine.pytorch.DotProductAttention` (FA-3 +
      FP8 recipe) — optional, registers only when TE imports cleanly.
 
-3. `mirage.attention.registry.select_attention_op` grows an NVIDIA
+3. `repercep.attention.registry.select_attention_op` grows an NVIDIA
    vendor branch: TE (if available + FP8 env) → FP8 Hopper Triton (if
    env + shape) → FA-3/FA-2 → naive SDPA.
 
-4. `mirage.backend.registry._ALL_BACKENDS` gains `CUDABackend()` as the
+4. `repercep.backend.registry._ALL_BACKENDS` gains `CUDABackend()` as the
    second entry. When both AMD and NVIDIA are visible on the same host
    (rare; CI machines, dev boxes with eGPU) AMD wins — preserves the
    "MI300X is lead" framing under `select_backend()` with no `prefer`
@@ -106,9 +106,9 @@ fast-follow. AMD MI300X remains the lead workload. Specifically:
    refunds.
 
 2. **It closes a real asymmetry in METHODOLOGY.md §3.** The published-
-   Mirage-MI300X vs published-NVIDIA-H100 framing is *defensible* but
-   not the cleanest possible test. With Mirage running on H100, the
-   comparison becomes Mirage-MI300X vs Mirage-H100, which is the clean
+   Repercep-MI300X vs published-NVIDIA-H100 framing is *defensible* but
+   not the cleanest possible test. With Repercep running on H100, the
+   comparison becomes Repercep-MI300X vs Repercep-H100, which is the clean
    apples-to-apples the methodology doc has been honest about lacking.
    That measurement (Session 15) is more valuable to the project's
    credibility than a third decimal place on the MI300X number.
@@ -200,7 +200,7 @@ fast-follow. AMD MI300X remains the lead workload. Specifically:
 
 - **Multi-GPU lands as a real requirement** (a customer needs 8× H100
   with NVLink-aware scheduling, or 8× MI300X with xGMI, for a model
-  Mirage actually serves). That is sharded-attention + topology-aware
+  Repercep actually serves). That is sharded-attention + topology-aware
   scheduler work; it is structural and beyond the Backend Protocol.
   Plan-residual Phase 5+ on both vendors.
 

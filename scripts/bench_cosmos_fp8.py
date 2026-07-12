@@ -2,7 +2,7 @@
 
 This is the head-to-head end-to-end measurement for Phase 2.5: the same
 adaptive-caching config run twice, once with the FP8 backend bridge active
-(``MIRAGE_FP8_ATTENTION=1``) and once with the default native dispatcher.
+(``REPERCEP_FP8_ATTENTION=1``) and once with the default native dispatcher.
 F19 showed the env var was a no-op until this session; the bench number
 demonstrates the wiring is actually live.
 
@@ -30,7 +30,7 @@ from typing import Any
 def _setup_imports() -> None:
     """Add this worktree's ``src/`` and ``kernels/`` to ``sys.path``.
 
-    The shared ``.venv`` carries an editable install of mirage-runtime; without
+    The shared ``.venv`` carries an editable install of repercep-runtime; without
     this hook a script invoked from a parallel worktree would import the
     *other* worktree's source. Mirror the pattern from ``scripts/bench_fp8.py``.
     """
@@ -78,18 +78,18 @@ def main() -> int:
         _AttentionBackendRegistry,
     )
 
-    from mirage.attention.diffusers_backend import (
-        activate_mirage_fp8_backend,
-        register_mirage_fp8_backend,
+    from repercep.attention.diffusers_backend import (
+        activate_repercep_fp8_backend,
+        register_repercep_fp8_backend,
     )
-    from mirage.backend.registry import select_backend
-    from mirage.models.cosmos import CosmosConfig, CosmosEngine
-    from mirage.runtime.denoise import DenoiseStats, denoise_cosmos_video
-    from mirage.runtime.types import GenerationParams, GenerationRequest
+    from repercep.backend.registry import select_backend
+    from repercep.models.cosmos import CosmosConfig, CosmosEngine
+    from repercep.runtime.denoise import DenoiseStats, denoise_cosmos_video
+    from repercep.runtime.types import GenerationParams, GenerationRequest
 
     # Make absolutely sure the bridge is registered before any pipeline load
     # (it would be, from the package init — defensive paranoia for the bench).
-    register_mirage_fp8_backend()
+    register_repercep_fp8_backend()
 
     backend = select_backend()
     device = backend.devices()[0]
@@ -135,13 +135,13 @@ def main() -> int:
     for label in args.configs:
         # Activate the requested backend for this run.
         if label == "adaptive_fp8":
-            os.environ["MIRAGE_FP8_ATTENTION"] = "1"
-            activate_mirage_fp8_backend()
+            os.environ["REPERCEP_FP8_ATTENTION"] = "1"
+            activate_repercep_fp8_backend()
             assert (
-                _AttentionBackendRegistry._active_backend.value == "mirage_fp8"
-            ), "mirage_fp8 not active despite activation request"
+                _AttentionBackendRegistry._active_backend.value == "repercep_fp8"
+            ), "repercep_fp8 not active despite activation request"
         else:
-            os.environ.pop("MIRAGE_FP8_ATTENTION", None)
+            os.environ.pop("REPERCEP_FP8_ATTENTION", None)
             _AttentionBackendRegistry.set_active_backend(AttentionBackendName.NATIVE)
         active = _AttentionBackendRegistry._active_backend
         print(f"[bench] config={label}  active_backend={active.value}", flush=True)

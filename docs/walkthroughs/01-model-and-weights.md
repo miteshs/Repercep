@@ -5,10 +5,10 @@ decoded by a VAE, conditioned on a text embedding. This part opens the box —
 what `from_pretrained` actually loads, where the bytes live, and the components
 that come back.
 
-> Source note: Mirage *wraps* HuggingFace `diffusers` for Cosmos. Line numbers
+> Source note: Repercep *wraps* HuggingFace `diffusers` for Cosmos. Line numbers
 > below are from **diffusers 0.38.0** (`pipelines/cosmos/pipeline_cosmos_text2world.py`);
 > the project pins `diffusers>=0.31` and runs on 0.37.1 — a few lines may drift,
-> so we also cite by symbol. Mirage's own loader is `src/mirage/models/cosmos.py`.
+> so we also cite by symbol. Repercep's own loader is `src/repercep/models/cosmos.py`.
 
 ## 1.1 What `CosmosTextToWorldPipeline` *is* — six components
 
@@ -32,12 +32,12 @@ every optimization in this codebase targets the transformer, never T5.
 **Systems note.** `model_cpu_offload_seq = "text_encoder->transformer->vae"`
 (line 163): on an 80 GB card diffusers keeps only *one* of these resident at a
 time and swaps the rest to CPU, because together they don't fit. The MI300X's
-192 GB is exactly what lets Mirage skip that swap dance — a recurring structural
+192 GB is exactly what lets Repercep skip that swap dance — a recurring structural
 advantage (ADR-0001, `docs/WAN_ON_MI300X.md`).
 
 ## 1.2 `from_pretrained` and where the bytes live
 
-`src/mirage/models/cosmos.py:176`:
+`src/repercep/models/cosmos.py:176`:
 
 ```python
 pipe = CosmosTextToWorldPipeline.from_pretrained(self._config.repo_id, torch_dtype=dtype)
@@ -78,19 +78,19 @@ The manifest is tiny and readable without the weights:
 cat ~/.cache/huggingface/hub/models--nvidia--Cosmos-*/snapshots/*/model_index.json
 ```
 
-## 1.3 What Mirage adds at load time
+## 1.3 What Repercep adds at load time
 
 `CosmosEngine.load()` (`cosmos.py:149-198`) is not a thin pass-through — it does
 three real things around `from_pretrained`:
 
 - **Neutralizes the in-pipeline guardrail** (`_disable_cosmos_guardrail()`,
   `cosmos.py:306`). The pipeline force-constructs a `CosmosSafetyChecker` in its
-  `__init__` (diffusers 179-180) that breaks device detection; Mirage swaps it
+  `__init__` (diffusers 179-180) that breaks device detection; Repercep swaps it
   for a no-op and, when enabled, runs the guardrail *itself* around generation
   (text check before `cosmos.py:246`, face-blur after `cosmos.py:389`). This is
   the difference between "the pipeline imports" and "it actually lands on the GPU."
 - **Activates the FP8 attention bridge** (`maybe_activate_from_env()`,
-  `cosmos.py:168`) — wiring `MIRAGE_FP8_ATTENTION` into diffusers' attention
+  `cosmos.py:168`) — wiring `REPERCEP_FP8_ATTENTION` into diffusers' attention
   dispatcher. Part 4 is entirely about this.
 - **Optionally `torch.compile`s the DiT** with the F15/F18 frame-size safety gate
   (`cosmos.py:180-194`, `_gate_compile_if_needed`).

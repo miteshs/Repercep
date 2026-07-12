@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from mirage.bench.harness import BenchmarkResult, benchmark_engine, speedup
-from mirage.runtime.stub_engine import StubEngine
-from mirage.runtime.types import GenerationParams, GenerationRequest
+from repercep.bench.harness import BenchmarkResult, benchmark_engine, speedup
+from repercep.runtime.stub_engine import StubEngine
+from repercep.runtime.types import GenerationParams, GenerationRequest
 
 
 def _small_request() -> GenerationRequest:

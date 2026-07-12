@@ -1,4 +1,4 @@
-# `amx_fp16_attn` — Intel AMX FP16 flash-attention for Mirage (Granite Rapids)
+# `amx_fp16_attn` — Intel AMX FP16 flash-attention for Repercep (Granite Rapids)
 
 Granite Rapids (GNR) sibling of `kernels/cpu/amx_attn/` (which targets
 Sapphire/Emerald Rapids via AMX_BF16).  GNR is the first Intel Xeon silicon
@@ -50,7 +50,7 @@ contract is the FP16 mirror of the BF16 sibling's `flash_attn_bf16`.
 ## Hardware / OS requirements
 
 * Intel **Granite Rapids** CPU — `family=6, model=173 (0xAD)` per the
-  `_INTEL_MODEL_TO_ARCH` table in `src/mirage/backend/cpu.py`.  `amx_fp16`
+  `_INTEL_MODEL_TO_ARCH` table in `src/repercep/backend/cpu.py`.  `amx_fp16`
   must appear in `/proc/cpuinfo` flags — `setup.py` aborts otherwise.
 * Linux **>= 5.16** (for `arch_prctl(ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA)`).
 * gcc **>= 14** for `-march=graniterapids`; gcc 13 + binutils 2.41 works via
@@ -77,7 +77,7 @@ the script exits with a refusal message; do not bypass it.
 The user-facing API lives at:
 
 ```
-src/mirage/attention/amx_fp16_flash.py
+src/repercep/attention/amx_fp16_flash.py
 ```
 
 That module is responsible for importing `_native`, doing the dtype/device

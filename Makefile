@@ -11,7 +11,7 @@ CARGO := cargo
         kernels-cpu-fp16 lint-all check-all
 
 help:
-	@echo "Mirage Runtime — make targets:"
+	@echo "Repercep Runtime — make targets:"
 	@echo ""
 	@echo "  Python:"
 	@echo "    install         install the package + dev/model/serving extras into .venv"
@@ -54,7 +54,7 @@ check-gpu:
 	$(PY) scripts/check_gpu.py
 
 info:
-	$(PY) -m mirage.cli info
+	$(PY) -m repercep.cli info
 
 # Rust targets. Operate on the virtual workspace at the repo root. No-op cleanly
 # while crates/ is empty; ready for the first crate when the fork is resolved
@@ -119,13 +119,13 @@ rust-install:
 ifeq ($(HAVE_CRATES),)
 	$(call rust-skip-msg,rust-install)
 else
-	@rm -f target/wheels/mirage_*.whl
+	@rm -f target/wheels/repercep_*.whl
 	@for crate in $$(find crates -mindepth 2 -maxdepth 2 -name Cargo.toml -printf '%h\n'); do \
 	    echo "==> maturin build --release in $$crate"; \
 	    $(PY) -m maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
 	done
 	@echo "==> uv pip install --reinstall <built wheels>"
-	@$(UV) pip install --python .venv --reinstall target/wheels/mirage_*.whl
+	@$(UV) pip install --python .venv --reinstall target/wheels/repercep_*.whl
 endif
 
 # Build the CPU AMX flash-attention kernels (Intel Sapphire Rapids+).
@@ -141,8 +141,8 @@ kernels-cpu: kernels-cpu-bf16 kernels-cpu-int8 kernels-cpu-fp16
 kernels-cpu-bf16:
 	@if [ ! -d kernels/cpu/amx_attn ]; then \
 	    echo "kernels/cpu/amx_attn missing — skipping AMX BF16 build"; \
-	elif [ "$$MIRAGE_AMX_FORCE_BUILD" = "1" ]; then \
-	    echo "==> MIRAGE_AMX_FORCE_BUILD=1 — compile-only smoke for AMX BF16 kernel"; \
+	elif [ "$$REPERCEP_AMX_FORCE_BUILD" = "1" ]; then \
+	    echo "==> REPERCEP_AMX_FORCE_BUILD=1 — compile-only smoke for AMX BF16 kernel"; \
 	    cd kernels/cpu/amx_attn && $(PY) setup.py build_ext --inplace; \
 	elif ! grep -q amx_bf16 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_bf16; AMX BF16 kernel build skipped"; \
@@ -154,8 +154,8 @@ kernels-cpu-bf16:
 kernels-cpu-int8:
 	@if [ ! -d kernels/cpu/amx_int8_attn ]; then \
 	    echo "kernels/cpu/amx_int8_attn missing — skipping AMX INT8 build"; \
-	elif [ "$$MIRAGE_AMX_FORCE_BUILD" = "1" ]; then \
-	    echo "==> MIRAGE_AMX_FORCE_BUILD=1 — compile-only smoke for AMX INT8 kernel"; \
+	elif [ "$$REPERCEP_AMX_FORCE_BUILD" = "1" ]; then \
+	    echo "==> REPERCEP_AMX_FORCE_BUILD=1 — compile-only smoke for AMX INT8 kernel"; \
 	    cd kernels/cpu/amx_int8_attn && $(PY) setup.py build_ext --inplace; \
 	elif ! grep -q amx_int8 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_int8; AMX INT8 kernel build skipped"; \
@@ -167,8 +167,8 @@ kernels-cpu-int8:
 kernels-cpu-fp16:
 	@if [ ! -d kernels/cpu/amx_fp16_attn ]; then \
 	    echo "kernels/cpu/amx_fp16_attn missing — skipping AMX FP16 build"; \
-	elif [ "$$MIRAGE_AMX_FORCE_BUILD" = "1" ]; then \
-	    echo "==> MIRAGE_AMX_FORCE_BUILD=1 — compile-only smoke for AMX FP16 kernel"; \
+	elif [ "$$REPERCEP_AMX_FORCE_BUILD" = "1" ]; then \
+	    echo "==> REPERCEP_AMX_FORCE_BUILD=1 — compile-only smoke for AMX FP16 kernel"; \
 	    cd kernels/cpu/amx_fp16_attn && $(PY) setup.py build_ext --inplace; \
 	elif ! grep -q amx_fp16 /proc/cpuinfo 2>/dev/null; then \
 	    echo "==> CPU lacks amx_fp16 (Granite Rapids+); AMX FP16 kernel build skipped"; \

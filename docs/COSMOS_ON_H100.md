@@ -1,13 +1,13 @@
-# Cosmos-Predict-7B on NVIDIA H100 (via Mirage)
+# Cosmos-Predict-7B on NVIDIA H100 (via Repercep)
 
-*First publicly reported Mirage-stack Cosmos benchmark on a single
+*First publicly reported Repercep-stack Cosmos benchmark on a single
 H100 SXM5. Numbers measured Session 14, 2026-05-24 — same day as the
 port itself landed.*
 
 **Status (2026-05-24):** Pre-alpha runtime, **architecture port +
 measured-on-the-same-day**. CUDABackend, Hopper FA-2/FA-3 wrapper,
 the FP8 Hopper Triton kernel, and the TransformerEngine *wrapper*
-all live. Cosmos sweep ran end-to-end through Mirage's CosmosEngine
+all live. Cosmos sweep ran end-to-end through Repercep's CosmosEngine
 → CUDABackend → diffusers path on a 1× H100 SXM5 80GB HBM3
 (`sm_90`, 132 SMs, CUDA 13.0 driver / torch 2.8.0+cu128).
 TransformerEngine itself is *not* exercised in these numbers
@@ -17,24 +17,24 @@ TransformerEngine itself is *not* exercised in these numbers
 
 We run NVIDIA's `nvidia/Cosmos-1.0-Diffusion-7B-Text2World`
 end-to-end on a single NVIDIA H100 SXM5 (`sm_90`, CUDA 13.0 driver /
-torch 2.8.0+cu128) through the Mirage runtime — the *same* runtime
+torch 2.8.0+cu128) through the Repercep runtime — the *same* runtime
 that delivers 142 s / 2.68× on AMD MI300X via the diffusers path. The
 NVIDIA support is one Backend class + one registry entry + three
 attention ops (FA-3 via FA-2 fallback, FP8 Hopper Triton, optional
 TE), sitting below the same vendor-neutral seam that ADR-0003
 specified.
 
-| Configuration | NVIDIA published H100 (their stack) | Mirage on H100 (this work) | Mirage on MI300X (reference) |
+| Configuration | NVIDIA published H100 (their stack) | Repercep on H100 (this work) | Repercep on MI300X (reference) |
 |---|---|---|---|
-| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + Mirage native loop + cuDNN-FA3 via SDPA | `diffusers` + Mirage native loop + aotriton-FA via SDPA |
+| Stack | TransformerEngine + Apex + NATTEN + flash-attn-3 | `diffusers` + Repercep native loop + cuDNN-FA3 via SDPA | `diffusers` + Repercep native loop + aotriton-FA via SDPA |
 | 121 f @ 1280×704, 36 steps, BF16 — **baseline** | **~380 s** | **446.3 s** | 470 s |
 | + native loop + adaptive cache (thr=0.30) | — | **138.4 s** = **2.75× over NVIDIA pub.** | 154 s |
-| + adaptive + FP8 Hopper Triton (`MIRAGE_FP8_ATTENTION=1`) | — | 184.9 s (warm) / 307.5 s (cold) — **net loss** vs adaptive alone | — |
+| + adaptive + FP8 Hopper Triton (`REPERCEP_FP8_ATTENTION=1`) | — | 184.9 s (warm) / 307.5 s (cold) — **net loss** vs adaptive alone | — |
 | + adaptive + tuned FP8 (MI300X) | — | — | **142 s = 2.68× over NVIDIA pub.** |
 | + TE FP8 recipe (FA-3 + delayed scaling) | — | (TBD — TE install hit cu13 ABI issues; F28) | n/a (AMD) |
 | Peak HBM | 74 / 80 GB | **52.5 / 80 GB** (all configs) | 52.5 / 192 GiB |
 
-**Headline:** **Mirage on H100 with adaptive cache alone = 138.4 s
+**Headline:** **Repercep on H100 with adaptive cache alone = 138.4 s
 = 2.75× faster than NVIDIA's published H100 reference (~380 s).** No
 FP8 needed for this result — the adaptive cache is the dominant
 optimization, and cuDNN-FA3 (via SDPA) is the attention floor on
@@ -53,8 +53,8 @@ on its own:
 1. **The MI300X-vs-H100 silicon gap is ~5-11 %, NOT 24 %.** The
    `docs/METHODOLOGY.md` §3 claim "MI300X is 1.24× slower than H100
    at the same compute" was *stack* difference, not silicon: it was
-   Mirage's diffusers path (470 s) vs NVIDIA's published optimized
-   stack (~380 s) on the same silicon. With Mirage running on both,
+   Repercep's diffusers path (470 s) vs NVIDIA's published optimized
+   stack (~380 s) on the same silicon. With Repercep running on both,
    the silicon delta is **1.054× on the baseline** (470 vs 446.3 s,
    I/O- and overhead-bounded) and **1.113× on adaptive cache** (154
    vs 138.4 s, more compute-bound — Hopper's silicon advantage
@@ -62,10 +62,10 @@ on its own:
    that is now even more defensible: the win is **overwhelmingly
    stack, not silicon**.
 
-2. **Mirage on H100 with the adaptive cache alone beats the NVIDIA
+2. **Repercep on H100 with the adaptive cache alone beats the NVIDIA
    published H100 reference by 2.75×** (138.4 vs ~380 s). The
-   diffusers + Mirage native loop + adaptive cache stack — the
-   same one Mirage ships for MI300X — outperforms NVIDIA's
+   diffusers + Repercep native loop + adaptive cache stack — the
+   same one Repercep ships for MI300X — outperforms NVIDIA's
    TransformerEngine + Apex + NATTEN + flash-attn-3 reference on the
    same H100 by a large margin. **The TeaCache-style adaptive cache
    (loop-level, vendor-neutral) is the dominant optimization here,
@@ -86,10 +86,10 @@ on its own:
 
 ## Caching modes
 
-Mirage ships three caching modes, exposed via
+Repercep ships three caching modes, exposed via
 `--cache-mode {none|fixed|adaptive}` on the runner CLI and the
 corresponding fields on `CosmosConfig`. Caching is **loop-level, not
-kernel-level** — it lives in `mirage.runtime.denoise.denoise_cosmos_video`
+kernel-level** — it lives in `repercep.runtime.denoise.denoise_cosmos_video`
 and is vendor-neutral by construction. Every word of
 `docs/COSMOS_ON_MI300X.md` §"Caching modes" applies unchanged on H100;
 the cache is unaware of which backend executed the DiT forwards it
@@ -123,7 +123,7 @@ this is testable.
 
 **Measured Session 17 (2026-05-25).**  Single (prompt, seed=0) pair
 at the canonical 121 f / 36 step config, both runs with
-`MIRAGE_FP8_ATTENTION=fa --native-loop` so the FA-3 dispatch and
+`REPERCEP_FP8_ATTENTION=fa --native-loop` so the FA-3 dispatch and
 loop are identical and the cache is the *only* difference.  Inputs:
 
 - `benchmark-results/cosmos_h100_nocache.mp4` — `--cache-mode none`,
@@ -194,7 +194,7 @@ multi-prompt variance (Session 15 will run `verify_timing.py --N 3
 
 ### Steady-state baseline — 121 f / 36 steps, warmup-separated
 
-| | Mirage on H100 (this work) |
+| | Repercep on H100 (this work) |
 |---|---|
 | **Total generation** | **446.3 s** |
 | Per-step | 12.4 s/step (36 forwards × ~12.4 s) |
@@ -203,18 +203,18 @@ multi-prompt variance (Session 15 will run `verify_timing.py --N 3
 
 ### Adaptive cache — 121 f / 36 steps
 
-| | Mirage on H100 (this work) |
+| | Repercep on H100 (this work) |
 |---|---|
 | **Total generation** | **138.4 s** |
 | Per-step (avg) | 3.84 s/step |
 | Peak HBM | 52.5 / 80 GiB |
 | Throughput | 0.874 frames/s |
-| Speedup vs Mirage baseline (446.3 s) | **3.22×** |
+| Speedup vs Repercep baseline (446.3 s) | **3.22×** |
 | Speedup vs NVIDIA published H100 (~380 s) | **2.75×** |
 
 ### Adaptive + FP8 Hopper Triton — 121 f / 36 steps
 
-| | Mirage on H100 (this work) |
+| | Repercep on H100 (this work) |
 |---|---|
 | **Total generation (cold first run)** | 307.5 s |
 | **Total generation (warm, autotune cached)** | 184.9 s |
@@ -225,7 +225,7 @@ multi-prompt variance (Session 15 will run `verify_timing.py --N 3
 
 The autotune cache for the Cosmos production shape (B=2, H=32,
 Sq=109120, D=128) populated on cold first run at
-`~/.cache/mirage/fp8_autotune_hopper.json`. Subsequent runs reuse the
+`~/.cache/repercep/fp8_autotune_hopper.json`. Subsequent runs reuse the
 winning config. The winning tile for this shape converges to
 `BLOCK_M=128 BLOCK_N=128 num_warps=8 num_stages=2` — same as the
 microbench shapes from Session 14 attention parity tests. This
@@ -236,15 +236,15 @@ path can compete with cuDNN-FA3. Tracked as F29 (`BUILD_LOG.md`).
 
 ### Memory — expected
 
-Peak HBM at full configuration: **52.5 / 80 GiB measured** (Mirage
+Peak HBM at full configuration: **52.5 / 80 GiB measured** (Repercep
 adaptive path, all three Phase 1/2/3 configurations report
 identical peak). This is **22 % lower than NVIDIA's published
 74 GB** on the same silicon. The MI300X measurement is also 52.5 GiB
-— vendor-independent within Mirage's stack.
+— vendor-independent within Repercep's stack.
 
-The structural reason: Mirage's diffusers path does not carry the
+The structural reason: Repercep's diffusers path does not carry the
 FP8 recipe state TE's `DelayedScaling` keeps across Q/K/V/output
-projections (~15–20 GB at this sequence length), and Mirage's
+projections (~15–20 GB at this sequence length), and Repercep's
 native loop wraps the denoising loop in `torch.inference_mode()`
 (F18) so the autograd graph for 36 steps never materialises (~150
 GB it would otherwise occupy at 121 f / 36). On Hopper this leaves
@@ -256,7 +256,7 @@ LoRAs).
 
 `docs/METHODOLOGY.md` §3 ("the apples-to-apples accounting") is
 explicit that the 2.68× MI300X claim is a *system-vs-system*
-comparison: Mirage's MI300X stack (adaptive cache + tuned FP8) against
+comparison: Repercep's MI300X stack (adaptive cache + tuned FP8) against
 NVIDIA's published H100 stack (no cache disclosed). The two
 configurations are not directly comparable on hardware grounds —
 caching + FP8 are *also* applicable on H100, and NVIDIA could
@@ -269,7 +269,7 @@ the project.
 With the Session 14 port, we can do exactly that experiment in Session
 15. The comparison becomes:
 
-| | Mirage on MI300X | Mirage on H100 (this Session 14 measurement) |
+| | Repercep on MI300X | Repercep on H100 (this Session 14 measurement) |
 |---|---|---|
 | Hardware | MI300X (192 GiB, ROCm 7.2) | H100 SXM5 80GB HBM3 (CUDA 13.0) |
 | Stack | diffusers + adaptive cache + FP8 Triton (gfx942) | diffusers + adaptive cache (FP8 Triton net loss on Hopper) |
@@ -283,9 +283,9 @@ doc has wanted. It does not erase the 2.68× claim — that claim was
 honest as published, against the public NVIDIA reference. It *adds*
 the second comparison the skeptical reader has been right to ask for.
 
-If the H100-side measurement shows Mirage is faster on H100 than on
+If the H100-side measurement shows Repercep is faster on H100 than on
 MI300X *by the silicon ratio* (1.24×), the headline framing
-strengthens: "MI300X delivers 80 % of H100 perf on Mirage's stack, at
+strengthens: "MI300X delivers 80 % of H100 perf on Repercep's stack, at
 the price-and-availability point AMD is willing to underwrite." If
 H100 is faster by more than 1.24×, the gap is attributable to
 Hopper-specific micro-optimizations (FA-3's wgmma, TMA, TE's FP8
@@ -298,23 +298,23 @@ NVIDIA's HF model card for `nvidia/Cosmos-Predict1-7B-Text2World`
 publishes **~380 s** end-to-end for 121 frames @ 1280×704 on a single
 H100, BF16, using their reference stack (TransformerEngine + Apex +
 NATTEN + flash-attn-3). With the Session 14 port complete, we now
-have the means to **directly measure Mirage's stack on the very H100
+have the means to **directly measure Repercep's stack on the very H100
 NVIDIA references.** The resulting Session-15 number *is* the
 apples-to-apples bench.
 
 What we will be comparing:
 
-- Mirage on H100 with **no cache, BF16** (Mirage's baseline path on
+- Repercep on H100 with **no cache, BF16** (Repercep's baseline path on
   this silicon): expected near ~380 s, since the diffusers path's
   attention dispatches to FA-3 via our `HopperFlashAttention` wrapper.
   If the measurement comes in materially slower than NVIDIA's
   reference, that gap is a real engineering finding — likely
   attributable to dispatcher overhead or to the diffusers pipeline
   doing more wrapping work than NVIDIA's `cosmos-predict1` repo.
-- Mirage on H100 with **adaptive cache + tuned FP8** (Mirage's
+- Repercep on H100 with **adaptive cache + tuned FP8** (Repercep's
   headline path, ported to Hopper): the projection is ~115 s; the
   measurement is what counts.
-- Mirage on H100 with **TE FP8** (if installed) at the same config:
+- Repercep on H100 with **TE FP8** (if installed) at the same config:
   separately benchmarked, because it tests the "TE-vs-Triton at
   Cosmos production shape on Hopper" question — *no prior art exists
   for either at this exact configuration*. Session 15 generates both.
@@ -325,7 +325,7 @@ Hardware: NVIDIA H100 SXM5 80GB HBM3 (sm_90) or compatible Hopper;
 CUDA 12.x or 13.x driver.
 
 ```bash
-git clone <repo> mirage && cd mirage
+git clone <repo> repercep && cd repercep
 pip install --user uv
 uv venv --python 3.12 .venv
 # IMPORTANT: torch + torchvision MUST come from the cu128 wheel index,
@@ -342,7 +342,7 @@ make info                  # detected backend = cuda
 .venv/bin/python scripts/run_cosmos.py --frames 17 --steps 8
 
 # Full reference run with caching (the projected ~115 s headline)
-MIRAGE_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
+REPERCEP_FP8_ATTENTION=1 .venv/bin/python scripts/run_cosmos.py \
     --frames 121 --steps 36 --native-loop \
     --cache-mode adaptive --cache-adaptive-threshold 0.30 \
     --cache-force-full-every 16
@@ -376,7 +376,7 @@ logged in the run JSON.
 | `transformers` | 5.9.0 (same as MI300X) |
 | `accelerate` | 1.13.0 (same as MI300X) |
 | `huggingface-hub` | 1.16.1 (same as MI300X) |
-| Mirage | this repo, `HEAD` at the time of the Session 15 headline |
+| Repercep | this repo, `HEAD` at the time of the Session 15 headline |
 
 ## References
 
@@ -399,7 +399,7 @@ logged in the run JSON.
 
 - Shah et al., **FlashAttention-3: Fast and Accurate Attention with
   Asynchrony and Low-precision** (2024) — the FA-3 algorithm
-  (wgmma + TMA + FP8 variant with block scaling). Mirage's
+  (wgmma + TMA + FP8 variant with block scaling). Repercep's
   `HopperFlashAttention` op dispatches to the open-source
   `flash_attn_interface.flash_attn_func` implementation of this paper.
   https://arxiv.org/abs/2407.08608
@@ -414,7 +414,7 @@ logged in the run JSON.
 
 - `docs/COSMOS_ON_MI300X.md` — the publish-ready MI300X writeup that
   this document mirrors. Same workload, same diffusers path, same
-  Mirage runtime; different silicon.
+  Repercep runtime; different silicon.
 - `docs/METHODOLOGY.md` §3 — the apples-to-apples accounting whose
   asymmetry the Session 15 measurement closes.
 
@@ -424,7 +424,7 @@ NVIDIA for open-sourcing Cosmos under the Open Model License, and for
 the published H100 reference baseline that anchors the comparison.
 HuggingFace `diffusers` maintainers for the Cosmos pipeline path. The
 FlashAttention authors (Dao et al., Shah et al.) for the FA-2 / FA-3
-algorithms that Mirage's attention ops dispatch to. The Triton
+algorithms that Repercep's attention ops dispatch to. The Triton
 compiler team for the Hopper backend that makes the FP8 kernel
 portable across vendors.
 

@@ -18,10 +18,10 @@ import pytest
 pytest.importorskip("fastapi.testclient")
 from fastapi.testclient import TestClient
 
-from mirage.runtime.engine import EngineInfo
-from mirage.runtime.types import Frame, GenerationRequest
-from mirage.serving.app import create_app
-from mirage.serving.driver import decode_frame_line, encode_frame_line
+from repercep.runtime.engine import EngineInfo
+from repercep.runtime.types import Frame, GenerationRequest
+from repercep.serving.app import create_app
+from repercep.serving.driver import decode_frame_line, encode_frame_line
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from mirage.backend.cuda import CUDABackend
-from mirage.backend.protocol import Backend
-from mirage.backend.registry import select_backend
-from mirage.hardware import DType, Vendor
+from repercep.backend.cuda import CUDABackend
+from repercep.backend.protocol import Backend
+from repercep.backend.registry import select_backend
+from repercep.hardware import DType, Vendor
 
 
 def test_cuda_backend_identity() -> None:
@@ -88,7 +88,7 @@ def test_default_dtype_is_bf16() -> None:
 def test_attention_op_runs_cosmos_dit_shape() -> None:
     import torch
 
-    from mirage.attention.types import AttentionShape
+    from repercep.attention.types import AttentionShape
 
     backend = CUDABackend()
     # Cosmos-Predict-7B DiT self-attention: 32 heads x head_dim 128.  On

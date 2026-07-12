@@ -1,4 +1,4 @@
-# Mirage Runtime — Architecture
+# Repercep Runtime — Architecture
 
 This document is the component map. Decision rationale lives in `docs/adr/`.
 
@@ -6,9 +6,9 @@ This document is the component map. Decision rationale lives in `docs/adr/`.
 
 > A senior architect spending the first weeks doing nothing but interface
 > design, type hierarchy, and component boundaries is investing in productivity
-> that compounds for the next 18 months. — *Mirage Implementation Plan, §3.4*
+> that compounds for the next 18 months. — *Repercep Implementation Plan, §3.4*
 
-Mirage is built outside-in: every layer depends only on the **Protocol** of the
+Repercep is built outside-in: every layer depends only on the **Protocol** of the
 layer beneath it, never on a concrete implementation. The non-kernel codebase is
 `mypy --strict`. The kernel layer (future) is a separate codebase with different
 rules — mixing clean-architecture and perf code yields clean-but-slow or
@@ -41,7 +41,7 @@ fast-but-unmaintainable.
 
 ## The one seam: `Backend`
 
-`mirage.backend.protocol.Backend` is the single seam between Mirage and a GPU
+`repercep.backend.protocol.Backend` is the single seam between Repercep and a GPU
 vendor. Everything above it is written against the Protocol only. Adding NVIDIA
 support = writing one class that satisfies `Backend`; no existing code changes.
 That is how MI300X can lead without painting the project into a corner — see
@@ -54,7 +54,7 @@ declaration, device selection, dtype policy, and kernel (attention op) choice.
 
 ## Attention
 
-`AttentionOp` (`mirage.attention.protocol`) is the contract every attention
+`AttentionOp` (`repercep.attention.protocol`) is the contract every attention
 kernel implements. `select_attention_op` picks the fastest op that supports a
 given problem shape on a given architecture:
 
