@@ -674,6 +674,42 @@ def test_kv_cache_does_not_leak_across_branches() -> None:
     assert torch.allclose(energy_b, ref_b)
 
 
+def test_release_drops_session_kv_cache_and_warm_start_mean() -> None:
+    """``release()`` frees a session's server-side state (the leak fix).
+
+    Without this, a churn of short-lived WebSocket sessions leaks one KV-
+    cache entry (real GPU tensors on the real predictor) per session
+    forever — nothing previously removed an entry on session *end*, only
+    mid-session on a saturated "reinit" cache (see ``step()``).
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+    goal = torch.randn(4)
+    seq = torch.randn(2, 4)
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=True, plan_warm_start=True),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_KVCacheFakePredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    engine._plan_sequence(state, goal, horizon=2)  # seeds _plan_mean
+    engine._rollout_energy(state, seq, goal)  # seeds _kv_cache via step()
+    assert state.session_id in engine._plan_mean
+    assert state.session_id in engine._kv_cache
+
+    engine.release(state)
+
+    assert state.session_id not in engine._plan_mean
+    assert state.session_id not in engine._kv_cache
+
+    # Releasing an already-released (or never-seen) session is a no-op, not
+    # an error — the serving layer's finally-block call site can't always
+    # know whether reset() completed before a disconnect.
+    engine.release(state)
+
+
 def test_kv_cache_disabled_when_predictor_lacks_support() -> None:
     """A predictor without ``supports_kv_cache`` keeps using the existing
     full-recompute path — no behavior change for today's real predictor

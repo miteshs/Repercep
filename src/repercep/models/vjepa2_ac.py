@@ -467,6 +467,22 @@ class VJepa2ACEngine:
         sequence = self._plan_sequence(state, goal, horizon)
         return Action(values=sequence[0].tolist(), space="ee_delta")
 
+    def release(self, state: WorldState) -> None:
+        """Drop this session's server-side state (KV cache, warm-start mean).
+
+        Not part of :class:`InteractiveWorldModel` — the serving layer calls
+        it duck-typed (``getattr(engine, "release", None)``) when a client
+        session ends, so engines with no per-session state to free (or that
+        predate this method) don't need a no-op override. Without this, a
+        churn of short-lived sessions leaks one GPU KV-cache entry per
+        session forever, since ``step()`` only ever *adds* to ``_kv_cache``/
+        ``_plan_mean`` and nothing previously removed an entry on session
+        end (only mid-session, when a saturated "reinit" cache is dropped —
+        see ``step()``).
+        """
+        self._kv_cache.pop(state.session_id, None)
+        self._plan_mean.pop(state.session_id, None)
+
     # --- planning internals (energy-based) ---
 
     def _rollout_energy(

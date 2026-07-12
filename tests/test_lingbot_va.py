@@ -45,9 +45,13 @@ class _FakePipeline:
         self.dim = dim
         self.reset_calls: list[tuple[str, str | None]] = []
         self.recondition_calls: list[tuple[str, tuple[int, ...], int]] = []
+        self.close_calls: list[str] = []
 
     def reset(self, session_id: str, prompt: str | None) -> None:
         self.reset_calls.append((session_id, prompt))
+
+    def close(self, session_id: str) -> None:
+        self.close_calls.append(session_id)
 
     def encode_observation(self, conditioning: ConditioningInput) -> torch.Tensor:
         import torch
@@ -113,6 +117,30 @@ def test_reset_opens_session_with_prompt() -> None:
     assert state.step_index == 0
     assert tuple(state.context.shape) == (4, 8)
     assert pipeline.reset_calls == [(state.session_id, "pick the green cube")]
+
+
+def test_release_closes_session_on_pipeline_and_drops_engine_bookkeeping() -> None:
+    """``release()`` frees both layers of per-session state (the leak fix).
+
+    Two layers hold session state: this engine's own ``_sessions`` (frame
+    clock, parked action proposal) and the pipeline's session-keyed named
+    KV cache. Without dropping both, a churn of short-lived sessions leaks
+    GPU tensors forever.
+    """
+    pytest.importorskip("torch")
+    pipeline = _FakePipeline()
+    engine = _toy_engine(pipeline)
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    assert state.session_id in engine._sessions
+
+    engine.release(state)
+
+    assert state.session_id not in engine._sessions
+    assert pipeline.close_calls == [state.session_id]
+
+    # A session release before the engine ever loaded a pipeline (e.g. a
+    # WebSocket that disconnects before its first reset()) must not raise.
+    _toy_engine(pipeline=None).release(state)
 
 
 def test_step_reconditions_then_predicts() -> None:

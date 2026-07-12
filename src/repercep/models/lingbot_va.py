@@ -95,6 +95,10 @@ class _VAPipeline(Protocol):
         """
         ...
 
+    def close(self, session_id: str) -> None:
+        """Drop the session's named KV cache. The other half of ``reset``."""
+        ...
+
 
 @dataclass(slots=True)
 class LingBotVAConfig:
@@ -256,6 +260,21 @@ class LingBotVAEngine:
             )
             session.pending_actions = proposed
         return Action(values=proposed[0].tolist(), space=f"lingbot_va_{self._wire_action_dim()}d")
+
+    def release(self, state: WorldState) -> None:
+        """Drop this session's server-side state (named KV cache + bookkeeping).
+
+        Not part of :class:`InteractiveWorldModel` — the serving layer calls
+        it duck-typed (``getattr(engine, "release", None)``) when a client
+        session ends. Two layers hold state per session: this engine's own
+        ``_sessions`` (frame clock, parked action proposal) and the
+        pipeline's session-keyed named KV cache (the actual GPU tensors,
+        docs/LINGBOT_VA_SEAM_VERIFY.md) — both need dropping, or the KV cache
+        leaks one entry per session forever under churn.
+        """
+        self._sessions.pop(state.session_id, None)
+        if self._pipeline is not None:
+            self._pipeline.close(state.session_id)
 
     # --- internals ---
 
