@@ -37,7 +37,6 @@ unset, the BF16 SDPA->oneDNN path is the floor.
 from __future__ import annotations
 
 import os
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -136,11 +135,22 @@ def _detect_dtypes_and_features() -> tuple[frozenset[DType], dict[str, bool]]:
 
 def _affinity_cpu_count() -> int | None:
     """``os.sched_getaffinity`` is Linux-only (absent from the darwin/win32
-    stdlib stubs, not just unavailable at runtime) — branch on platform so
-    mypy narrows the attribute away instead of flagging it as missing."""
-    if sys.platform == "linux":
-        return len(os.sched_getaffinity(0))
-    return None
+    stdlib stubs, not just unavailable at runtime).
+
+    A ``sys.platform == "linux"`` guard looks like the obvious fix, but
+    mypy statically evaluates that comparison against its own ``platform``
+    setting (defaulting to whatever host mypy runs on) and — with
+    ``warn_unreachable = true`` (set repo-wide) — flags whichever side is
+    dead as unreachable. That side flips depending on which OS runs mypy
+    (darwin locally, linux in CI), so it passed here and failed in CI even
+    though nothing platform-relevant changed. ``getattr`` sidesteps mypy's
+    platform-narrowing entirely: no literal comparison, so no branch is
+    ever statically eliminated on any host.
+    """
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)
+    if sched_getaffinity is None:
+        return None
+    return len(sched_getaffinity(0))
 
 
 def _detect_topology() -> tuple[int, int]:
