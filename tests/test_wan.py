@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+from repercep.backend.cpu import CPUBackend
 from repercep.backend.rocm import ROCmBackend
 from repercep.models import (
     WAN_DEFAULT_REPO,
@@ -331,7 +332,11 @@ def _make_engine_with_fake_pipe(boundary_ratio: float | None) -> tuple[WanEngine
     fake_frames = torch.zeros((2, 3, 64, 64), dtype=torch.float32)
     fake_pipe.return_value.frames = [fake_frames]
 
-    engine = WanEngine(backend=ROCmBackend())
+    # CPUBackend, not ROCmBackend: these tests assert pipe-call kwargs, not
+    # device placement, and a CUDA-generator construction on a CPU-only box
+    # would fail before the assertion ever runs (torch.Generator(device="cuda")
+    # needs the ATen CUDA library loaded).
+    engine = WanEngine(backend=CPUBackend())
     engine._pipe = fake_pipe  # bypass load()
     return engine, fake_pipe
 
