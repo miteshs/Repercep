@@ -185,27 +185,45 @@ def test_v2_cancel_in_flight_aborts_stream() -> None:
     The HTTP TestClient buffers chunks, which would defeat a cancel-in-flight
     test through the wire. Exercise the cancel surface directly through the
     router/adapter instead — same code path as the /cancel endpoint.
+
+    Deliberately does NOT use ``TestClient`` here (unlike every other test in
+    this file). ``TestClient`` runs the app's lifespan on its own background
+    portal thread/loop; the driver thread bounces frames back onto *that*
+    loop via ``run_coroutine_threadsafe`` (see ``EngineDriver``). Consuming
+    the router's async ``FrameStream`` from a second, independent loop (e.g.
+    a plain ``asyncio.run(...)`` in the test body, as an earlier version of
+    this test did) creates asyncio.Queue waiter Futures on the second loop
+    that the driver's ``put()`` — executing on the portal loop's thread — can
+    never wake: ``loop.call_soon`` on a Future belonging to a different,
+    non-running loop is rejected as a non-thread-safe operation. That failure
+    is swallowed on the driver thread, so the test just hangs forever on
+    ``await stream.__anext__()`` with no exception raised anywhere. Real
+    production traffic never hits this: request handlers and the driver's
+    bounced coroutines both run on uvicorn's single event loop. Fix: drive
+    the app's lifespan manually inside the *same* ``asyncio.run`` that
+    consumes the stream, so there is only ever one loop in play.
     """
+    import asyncio
+
     app = create_app(_SlowEngine(sleep_per_frame=0.10))
-    with TestClient(app):
-        v2_state = app.state.v2
-        rid = "race-1"
-        body_request = {
-            "prompt": "long",
-            "params": {"num_frames": 8, "height": 64, "width": 64, "seed": 0},
-        }
-        payload = {"request": GenerationRequest.model_validate(body_request).model_dump()}
-        v2_state.adapter.stage(rid, payload)
-        v2_state.router.accept(rid, "normal", payload)
 
-        # Subscribe and read the first frame, then cancel.
-        # The router's FrameStream is async, so spin a brief asyncio loop.
-        import asyncio
+    async def go() -> list[dict[str, object]]:
+        async with app.router.lifespan_context(app):
+            v2_state = app.state.v2
+            rid = "race-1"
+            body_request = {
+                "prompt": "long",
+                "params": {"num_frames": 8, "height": 64, "width": 64, "seed": 0},
+            }
+            payload = {
+                "request": GenerationRequest.model_validate(body_request).model_dump()
+            }
+            v2_state.adapter.stage(rid, payload)
+            v2_state.router.accept(rid, "normal", payload)
 
-        async def go() -> list[dict[str, object]]:
             stream = v2_state.router.subscribe(rid)
             collected: list[dict[str, object]] = []
-            # Wait for at least one frame to arrive
+            # Wait for at least one frame to arrive.
             first = await stream.__anext__()
             collected.append(first)
             v2_state.router.cancel(rid)
@@ -214,14 +232,15 @@ def test_v2_cancel_in_flight_aborts_stream() -> None:
                     collected.append(f)
             except StopAsyncIteration:
                 pass
+            # Check the router's state while still inside the lifespan
+            # context — it may be torn down once we exit.
+            assert v2_state.router.state(rid) == "Cancelled"
             return collected
 
-        frames = asyncio.run(go())
-        # We should get strictly fewer than 8 frames; the first one is the one
-        # we asked for, and cancel kicks in before the engine finishes.
-        assert 1 <= len(frames) < 8
-        # The router's state is Cancelled.
-        assert v2_state.router.state(rid) == "Cancelled"
+    frames = asyncio.run(go())
+    # We should get strictly fewer than 8 frames; the first one is the one
+    # we asked for, and cancel kicks in before the engine finishes.
+    assert 1 <= len(frames) < 8
 
 
 # ---------------------------------------------------------------------------
