@@ -22,7 +22,7 @@ help:
 	@echo "    check-gpu       standalone MI300X/ROCm smoke test"
 	@echo "    info            print detected backend + devices"
 	@echo ""
-	@echo "  Rust workspace (no members yet — see Cargo.toml and ADR-0004):"
+	@echo "  Rust workspace (cache/scheduler/router crates — see Cargo.toml and ADR-0004):"
 	@echo "    rust-build      cargo build --workspace"
 	@echo "    rust-check      cargo check --workspace"
 	@echo "    rust-fmt        cargo fmt --all"
@@ -60,12 +60,14 @@ info:
 # while crates/ is empty; ready for the first crate when the fork is resolved
 # (see docs/adr/0004-polyglot-build-tooling.md).
 #
-# Guard: cargo build/check/fmt/clippy/test all error on a zero-member workspace,
-# so each target skips with a friendly note until any crates/*/Cargo.toml exists.
+# Guard: cargo build/check/fmt/clippy/test all error on a zero-member workspace.
+# The workspace has three crates as of ADR-0004, but this stays defensive
+# (e.g. a shallow/partial checkout missing crates/) rather than assuming
+# they're always present.
 HAVE_CRATES := $(shell find crates -mindepth 2 -maxdepth 2 -name Cargo.toml -print -quit 2>/dev/null)
 
 define rust-skip-msg
-	@echo "$(1): workspace has no members yet (see docs/adr/0004) — skipping"
+	@echo "$(1): no crates found under crates/ (see docs/adr/0004) — skipping"
 endef
 
 rust-build:

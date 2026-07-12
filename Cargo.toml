@@ -1,9 +1,11 @@
 # Repercep Rust workspace.
 #
-# This is intentionally a virtual manifest with no members yet. The polyglot
-# scaffold (Cargo + uv + future CMake for kernels) is in place so that when the
-# Rust-core fork is resolved (see docs/adr/0004), populating the workspace is
-# adding a crate, not standing up build tooling under deadline.
+# Three crates live here (see [workspace] below): the paged latent-cache
+# manager, the request scheduler, and per-request orchestration — all
+# PyO3-bound into the Python surface. The polyglot scaffold (Cargo + uv +
+# future CMake for kernels) exists so this stays "add a crate," not "stand
+# up build tooling under deadline" — see docs/adr/0004 for how that fork
+# was resolved.
 #
 # Why this exists:
 #   The handoff doc (~/Mirage_Cowork_Handoff.md, "Language stack" section) names
@@ -11,9 +13,9 @@
 #   manager — with Python bindings via PyO3 — to share one core between the
 #   datacenter API and any deterministic-latency edge path.
 #
-# What lives here when populated:
+# What lives here:
 #   crates/repercep-cache       — paged latent-cache manager (PyO3-bound)
-#   crates/repercep-scheduler   — request scheduler (new component)
+#   crates/repercep-scheduler   — request scheduler
 #   crates/repercep-router      — per-request orchestration (split from FastAPI)
 #
 # What does NOT live here:

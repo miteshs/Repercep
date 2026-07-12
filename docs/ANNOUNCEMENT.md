@@ -3,6 +3,12 @@
 *Pre-publication. Read `docs/RELEASE_NOTES_v0.1.md` first; this file is
 the social / distribution layer. Pick a channel below and ship.*
 
+**Superseded, kept as historical record:** these drafts were written when
+the project was open-source (Apache-2.0). It was relicensed proprietary
+(commit `4b70cfb`) before publication, so the "Open source. Apache-2.0."
+line below is no longer accurate — do not ship any draft from this file
+without updating the license claim first.
+
 ---
 
 ## Option 1 — X / Twitter thread
