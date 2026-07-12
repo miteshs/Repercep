@@ -381,6 +381,10 @@ class _KVCacheFakePredictor:
     frames are "live" — dropping, duplicating, or staling a frame changes the
     sum, so a bookkeeping bug (bad eviction, cache leaking across a branch)
     produces a numerically WRONG result, not merely a slower one.
+
+    ``step_cached`` predicts only (does not mutate ``cache``); the engine's
+    layer-normed block comes back via ``append_frame`` — mirrors the real
+    contract even though this toy predictor has no norm of its own.
     """
 
     supports_kv_cache = True
@@ -388,6 +392,7 @@ class _KVCacheFakePredictor:
     def __init__(self) -> None:
         self.init_cache_calls = 0
         self.step_cached_calls = 0
+        self.append_frame_calls = 0
         self.evict_calls = 0
 
     def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
@@ -405,18 +410,28 @@ class _KVCacheFakePredictor:
         self.step_cached_calls += 1
         total = torch.stack(cache, dim=0).sum(dim=0) if cache else torch.zeros_like(action)
         next_frame = total + action
-        return next_frame, [*cache, next_frame]
+        return next_frame, cache
 
-    def evict(self, cache: list[torch.Tensor]) -> list[torch.Tensor]:
+    def append_frame(
+        self, cache: list[torch.Tensor], normed_block: torch.Tensor
+    ) -> list[torch.Tensor]:
+        self.append_frame_calls += 1
+        return [*cache, *normed_block.unbind(0)]
+
+    def evict(self, cache: list[torch.Tensor], sink_frames: int = 0) -> list[torch.Tensor]:
         self.evict_calls += 1
-        return cache[1:]
+        return cache[:sink_frames] + cache[sink_frames + 1 :]
 
 
-def test_kv_cache_matches_full_recompute_across_eviction() -> None:
+def test_kv_cache_matches_full_recompute_with_slide_eviction() -> None:
     """Cached step() must match full-recompute step() exactly, including
-    after the window fills and starts evicting — the case a naive
-    append-only cache would get wrong (ADR-0009's RoPE-shift discussion);
-    this fake's toy dynamics make a wrong eviction numerically visible.
+    after the window fills and starts evicting, under the opt-in "slide"
+    policy — the case a naive append-only cache would get wrong (ADR-0009's
+    RoPE-shift discussion); this fake's toy dynamics make a wrong eviction
+    numerically visible. (The real predictor's evict is NOT exact — ADR-0009
+    Finding 2 — this only proves the engine calls append/evict correctly
+    given a predictor whose evict happens to be, like this fake's trivial
+    list-drop.)
     """
     torch = pytest.importorskip("torch")
     ctx0 = torch.randn(2, 4)
@@ -424,7 +439,9 @@ def test_kv_cache_matches_full_recompute_across_eviction() -> None:
     cached_pred = _KVCacheFakePredictor()
     cached_engine = VJepa2ACEngine(
         cast("Backend", _NamedBackend("fake")),
-        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=True),
+        VJepa2ACConfig(
+            action_dim=4, context_frames=3, use_kv_cache=True, kv_evict_policy="slide"
+        ),
         encoder=_FakeEncoder(ctx0.clone()),
         predictor=cached_pred,
     )
@@ -448,7 +465,57 @@ def test_kv_cache_matches_full_recompute_across_eviction() -> None:
     # Real incremental work happened, not a silent full-recompute every call.
     assert cached_pred.step_cached_calls == 6
     assert cached_pred.init_cache_calls == 1  # bootstrapped once, then reused
+    assert cached_pred.append_frame_calls == 6  # every predicted frame durably cached
     assert cached_pred.evict_calls == 5  # every step once the window is full
+
+
+def test_kv_cache_reinit_policy_never_evicts_but_degrades_gracefully() -> None:
+    """The default "reinit" policy must still match full-recompute exactly
+    (dropping a cache and rebuilding it via init_cache can never be wrong),
+    but — honestly — buys no incremental savings once a strictly-capped
+    window saturates: every step past the growth phase re-triggers
+    init_cache, same cost as use_kv_cache=False. This is the graceful-
+    degradation behavior ADR-0009 §"Revisit if" settles on in place of the
+    unsound "slide" default; this test pins the exact call-count evidence
+    for it so a future change can't silently regress it back to unsound.
+    """
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+
+    cached_pred = _KVCacheFakePredictor()
+    cached_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=True),  # reinit is default
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=cached_pred,
+    )
+    full_pred = _KVCacheFakePredictor()
+    full_engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=3, use_kv_cache=False),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=full_pred,
+    )
+    cached_state = cached_engine.reset(ConditioningInput(), RolloutParams())
+    full_state = full_engine.reset(ConditioningInput(), RolloutParams())
+
+    torch.manual_seed(1)
+    for _ in range(6):
+        action = Action(values=torch.randn(4).tolist())
+        cached_state, _ = cached_engine.step(cached_state, action)
+        full_state, _ = full_engine.step(full_state, action)
+        assert torch.allclose(cached_state.context, full_state.context)
+
+    assert cached_engine._config.kv_evict_policy == "reinit"
+    assert cached_pred.evict_calls == 0  # never calls the unsound operation
+    # step 1: window not yet full (2 < 3) -> cheap growth, cache built + kept.
+    # step 2: window full on entry, but the cache built in step 1 is still
+    # valid for this one prediction -> reused, then dropped afterward (no
+    # append -- there's nowhere sound to put the appended frame).
+    # steps 3-6: no cache survives from the previous step -> each reinits.
+    # Net: 1 bootstrap + 4 reinits, one cheap reuse (step 2) in between.
+    assert cached_pred.init_cache_calls == 5
+    assert cached_pred.append_frame_calls == 1  # only the one cheap growth step
 
 
 def test_kv_cache_does_not_leak_across_branches() -> None:

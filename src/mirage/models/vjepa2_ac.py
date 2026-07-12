@@ -78,10 +78,26 @@ class _CachedPredictor(Protocol):
 
     ``cache`` is opaque to the engine (predictor-owned per-layer K/V, however
     it wants to represent them); the engine only bootstraps it, advances it,
-    and evicts from it. See ``docs/adr/0009-kv-latent-reuse.md`` for why this
-    is valid for this model's block-causal, window-relative-RoPE predictor
-    (a frame's K/V never depend on later frames, and RoPE rotations compose,
-    so a sliding-window evict is a cheap shift, not a recompute).
+    appends to it, and (policy-gated) evicts from it. See
+    ``docs/adr/0009-kv-latent-reuse.md`` for the two GPU-verified facts that
+    shape this contract, neither obvious from the model's architecture alone:
+
+    1. This model's RoPE is *not* a composable rotation (a maintainer-
+       acknowledged bug in the upstream frequency tiling) — a sliding-window
+       evict is NOT a cheap shift. Positions must be re-derived fresh at the
+       correct window offset on every use; caching K **pre-rotation** is what
+       makes that possible without a recompute.
+    2. Eviction is structurally unrecoverable from a K/V cache alone for a
+       full-depth causal transformer (layer 1+ hidden states are already
+       contaminated by attending the evicted frame at layer 0). ``evict`` is
+       therefore an explicit, disclosed approximation — only called when the
+       engine's ``kv_evict_policy`` is ``"slide"``; the default ``"reinit"``
+       policy never calls it (see :class:`VJepa2ACConfig`).
+
+    ``step_cached`` predicts only — it does not durably append its own
+    output. The engine layer-norms the prediction (:meth:`VJepa2ACEngine._maybe_norm`)
+    before it re-enters the context, so only the engine has the block that's
+    actually valid to cache; it hands that back via :meth:`append_frame`.
     """
 
     supports_kv_cache: bool
@@ -92,13 +108,28 @@ class _CachedPredictor(Protocol):
         ...
 
     def step_cached(self, cache: Any, action: torch.Tensor) -> tuple[torch.Tensor, Any]:
-        """Attend one new action-conditioned frame against ``cache``; return
-        the predicted next frame (same contract as ``_Predictor.__call__``'s
-        return) and the cache with that frame appended."""
+        """Predict the next frame from ``cache`` + ``action``. Returns the
+        predicted next frame (same contract as ``_Predictor.__call__``'s
+        return) and a (possibly unchanged) ``cache`` — the engine only ever
+        feeds this returned ``cache`` on to :meth:`append_frame`, never
+        directly to another :meth:`step_cached` call."""
         ...
 
-    def evict(self, cache: Any) -> Any:
-        """Drop the oldest cached frame, RoPE-position-shifting the rest."""
+    def append_frame(self, cache: Any, normed_block: torch.Tensor) -> Any:
+        """Durably append the engine-normed newest frame to ``cache``.
+
+        ``normed_block`` is exactly what :meth:`VJepa2ACEngine.step` is about
+        to append to ``WorldState.context`` — the source of truth for what
+        "the newest cached frame" means."""
+        ...
+
+    def evict(self, cache: Any, sink_frames: int = 0) -> Any:
+        """Drop the oldest cached frame, keeping the first ``sink_frames``
+        frames exempt (StreamingLLM-style attention sinks). NOT a free/exact
+        operation for a full-depth causal transformer (see the class
+        docstring, fact 2) — only called under ``kv_evict_policy="slide"``,
+        an explicit accepted approximation, never under the default
+        ``"reinit"`` policy."""
         ...
 
 
@@ -162,9 +193,32 @@ class VJepa2ACConfig:
     # Incremental KV-cache path for step() (docs/adr/0009-kv-latent-reuse.md):
     # only new-frame tokens attend against a persisted cache instead of
     # re-encoding the whole context window every step. Used only when the
-    # predictor advertises ``supports_kv_cache``; the engine-side bookkeeping
-    # is CPU-tested, the real predictor wrapper is a GPU-verify follow-up.
+    # predictor advertises ``supports_kv_cache``.
     use_kv_cache: bool = True
+    # How many frames `reset()` seeds the window with, decoupled from the max
+    # attention window (`context_frames`). None (default) reproduces today's
+    # behavior: the seed clip is sliced straight to `context_frames`, so the
+    # window starts already at cap. Setting this below `context_frames` (e.g.
+    # 8) is what makes the *growing*-window regime (exact, GPU-verified)
+    # actually occur: steps 1..(context_frames - reset_context_frames) are
+    # pure cache growth, no eviction, bit-exact vs a full recompute.
+    reset_context_frames: int | None = None
+    # What happens once the window is full and the next step would evict the
+    # oldest cached frame. "reinit" (default, exact): drop the session's
+    # cache; the next step pays a full init_cache() recompute instead of a
+    # cheap incremental one — same answer as use_kv_cache=False for that one
+    # step, never wrong. Because a strictly-capped window evicts on *every*
+    # step once saturated, "reinit" only wins for sessions/episodes bounded
+    # by context_frames - reset_context_frames steps of pure growth; steps
+    # past saturation cost the same as no cache at all (graceful degradation,
+    # not a silent approximation). "slide": call the predictor's `evict` —
+    # an explicit, disclosed approximation (ADR-0009 Finding 2: not exact for
+    # a full-depth causal transformer) — only enable after running
+    # scripts/verify_kv_regimes.py and accepting its measured drift.
+    kv_evict_policy: str = "reinit"  # "reinit" | "slide"
+    # Attention-sink prefix length for the "slide" policy (StreamingLLM-style
+    # kept-forever frames), ignored under "reinit". 0 = no sink.
+    kv_sink_frames: int = 0
 
 
 class VJepa2ACEngine:
@@ -269,9 +323,15 @@ class VJepa2ACEngine:
         frames = self._resolve_frames(conditioning)
         with torch.inference_mode():
             features = self._encoder.get_vision_features(pixel_values_videos=frames)
-        # Keep the last ``context_frames`` *frames*; each frame is
-        # ``_tokens_per_frame`` patch-token rows (1 on the stub path).
-        keep = self._config.context_frames * self._tokens_per_frame
+        # Keep the last N *frames*; each frame is ``_tokens_per_frame``
+        # patch-token rows (1 on the stub path). N is ``reset_context_frames``
+        # when set (below the ``context_frames`` cap, so the window *grows*
+        # into the cap over the next several steps — the exact KV-cache
+        # regime, ADR-0009); otherwise ``context_frames`` (today's default:
+        # the window starts already at cap, so a wired cache would evict
+        # from step 1).
+        seed_frames = self._config.reset_context_frames or self._config.context_frames
+        keep = min(seed_frames, self._config.context_frames) * self._tokens_per_frame
         context = self._maybe_norm(_as_context(features)[-keep:])
         return WorldState(context=context, step_index=0, session_id=_new_session_id())
 
@@ -281,12 +341,16 @@ class VJepa2ACEngine:
 
         self._ensure_predictor()
         assert self._predictor is not None
+        cached_path = self._config.use_kv_cache and getattr(
+            self._predictor, "supports_kv_cache", False
+        )
         with torch.inference_mode():
             vec = torch.tensor(
                 action.values, dtype=state.context.dtype, device=state.context.device
             )
-            if self._config.use_kv_cache and getattr(self._predictor, "supports_kv_cache", False):
-                nxt = self._step_cached(state, vec)
+            cache: Any = None
+            if cached_path:
+                nxt, cache = self._step_cached(state, vec)
             else:
                 nxt = self._predictor(state.context, vec)
             # The predictor returns the next frame: a single embedding ``(D,)`` on
@@ -300,11 +364,11 @@ class VJepa2ACEngine:
         new_state = WorldState(
             context=context, step_index=state.step_index + 1, session_id=state.session_id
         )
-        if self._config.use_kv_cache and getattr(self._predictor, "supports_kv_cache", False):
-            self._sync_kv_cache(new_state.session_id, context)
+        if cached_path:
+            self._sync_kv_cache(state, new_state.session_id, context, cache, block)
         return new_state, LatentStep(step_index=new_state.step_index)
 
-    def _step_cached(self, state: WorldState, vec: torch.Tensor) -> torch.Tensor:
+    def _step_cached(self, state: WorldState, vec: torch.Tensor) -> tuple[torch.Tensor, Any]:
         """The incremental path: reuse the session's cache when it's in sync.
 
         "In sync" means the incoming ``state.context`` is exactly what the
@@ -313,6 +377,10 @@ class VJepa2ACEngine:
         first within one CEM candidate's rollout; false (falls back to a full
         :meth:`_CachedPredictor.init_cache`, same cost as no cache) whenever a
         rollout branches to a different starting state under the same session.
+
+        Only *predicts* — the returned ``cache`` is not yet durably advanced;
+        :meth:`_sync_kv_cache` does that once ``step()`` has the engine-normed
+        block, per the class docstring on :class:`_CachedPredictor`.
         """
 
         # Only reached when getattr(..., "supports_kv_cache", False) is true
@@ -326,25 +394,36 @@ class VJepa2ACEngine:
         else:
             cache = predictor.init_cache(state.context)
         next_frame, cache = predictor.step_cached(cache, vec)
-        frames_now = int(state.context.shape[0]) // self._tokens_per_frame
-        if frames_now >= self._config.context_frames:
-            cache = predictor.evict(cache)
-        # ``last_context`` is finalized in :meth:`_sync_kv_cache` once ``step()``
-        # has built the new (normalized, windowed) context — this method only
-        # has ``next_frame``, not that.
-        self._kv_cache[state.session_id] = _CacheEntry(cache=cache, last_context=state.context)
-        return next_frame
+        return next_frame, cache
 
-    def _sync_kv_cache(self, session_id: str, new_context: torch.Tensor) -> None:
-        """Point the session's cache entry at the context it now matches.
+    def _sync_kv_cache(
+        self,
+        state: WorldState,
+        session_id: str,
+        new_context: torch.Tensor,
+        cache: Any,
+        normed_block: torch.Tensor,
+    ) -> None:
+        """Durably append the predicted frame and apply the eviction policy.
 
-        Split from :meth:`_step_cached` because the final context (after
-        norm/append/window-cap) is only known back in ``step()``; this is
-        what the *next* call's sync check compares against.
+        ``state`` is the *incoming* (pre-append) state — its frame count is
+        what decides whether this step is sliding the window (see
+        :class:`VJepa2ACConfig`'s ``kv_evict_policy`` docstring for why the
+        pre-append count, not ``new_context``'s already-capped one, is the
+        right signal).
         """
-        entry = self._kv_cache.get(session_id)
-        if entry is not None:
-            self._kv_cache[session_id] = _CacheEntry(cache=entry.cache, last_context=new_context)
+        predictor = cast("_CachedPredictor", self._predictor)
+        frames_now = int(state.context.shape[0]) // self._tokens_per_frame
+        window_full = frames_now >= self._config.context_frames
+        if window_full and self._config.kv_evict_policy == "reinit":
+            # Exact: don't touch a cache we're not confident is sound to
+            # evict from. Drop it; the next call pays a full init_cache().
+            self._kv_cache.pop(session_id, None)
+            return
+        cache = predictor.append_frame(cache, normed_block)
+        if window_full and self._config.kv_evict_policy == "slide":
+            cache = predictor.evict(cache, self._config.kv_sink_frames)
+        self._kv_cache[session_id] = _CacheEntry(cache=cache, last_context=new_context)
 
     def plan(self, state: WorldState, goal: torch.Tensor, horizon: int) -> Action:
         """Energy-minimizing MPC (CEM): the next action toward ``goal``.
