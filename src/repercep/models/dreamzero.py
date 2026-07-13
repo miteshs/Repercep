@@ -65,16 +65,23 @@ DEFAULT_REPO = "GEAR-Dreams/DreamZero-DROID"
 class _DreamZeroPipeline(Protocol):
     """The model-specific half of the port, as an injectable session pipeline.
 
-    Mirrors the reference server's surface (``ARDroidRoboarenaPolicy`` in
-    ``dreamzero0/dreamzero``): ``reset`` builds the per-layer KV cache (+ CFG
-    negative-prompt copy + cross-attn caches) and encodes the text prompt,
-    ``encode_observation`` is the first-frame CLIP/VAE encode,
-    ``infer_chunk`` runs the 16-step flow-matching loop over one block
-    (caching the prediction), and ``recondition`` pushes executed reality
-    (real observation frames + executed actions) into the cache — the
-    "push-then-predict" order the reference client loop uses. Keeping this a
-    Protocol isolates the chunk-loop logic from the port, so the loop is
-    testable on CPU with fakes.
+    Mirrors ``WANPolicyHead.lazy_joint_video_action`` in
+    ``groot/vla/model/dreamzero/action_head/wan_flow_matching_action_tf.py`` —
+    the real per-block entry point, two dispatch layers below the eval-harness
+    wrapper (``ARDroidRoboarenaPolicy``, never ported — same discipline as
+    LingBot-VA's unported ``VA_Server``). ``reset`` builds the per-layer KV
+    cache (+ CFG negative-prompt copy + 512-token cross-attn caches) and
+    encodes the text prompt, ``encode_observation`` is the first-frame
+    CLIP/VAE encode. The reference bundles what this Protocol splits into
+    ``recondition`` + ``infer_chunk`` into a *single* call
+    (``lazy_joint_video_action(..., latent_video=...)``: push the caller's new
+    frames into the cache, then run the joint video+action denoise loop for
+    the next block) — there is no separate "just push" entrypoint upstream.
+    ``recondition`` here should stash the executed actions / obs latent on the
+    session; ``infer_chunk`` does the real work, passing the stashed value
+    through as ``latent_video`` (port plan §2). Keeping this a Protocol
+    isolates the chunk-loop logic from the port, so the loop is testable on
+    CPU with fakes regardless of how a Phase-1 implementation splits the work.
     """
 
     def reset(self, session_id: str, prompt: str | None) -> None: ...
@@ -139,18 +146,25 @@ class DreamZeroConfig:
     # caveat as LingBotVAConfig.used_action_dim.
     action_dim: int = 7
     used_action_dim: int | None = None
-    # attn window in frames; max_attention_size = attn_window_frames * frame_seqlen.
+    # attn window in frames (default: local_attn_size=-1 sentinel in the
+    # reference DiT config -> max_attention_size = attn_window_frames * frame_seqlen;
+    # a non-default local_attn_size overrides this directly, in frames).
     attn_window_frames: int = 21
-    # Flow-matching denoise budget per block. The yaml also carries
-    # num_inference_timesteps=4 ("not used during training") — which loop the
-    # server actually runs is a Phase-1 verify item (port plan §1); this
-    # config tracks the server-hardcoded value.
+    # Flow-matching denoise budget per block: one joint loop over both the
+    # video and action noise (two FlowUniPCMultistepScheduler instances, same
+    # step index), not two separate loops. Confirmed by reading
+    # WANPolicyHead.lazy_joint_video_action (port plan §2): 16 is the only
+    # value actually used — WANPolicyHeadConfig.num_inference_timesteps is
+    # read into an attribute but never referenced by that method (dead for
+    # this path).
     num_inference_steps: int = 16
     cfg_scale: float = 5.0
     sigma_shift: float = 5.0
-    # Their headline latency lever (dynamic DiT-call skip via cosine
-    # similarity of consecutive action-noise predictions) — off by default,
-    # quality impact is ours to measure, not the pipeline's default stance.
+    # Their headline latency lever: a dynamic DiT-call skip schedule (cosine
+    # similarity of the last two action-noise predictions >0.95/0.93 skips
+    # the next 4/2 calls, reusing the last prediction verbatim) — off by
+    # default, quality impact is ours to measure, not the pipeline's default
+    # stance.
     enable_dit_cache: bool = False
     attn_mode: str = "sdpa"
     # ip=2 only splits CFG (rank 0 conditional / rank 1 unconditional,

@@ -51,44 +51,101 @@ warmup **with DiT caching on**; DreamZero-Flash ~7 Hz (paper only, not released)
 
 ## 2. The inference loop (what we port)
 
-From `ARDroidRoboarenaPolicy` / the action head:
+**Correction, 2026-07-13 (re-verified against source, not the press-release-level
+summary this section originally had):** the real chunk loop is one level deeper than
+`ARDroidRoboarenaPolicy` — that class is the roboarena eval-harness adapter (frame
+accumulation, obs/action dict format conversion) and is **never ported**, same
+discipline as LingBot-VA's `VA_Server`. The real per-block work is
+`GrootSimPolicy.lazy_joint_forward_causal` (`groot/vla/model/n1_5/sim_policy.py:679`)
+→ `VLA.lazy_joint_video_action_causal` (`groot/vla/model/dreamzero/base_vla.py:180`,
+a thin `backbone(IdentityBackbone, a no-op) + action_head` dispatch) →
+`WANPolicyHead.lazy_joint_video_action` (`action_head/wan_flow_matching_action_tf.py:973`)
+— **this last method is what we port**; the two wrapper layers above it are trivial
+(no hydra/dataset-framework dependency survives past them — `VLA.__init__` builds
+`backbone`/`action_head` from a small `config.json`-carried dict via
+`hydra.utils.instantiate`, not from the GR00T-N1.5 training config tree. The original
+worry that this needs the full GR00T-N1.5 data-schema/transform stack was **wrong**
+for the model itself; it is only true for one piece — action denormalization, §5).
 
-1. **Reset** — create per-layer KV caches + cross-attn caches (×2 for CFG), encode the
-   text prompt (umT5), CLIP-encode + VAE-encode the first observation. Session state =
-   (KV caches ×2, cross-attn caches ×2, `current_start_frame`, prompt embeds, frame
-   buffers). Server accumulates `FRAMES_PER_CHUNK = 4` frames per call after the first.
-2. **Per decision** — encode the new block's frames to latents; run the 16-step
-   flow-matching loop: each step calls the DiT once per prompt context (cond + uncond)
-   with `kv_cache`, `crossattn_cache`, `current_start_frame`; KV is written only on the
-   designated update step. Scheduler steps the noisy action toward clean → one
-   denormalized 32-action chunk.
-3. **DiT cache** (`--enable-dit-cache`, off by default): dynamic skip schedule —
-   cosine similarity of the last two action-noise predictions >0.95/0.93 skips the next
-   4/2 DiT calls, filling in with a first-order extrapolation
-   (`cache_predict_order1`, damping 0.25). This is their headline latency lever and it
-   is an **approximation** — quality impact is theirs to claim, ours to measure
-   (same discipline as the LingBot-VA CFG-off caveat).
-4. **Advance** — `current_start_frame += num_frame_per_block`; cache reset on task
-   change or window exhaustion (21 frames). No pixel decode in the loop.
-5. **Parallelism:** the reference launch is `torchrun --nproc_per_node=2`, but
-   `parallelize()` asserts `ip_size ∈ {1, 2}` and **ip=2 only splits CFG** — rank 0
-   conditional, rank 1 unconditional, exchanged via P2P (`_exchange_predictions`).
-   On ip=1 the two contexts run **sequentially** in a Python loop. So "minimum 2
-   GPUs" is a CFG-split convenience, not a sharding requirement — **single-GPU is
-   code-supported, and batching cond+uncond into one forward (what LingBot-VA's
-   levers already do) is the immediate, obvious lever.**
-6. Also present, not ported: optional TensorRT engine path (`ENABLE_TENSORRT`,
-   `ar_14B`) and Transformer-Engine attention — the NVIDIA-only rungs we benchmark
-   against, not through. `torch.compile` is applied to T5/CLIP/VAE-encode only; the
-   code comment says Dynamo fullgraph fails on the DiT's shape variation — consistent
-   with our LingBot-VA negative finding.
+One call to `lazy_joint_video_action(backbone_output, action_input, latent_video=...)`
+does what our `_DreamZeroPipeline.recondition()` + `.infer_chunk()` do as two
+Protocol methods — there is no separate "just push, don't predict" entrypoint in the
+reference. The mapping for Phase 1: `recondition()` should stash the given
+`obs_latent`/executed actions on the session (the real push only happens inside the
+next call); `infer_chunk()` does the actual work, calling
+`lazy_joint_video_action(..., latent_video=<stashed obs_latent, or None for
+imagination>)`. Verified mechanics inside that one call:
+
+1. **Reset condition** — `current_start_frame` resets to 0 (not lazily on our
+   `reset()` alone) whenever: this is the first call (`self.language is None`), the
+   text prompt changed, **the caller passes a single-frame observation** (so our
+   `reset()` naturally triggers this by construction), or
+   `current_start_frame >= model.local_attn_size` (window exhaustion;
+   `local_attn_size` defaults to `-1` → `max_attention_size = 21 * frame_seqlen`,
+   confirming the plan's "21 frames" as the *default*, not a hardcoded constant).
+2. **First call priming** (`current_start_frame == 0`): CLIP+VAE-encode the seed
+   frame → `clip_feas`, `ys` (the image-conditioning tensor spanning the whole
+   attention window, mask-concatenated with VAE latents); create fresh KV caches
+   (`_create_kv_caches`: per-layer `[2, B, L, num_heads, head_dim]`, `L` starts at 0
+   and grows — confirms the plan's cache-shape claim) + cross-attn caches (`_create_
+   crossattn_caches`: per-layer `[2, B, 512, num_heads, head_dim]`) — **one cache pair
+   for cond, one full duplicate for uncond** (`kv_cache_neg`/`crossattn_cache_neg`),
+   confirming "plus a full negative-prompt copy for CFG". Then one **clean pass**
+   (`timestep=0`, `update_kv_cache=True`, no noise) seeds the cache with the observed
+   frame's real K/V; `current_start_frame` becomes 1.
+3. **Recondition push** (every call where `current_start_frame != 1`): the new real
+   observation frames the caller passed in this call (`videos`, VAE-encoded — or
+   `latent_video` verbatim if the caller supplies it directly, the imagination path)
+   are pushed into the cache via another clean pass (`update_kv_cache=True`,
+   `start_frame = current_start_frame - num_frame_per_block`) — grounding on
+   whatever the caller fed in, real pixels or the model's own prior prediction.
+4. **Joint denoise loop** — **one loop, not two separate video/action loops as this
+   section previously said.** `noise_obs` and `noise_action` both start from Gaussian
+   noise (same seed=1140 — a research-code determinism quirk, not to reproduce
+   exactly); `FlowUniPCMultistepScheduler` (not `FlowMatchScheduler`, which is only
+   used at `.set_timesteps(1000, training=True)` during training) steps both, video
+   and action on separate scheduler instances but **the same 16-step index loop** —
+   `self.num_inference_steps = 16` is hardcoded at `__init__` and is what's actually
+   used; **`num_inference_timesteps` from `WANPolicyHeadConfig` is read into
+   `self.num_inference_timesteps` but never referenced inside
+   `lazy_joint_video_action` — it is dead for this path.** (Resolves the "Phase-1
+   verify item" this section used to flag as open.) Each step: one `self.model(...)`
+   call per CFG context (cond, uncond — **not already batched into one forward**,
+   confirming batching them is a real, available lever) with
+   `kv_cache=<growing>, crossattn_cache=<fixed 512>, current_start_frame=<block
+   start>, update_kv_cache=False` (the searched/noisy steps are never cached — only
+   the two clean passes above ever write the cache). CFG combine:
+   `flow_pred = uncond + cfg_scale * (cond - uncond)`. An optional
+   `decouple_inference_noise` config rescales the video (not action) noise schedule to
+   stop short of full denoise (`video_inference_final_noise`) — off by default,
+   another config knob to carry, not implement first.
+5. **DiT cache** (`--enable-dit-cache` / `DYNAMIC_CACHE_SCHEDULE` env, off by
+   default): dynamic skip schedule — cosine similarity of the last two
+   *action*-noise predictions >0.95/0.93 skips the next 4/2 DiT calls, reusing the
+   last prediction verbatim (not a first-order extrapolation as this section
+   previously guessed — `cache_predict_order1` exists but is not what's called from
+   the skip path in `should_run_model`/`lazy_joint_video_action`). Off-by-default
+   also has a static variant: `dit_step_mask` (env `NUM_DIT_STEPS`) fixed-pattern
+   skip. Approximation — quality impact is ours to measure, same discipline as the
+   LingBot-VA CFG-off caveat.
+6. **Advance** — `current_start_frame += num_frame_per_block` after the loop (no
+   pixel decode in the loop; `video_pred` returned is still latents).
+7. **Parallelism:** unchanged from the original read — `ip_size ∈ {1, 2}`, ip=2 only
+   splits CFG across ranks via P2P (`_exchange_predictions`), ip=1 runs both
+   contexts sequentially. Single-GPU is code-supported; batching cond+uncond into one
+   forward (point 4 above) is the immediate lever, now confirmed against the exact
+   call site (`_run_diffusion_steps`'s `for index, prompt_emb in enumerate(context)`
+   loop).
+8. Also present, not ported: an optional TensorRT engine path
+   (`self.trt_engine`, gated in `_run_diffusion_steps`) and Transformer-Engine
+   attention — the NVIDIA-only rungs we benchmark against, not through.
 
 ## 3. Mapping onto the `InteractiveWorldModel` seam
 
 | Seam | DreamZero realization |
 |---|---|
 | `reset(conditioning, params)` | cache creation + prompt/T5 + first-obs CLIP/VAE encode; `conditioning.uri` = seed image(s), prompt via params. Heavyweight state (caches, `current_start_frame`) engine-held per `session_id`, as in LingBot-VA. |
-| `step(state, action)` | recondition-then-predict: push executed actions + real observation frames for the new block, run the denoise loop, return the next 32-action chunk + predicted latents. `Action.space = "dreamzero_chunk_droid"`; norm stats + `embodiment_id` carried per-config from the checkpoint, not hardcoded. |
+| `step(state, action)` | recondition-then-predict, both inside one `lazy_joint_video_action` call (§2): push executed actions + real observation frames for the new block, run the joint denoise loop, return the next 32-action chunk + predicted latents. `Action.space = "dreamzero_chunk_droid"`; `embodiment_id` carried per-config from the checkpoint. Action *denormalization* is **not** inside the action head (§5 risk) — it happens in the eval harness we don't port, so the engine must own it against the checkpoint's `metadata.json` stats directly. |
 | `plan(state, goal, horizon)` | the model is its own policy (policy regime, same as LingBot-VA): `plan` returns the model's proposed chunk; goal conditioning is the text prompt at reset. No CEM. |
 
 **Seam caveat (same as LingBot-VA v0, recorded):** the native KV cache mutates in
@@ -104,16 +161,32 @@ is a Phase-0 design question, not a commitment.
   against an injectable pipeline Protocol, unit-tested with fakes (the
   `vjepa2_ac.py` / `lingbot_va.py` pattern). Weight-load raises `NotImplementedError`
   with the port recipe in the docstring.
-- **Phase 1 (GPU verify, H100):** vendor the minimum — `CausalWanModel` +
-  `wan2_1_attention` (SDPA path) + schedulers + VAE/T5/CLIP encoders from
-  `groot/vla/model/dreamzero/modules/` — **do not `pip install` their package**: the
+- **Phase 1 (GPU verify, H100):** vendor the minimum, now precisely scoped (§2
+  correction) — `base_vla.py` (`VLA`, trivial HF `PreTrainedModel` wrapper),
+  `backbone/identity.py` (no-op), `action_head/wan_flow_matching_action_tf.py`
+  (`WANPolicyHead` — the real orchestration: cache creation, the joint denoise loop,
+  `encode_prompt`/`encode_image`/`encode_video`), `modules/wan_video_dit_action_
+  casual_chunk.py` (`CausalWanModel`), `modules/wan2_1_attention.py` (SDPA path),
+  `modules/flow_unipc_multistep_scheduler.py` (the scheduler actually used at
+  inference — not `flow_match_scheduler.py`, which is training-only), `modules/
+  wan_video_vae.py` + `wan_video_text_encoder.py` (umT5) + `wan_video_image_encoder.py`
+  (CLIP), `modules/utils.py` + `wan2_1_submodule.py`. All self-contained under
+  `groot/vla/model/dreamzero/` — confirmed the GR00T-N1.5 hydra/dataset framework
+  does *not* leak into this closure (§2). **Do not `pip install` their package**: the
   pyproject hard-requires `tensorrt`, `ray`, `mujoco`, `deepspeed`, and a `gear`
   package, none of which the inference loop needs (and `tensorrt` won't install on
-  ROCm). Own venv: torch 2.8.0, transformers 4.51.3, diffusers 0.30.2, py3.11.
-  Checkpoint `GEAR-Dreams/DreamZero-DROID`. Verify: single-GPU `ip_size=1` parity vs
-  their 2-GPU server on identical DROID inputs (their `test_client_AR.py` gives the
-  harness); resolve the 16-vs-4 step question; confirm bf16 weights footprint
-  (est. ~42 GB: 28 DiT + ~11 umT5-xxl + CLIP + VAE — estimate, measure at load).
+  ROCm). Own venv: torch 2.8.0, transformers 4.51.3, diffusers 0.30.2, py3.11, plus
+  `einops`, `peft` (LoRA plumbing `WANPolicyHead.__init__` imports unconditionally),
+  `hydra-core`/`omegaconf` (only for `instantiate`, not the training config tree).
+  Checkpoint `GEAR-Dreams/DreamZero-DROID` (its `config.json` + `model.safetensors`
+  carry the trained deltas; the base Wan2.1-I2V-14B-480P VAE/T5/CLIP/DiT weights are
+  pulled separately from the Wan HF repo and then overwritten `strict=False` — two
+  downloads, not one). Verify: single-GPU `ip_size=1` parity vs their 2-GPU server on
+  identical DROID inputs (their `test_client_AR.py` gives the harness); confirm bf16
+  weights footprint (est. ~42 GB: 28 DiT + ~11 umT5-xxl + CLIP + VAE — estimate,
+  measure at load); resolve the action-denorm dependency (§5 risk) by reading the
+  checkpoint's `experiment_cfg/metadata.json` `statistics.action` stats directly
+  rather than importing `groot.vla.data.transform`.
 - **Phase 2 (bench):** RunPod H100 + MI300X rows in `bench_control_loop` /
   `CONTROL_LOOP_BENCH.md`: warm chunk latency (vs their ~3 s H100 claim),
   decisions/sec under state carryover, **KV memory per session** — back-of-envelope
@@ -135,12 +208,28 @@ is a Phase-0 design question, not a commitment.
   multi-session." Measure before claiming either.
 - **ip=1 is code-supported but likely under-tested upstream** (their launch docs are
   2-GPU only) — Phase-1 parity check is the gate, not an afterthought.
-- **Research code hygiene:** hydra config sprawl, hardcoded inference constants
-  (`num_inference_steps = 16`, `seed = 1140`), roboarena-specific observation/action
-  conversion in the server — vendor components, never their server (LingBot lesson).
-- **DROID embodiment semantics:** norm stats, `embodiment_id` values, and the
-  3-camera layout live in checkpoint/config; the engine must carry them per-config.
-  Post-train checkpoints (AgiBot/YAM) change all of them.
+- **Research code hygiene:** hardcoded inference constants (`num_inference_steps =
+  16` — confirmed the only value actually used, `num_inference_timesteps` from config
+  is dead code, §2; `seed = 1140`), roboarena-specific observation/action conversion
+  in `ARDroidRoboarenaPolicy` — vendor components (down through `WANPolicyHead`),
+  never the eval-harness wrapper above it (LingBot lesson).
+- **Action denormalization lives outside the action head (new finding, 2026-07-13):**
+  unlike LingBot-VA (whose quantile stats ship inside the research repo's own task
+  config), `WANPolicyHead.lazy_joint_video_action` returns raw normalized
+  `action_pred` — denormalization happens in `GrootSimPolicy.unapply`, which goes
+  through the GR00T-N1.5 `ComposedModalityTransform` / `DatasetMetadata` stack (the
+  heavy framework this plan originally worried the *model* needed, and doesn't — it's
+  narrowly here instead). Decision for Phase 1: read `experiment_cfg/metadata.json`'s
+  `statistics.action` (q01/q99 or mean/std, per the checkpoint) directly and apply the
+  transform ourselves — matching LingBot-VA's `_denormalize_actions`/`_recondition`
+  pattern — rather than depending on `groot.vla.data.transform`. Unverified whether
+  the transform is a plain per-channel quantile/z-score (LingBot-VA shape) or
+  something more stateful (e.g. `relative_action_per_horizon`, seen referenced in
+  `sim_policy.py`) — read `metadata.json` from the actual checkpoint before committing
+  to a denorm implementation.
+- **DROID embodiment semantics:** `embodiment_id` values and the 3-camera layout live
+  in checkpoint/config; the engine must carry them per-config. Post-train checkpoints
+  (AgiBot/YAM) change all of them, including the action-transform shape above.
 - **Env conflicts:** torch 2.8.0 / transformers 4.51.3 vs our tree — own venv in
   Phase 1, same discipline as V-JEPA and LingBot-VA.
 - **Competitive clock:** vLLM-Omni RFC #4127. If they ship optimized DreamZero
