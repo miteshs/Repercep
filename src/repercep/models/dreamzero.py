@@ -165,6 +165,14 @@ class DreamZeroConfig:
     # (mode="q99": `(x+1)/2*(q99-q01)+q01`), which we do NOT depend on --
     # reimplemented directly, LingBot-VA style.
     used_action_dim: int | None = 8
+    # The state encoder's padded width -- a DISTINCT number from action_dim,
+    # confirmed by a GPU shape-mismatch crash 2026-07-13 (expected [1,8], got
+    # [1,64] against the embodiment-keyed state-encoder weight): DROID's real
+    # state (state.joint_position(7)+state.gripper_position(1)=8, same
+    # channels as the action) is zero-padded to 64, not 32. No used_state_dim
+    # field yet -- Phase-1 pipeline TODO, mirrors used_action_dim once
+    # reset()/encode_observation() actually construct this tensor.
+    max_state_dim: int = 64
     # attn window in frames (default: local_attn_size=-1 sentinel in the
     # reference DiT config -> max_attention_size = attn_window_frames * frame_seqlen;
     # a non-default local_attn_size overrides this directly, in frames).

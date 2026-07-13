@@ -134,15 +134,23 @@ imagination>)`. Verified mechanics inside that one call:
    `decouple_inference_noise` config rescales the video (not action) noise schedule to
    stop short of full denoise (`video_inference_final_noise`) — off by default,
    another config knob to carry, not implement first.
-5. **DiT cache** (`--enable-dit-cache` / `DYNAMIC_CACHE_SCHEDULE` env, off by
-   default): dynamic skip schedule — cosine similarity of the last two
-   *action*-noise predictions >0.95/0.93 skips the next 4/2 DiT calls, reusing the
-   last prediction verbatim (not a first-order extrapolation as this section
-   previously guessed — `cache_predict_order1` exists but is not what's called from
-   the skip path in `should_run_model`/`lazy_joint_video_action`). Off-by-default
-   also has a static variant: `dit_step_mask` (env `NUM_DIT_STEPS`) fixed-pattern
-   skip. Approximation — quality impact is ours to measure, same discipline as the
-   LingBot-VA CFG-off caveat.
+5. **DiT cache — correction, GPU-verified 2026-07-13: on by default, not off.**
+   Two independent skip mechanisms share `should_run_model`: a *dynamic* schedule
+   (`DYNAMIC_CACHE_SCHEDULE` env, defaults `False`) — cosine similarity of the last
+   two *action*-noise predictions >0.95/0.93 skips the next 4/2 DiT calls, reusing
+   the last prediction verbatim (not a first-order extrapolation as this section
+   previously guessed — `cache_predict_order1` exists but isn't called from this
+   path) — and a *static* fallback, `dit_step_mask`, keyed by `NUM_DIT_STEPS` (env,
+   **defaults to `8`, unconditionally — not gated behind any opt-in flag**).
+   `should_run_model` returns the static mask whenever the dynamic schedule is off
+   (the default), so **a fresh `WANPolicyHead()` skips 8 of 16 DiT calls out of the
+   box** — confirmed empirically: the first real forward on the H100 logged
+   `"DIT Compute Steps 8 steps"` out of 16 scheduler iterations, with no env vars
+   set. This means the reference's own default configuration is *already* running
+   the approximation — "baseline vs DiT-cache-off" isn't the reference's own
+   default; measuring true full-16-step baseline needs `NUM_DIT_STEPS=16`
+   explicitly. Quality impact still ours to measure, same discipline as the
+   LingBot-VA CFG-off caveat — but the baseline to measure *against* just changed.
 6. **Advance** — `current_start_frame += num_frame_per_block` after the loop (no
    pixel decode in the loop; `video_pred` returned is still latents).
 7. **Parallelism:** unchanged from the original read — `ip_size ∈ {1, 2}`, ip=2 only
@@ -154,6 +162,107 @@ imagination>)`. Verified mechanics inside that one call:
 8. Also present, not ported: an optional TensorRT engine path
    (`self.trt_engine`, gated in `_run_diffusion_steps`) and Transformer-Engine
    attention — the NVIDIA-only rungs we benchmark against, not through.
+
+## 2b. First real forward pass — GPU-verified 2026-07-13 (H100, RunPod)
+
+**A synthetic-input forward through the actual 16.5B-param `DreamZero-DROID`
+checkpoint ran end-to-end successfully** (`VLA` → `WANPolicyHead.lazy_joint_video_
+action`, called directly — no vendoring needed, just `sys.path.insert` on the raw
+research clone, exactly the LingBot-VA `import wan_va` pattern; `pip install`-free,
+so none of the heavy pyproject deps triggered). This is the first hard evidence the
+port plan's model-agnostic engine (`DreamZeroEngine`) sits on a real, loadable,
+runnable model — not just a plausible-sounding plan. Not a correctness/parity check
+(synthetic random-pixel input, no real DROID episode or reference-server comparison
+— that needs `test_client_AR.py` + real eval data, still open) but a genuine
+does-it-run-with-right-shapes gate, and it closed clean:
+
+- **Loads with zero missing/unexpected keys** against `strict=False` — confirms
+  `train_architecture="full"` really does mean the DROID checkpoint's shards fully
+  cover the 16.48B-param model (`skip_component_loading=True` override, avoiding a
+  wasted 65.6 GB Wan2.1 base-DiT download, was correct and necessary — the reference
+  default `skip_component_loading=False` would download it needlessly since DROID's
+  own shards overwrite it anyway).
+- **Peak HBM: 42.8 GiB at load, 49.5 GiB after one chunk's forward** (bf16) — the
+  plan's earlier ~42 GB estimate for load lands almost exactly on the measured
+  number.
+- **First-chunk latency: 3.77 s, in pure eager mode** (`TORCHDYNAMO_DISABLE=1` —
+  their scheduler's `torch.compile` hits `FailOnRecompileLimitHit` under a
+  single-chunk smoke test because internal history tensors change rank step to
+  step, tripping Dynamo's `recompile_limit`; not a correctness issue, an
+  environment knob — Phase 2's compile-on/off lever, not resolved here). This
+  includes one-time first-call overhead (text/image encode, KV cache creation) —
+  directly comparable in kind, not yet magnitude, to their "~3 s/chunk H100" claim,
+  and notably **already close to it running in eager mode** (their number
+  presumably includes `torch.compile` warmup benefit, ip=2 CFG split, and the
+  default 8-of-16 DiT-cache skip — see point 5's correction above, which this same
+  run empirically confirmed: `"DIT Compute Steps 8 steps"` logged with zero env
+  vars set).
+- **Output shapes all cross-check against the confirmed config numbers**:
+  `action_pred` `(1, 24, 32)` = `(B, action_horizon, action_dim)`; `video_pred`
+  `(1, 16, 3, 44, 80)` = `(B, out_dim, frames, H_latent, W_latent)` (the method's
+  final `output.transpose(1, 2)` swaps frames and channels back for the caller)
+  where 3 frames = 1 primed frame + `num_frame_per_block=2` newly generated, 16 =
+  `out_dim` (VAE latent channels), 44×80 = 352×640 canvas ÷ 8 (VAE spatial
+  downsample).
+  `current_start_frame` advanced 0→1 (priming pass)→3 (+`num_frame_per_block`),
+  exactly as §2 describes.
+
+**New finding while constructing synthetic inputs — `max_state_dim=64` is
+distinct from `action_dim=32`:** the state encoder
+(`MultiEmbodimentActionEncoder`, keyed on `embodiment_id` exactly like the action
+encoder) expects the state tensor zero-padded to width **64**
+(`WANPolicyHeadConfig.max_state_dim`), not 32 or 8 — confirmed by a `torch.bmm`
+shape-mismatch crash (`expected [1,8], got [1,64]`) that pinned the number exactly.
+DROID's real state channels are the same 8 as its actions
+(`state_concat_order: [state.joint_position, state.gripper_position]`, per
+`conf.yaml`), zero-padded to 64, mirroring the 8→32 pad for actions but with a
+different max width. `DreamZeroConfig` needs a `max_state_dim` field distinct from
+`action_dim` (Phase-1 pipeline TODO — not yet added to the engine config).
+
+**Other inputs resolved and verified working, not just planned:**
+- **`embodiment_id = 17`** for `oxe_droid` — read directly from the checkpoint's
+  `experiment_cfg/conf.yaml` `embodiment_tag_mapping` dict (a fixed training-time
+  registry spanning all co-trained embodiments; `action_loss_embodiment_ids: [26,
+  17]` in `config.json` = agibot(26) + oxe_droid(17), confirming this checkpoint is
+  co-trained across both, consistent with the sibling `GEAR-Dreams/DreamZero-AgiBot`
+  checkpoint existing). This is **not optional to get right**: `embodiment_id`
+  indexes a per-embodiment weight matrix (`CategorySpecificLinear.forward`:
+  `self.W[cat_ids]`) — any in-range wrong value would run without error and produce
+  silently-wrong output routed through another embodiment's trained weights. This
+  was the main reason Phase 1 stopped short of guessing it and instead read the
+  actual registry.
+- **Multi-camera layout: a 2×2 pixel grid, not the spatial-width-concat this plan
+  first assumed (LingBot-VA's pattern).** `groot/vla/model/dreamzero/transform/
+  dreamzero_cotrain.py`'s `_prepare_video` (DROID-specific branch, `v >= 3`):
+  canvas `(2h, 2w)` where the **wrist view fills the entire top row** (nearest-
+  neighbor doubled in width, `np.repeat(wrist, 2, axis=-1)`) and **left/right
+  exterior views fill the bottom row** (`[h:, :w]`, `[h:, w:]`). Per-camera
+  resolution 176×320 (`h=176, w=320`, `conf.yaml`'s `VideoResize`) → canvas
+  352×640 → **VAE/patch-downsampled to 44×80 = 3520 spatial positions... divided by
+  patch stride → 880 = `frame_seqlen`, an exact arithmetic match** that
+  independently confirms this layout is right (352/16 × 640/16 = 22×40 = 880, or
+  equivalently the /8 VAE downsample × /2 patch stride used above). Confirmed
+  working end-to-end in the smoke test.
+- **Tokenizer: `google/umt5-xxl`'s files from the `Wan-AI/Wan2.1-I2V-14B-480P`
+  repo** (not the DROID repo — DROID only ships the DiT/action-head deltas). The
+  directory has no model `config.json` (tokenizer-only), so `AutoTokenizer.
+  from_pretrained` fails (`AutoConfig` can't resolve a `model_type`) — load via
+  `PreTrainedTokenizerFast(tokenizer_file=<tokenizer.json>)` directly instead,
+  bypassing `AutoConfig` entirely. `padding="max_length", max_length=512` (matches
+  LingBot-VA's T5 padding convention).
+
+**Not yet done:** the actual `repercep.models.dreamzero_pipeline` module (this was
+all done in a standalone smoke-test script, not yet wired into
+`_DreamZeroPipeline`); the KV-cache **session-swap mechanism** (`WANPolicyHead` has
+*no* named/multi-session cache API like LingBot-VA's `wan_va` transformer — its
+`kv_cache1`/`current_start_frame`/`language`/`ys`/`clip_feas` are plain mutable
+instance attributes on one `nn.Module`, not keyed by session. Serving N concurrent
+sessions on one resident model needs the pipeline to save/restore these attributes
+per `session_id` around each call — new architectural finding, not previously
+known, and a real difference from LingBot-VA's native multi-session support);
+`encode_observation`'s real image loading (the smoke test used random pixels, not
+a decoded image file); real-vs-reference parity (needs `test_client_AR.py` + actual
+DROID eval data).
 
 ## 3. Mapping onto the `InteractiveWorldModel` seam
 
