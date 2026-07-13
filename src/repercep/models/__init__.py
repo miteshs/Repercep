@@ -1,8 +1,9 @@
 """World-model engines for Repercep.
 
 Generation camp: Cosmos-Predict-7B and Wan-2.2 (T2V-A14B). Control camp on the
-interactive seam: V-JEPA 2-AC (energy-MPC planning) and LingBot-VA 2.0
-(video-action policy) — two planning regimes, one Protocol.
+interactive seam: V-JEPA 2-AC (energy-MPC planning), LingBot-VA 2.0, and
+DreamZero (video-action policy, Phase 0 scaffold) — two planning regimes, one
+Protocol.
 """
 
 from __future__ import annotations
@@ -12,6 +13,13 @@ from repercep.models.cosmos import (
     CosmosConfig,
     CosmosEngine,
     GuardrailError,
+)
+from repercep.models.dreamzero import (
+    DEFAULT_REPO as DREAMZERO_DEFAULT_REPO,
+)
+from repercep.models.dreamzero import (
+    DreamZeroConfig,
+    DreamZeroEngine,
 )
 from repercep.models.lingbot_va import (
     DEFAULT_REPO as LINGBOT_VA_DEFAULT_REPO,
@@ -33,12 +41,15 @@ from repercep.models.wan import WanConfig, WanEngine
 __all__ = [
     "DEFAULT_ENCODER_REPO",
     "DEFAULT_REPO",
+    "DREAMZERO_DEFAULT_REPO",
     "LINGBOT_VA_DEFAULT_REPO",
     "WAN_DEFAULT_REPO",
     "WAN_NATIVE_FPS",
     "WAN_SMALL_REPO",
     "CosmosConfig",
     "CosmosEngine",
+    "DreamZeroConfig",
+    "DreamZeroEngine",
     "GuardrailError",
     "LingBotVAConfig",
     "LingBotVAEngine",
