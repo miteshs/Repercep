@@ -94,7 +94,10 @@ class _FakePipeline:
 def _toy_engine(pipeline: _FakePipeline | None = None) -> DreamZeroEngine:
     return DreamZeroEngine(
         cast("Backend", _NamedBackend("fake")),
-        DreamZeroConfig(prompt="pick up the mug", action_dim=7),
+        # Toy 7-wide action space for test shapes -- override the real
+        # DreamZero-DROID default (action_dim=32 padded, used_action_dim=8)
+        # so both fields agree at 7, matching the fake pipeline below.
+        DreamZeroConfig(prompt="pick up the mug", action_dim=7, used_action_dim=7),
         pipeline=pipeline,
     )
 

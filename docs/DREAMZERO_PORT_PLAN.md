@@ -33,18 +33,33 @@ play data per their README). A **Wan2.2-TI2V-5B backbone** path exists in the re
 config-switched — but **train-your-own, no public 5B checkpoint**; the port target is
 the 14B DROID model, with 5B noted as a future cheap-serving rung if weights appear.
 
-Key numbers from the 14B config (`wan_flow_matching_action_tf.yaml` + server):
+Key numbers, **corrected 2026-07-13 against the actual released checkpoint's
+`config.json` + `experiment_cfg/{conf.yaml,metadata.json}`** (fetched on an H100
+RunPod pod, no auth needed — `GEAR-Dreams/DreamZero-DROID` is public, `files_metadata`
+listing + `hf_hub_download` of the three small files, no weights needed for this).
+The demo/socket-server comments this section originally cited turn out to describe a
+*different* config than what's actually shipped — the structural DiT numbers
+(`num_frame_per_block`, `num_action_per_block`) are baked into the checkpoint's RoPE
+and action-register layout, not a runtime choice, so the deployed values are the ones
+that matter:
 
-| knob | value | note |
+| knob | value (checkpoint-verified) | note |
 |---|---|---|
-| `num_frame_per_block` | 1 | one latent frame per attention block |
+| `num_frame_per_block` | **2** (not 1 — demo config differs from the shipped DROID checkpoint) | two latent frames per attention block |
+| `max_chunk_size` | 4 | new, previously unknown — a DiT-level cap, distinct from `num_frame_per_block` |
 | `frame_seqlen` | 880 | tokens per frame (3 cameras: 2 exterior + 1 wrist) |
-| `num_action_per_block` / `num_state_per_block` | 32 / 1 | one chunk = 32 actions |
-| context window | `max_attention_size = 21 × frame_seqlen` | ≈18.5k video tokens; cache resets when full or task/language changes |
-| denoise steps | `num_inference_steps = 16`, `cfg_scale = 5.0`, `sigma_shift = 5.0` | hardcoded in the action head; yaml also carries `num_inference_timesteps: 4` ("not used during training") — **which loop uses which is a Phase-1 verify item** |
+| `num_action_per_block` | **24** (not 32) | == `action_horizon` (top-level `VLAConfig.action_horizon=24`) |
+| `num_state_per_block` | 1 | unchanged from the original read |
+| `in_dim` / `out_dim` | 36 / 16 | DiT channel dims, not previously recorded |
+| action_dim (model, padded) | **32** | `WANPolicyHeadConfig.action_dim` == `max_action_dim` — zero-padded across *multiple embodiments'* action spaces jointly trained (`action_loss_embodiment_ids: [26, 17]`), **not** a DROID-specific 7-DoF width as originally guessed |
+| action_dim (DROID, wire/used) | **8** = `joint_position`(7) + `gripper_position`(1) | confirmed from `experiment_cfg/conf.yaml`'s DROID transform stanza: `action_concat_order: [action.joint_position, action.gripper_position]`, occupying indices `[0:8]` of the 32-wide padded tensor (zero-padded at the end — `DreamTransform`'s `np.pad(actions, ((0,0),(0, max_action_dim - n)), "constant")`, `groot/vla/model/dreamzero/transform/dreamzero_cotrain.py:496`). **Not** cartesian-delta as originally guessed — it's joint-space + gripper, matching the reference socket server's `_convert_action` (`joint_position`(7)+`gripper_position`(1)=8), which corroborates this independently. |
+| action normalization | `mode="q99"`: `(x+1)/2*(q99-q01)+q01` (denorm), symmetric quantile per channel | **Resolves the §5 denorm risk.** Identical formula to LingBot-VA's `_denormalize_actions`. Stats live in the checkpoint's `experiment_cfg/metadata.json` → `["oxe_droid"]["statistics"]["action"]["joint_position"|"gripper_position"]["q01"|"q99"]` (flat per-channel, confirmed **not** per-horizon/stateful for this checkpoint — `relative_action_per_horizon` was a red herring, that path isn't used for `oxe_droid`). Verified against `groot/vla/data/transform/state_action.py`'s `StateActionTransform` (read for reference only — **not vendored**, reimplemented directly, same discipline as LingBot-VA). |
+| context window | `max_attention_size = 21 × frame_seqlen` | ≈18.5k video tokens; cache resets when full or task/language changes (§2 has the exact reset conditions now) |
+| denoise steps | `num_inference_steps = 16`, `cfg_scale = 5.0`, `sigma_shift = 5.0` | confirmed the only steps actually used — `num_inference_timesteps` (checkpoint value: 4) is dead code for this path, see §2 |
 | KV cache | per layer `[2, B, L, 40, 128]` × 40 layers, **plus a full negative-prompt copy** (CFG) + 512-token cross-attn caches | bf16 |
 | attention | flash-attn 3 (Hopper) / flash-attn 2 / Transformer-Engine cuDNN — **all try/except-guarded with a plain-SDPA fallback** (`wan2_1_attention.py`) | → ROCm-portable without stubbing (better than LingBot-VA, whose flash-attn import was hard) |
 | dtype | bf16 end-to-end (`post_initialize` casts model/T5/CLIP/VAE) | fp32-RoPE lesson n/a |
+| checkpoint size | 10 safetensors shards, ~48.7 GB total | `model.safetensors.index.json` lists them; the repo also carries a `tensorrt/` subtree (~35 GB: ONNX + a pre-built `.trt` engine) — **skip it**, not needed for the PyTorch path we're porting |
 
 External claims (theirs, not ours): ~3 s/chunk on H100 and ~0.6 s on GB200 after
 warmup **with DiT caching on**; DreamZero-Flash ~7 Hz (paper only, not released).
@@ -172,21 +187,34 @@ is a Phase-0 design question, not a commitment.
   wan_video_vae.py` + `wan_video_text_encoder.py` (umT5) + `wan_video_image_encoder.py`
   (CLIP), `modules/utils.py` + `wan2_1_submodule.py`. All self-contained under
   `groot/vla/model/dreamzero/` — confirmed the GR00T-N1.5 hydra/dataset framework
-  does *not* leak into this closure (§2). **Do not `pip install` their package**: the
-  pyproject hard-requires `tensorrt`, `ray`, `mujoco`, `deepspeed`, and a `gear`
-  package, none of which the inference loop needs (and `tensorrt` won't install on
-  ROCm). Own venv: torch 2.8.0, transformers 4.51.3, diffusers 0.30.2, py3.11, plus
-  `einops`, `peft` (LoRA plumbing `WANPolicyHead.__init__` imports unconditionally),
-  `hydra-core`/`omegaconf` (only for `instantiate`, not the training config tree).
-  Checkpoint `GEAR-Dreams/DreamZero-DROID` (its `config.json` + `model.safetensors`
-  carry the trained deltas; the base Wan2.1-I2V-14B-480P VAE/T5/CLIP/DiT weights are
-  pulled separately from the Wan HF repo and then overwritten `strict=False` — two
-  downloads, not one). Verify: single-GPU `ip_size=1` parity vs their 2-GPU server on
-  identical DROID inputs (their `test_client_AR.py` gives the harness); confirm bf16
-  weights footprint (est. ~42 GB: 28 DiT + ~11 umT5-xxl + CLIP + VAE — estimate,
-  measure at load); resolve the action-denorm dependency (§5 risk) by reading the
-  checkpoint's `experiment_cfg/metadata.json` `statistics.action` stats directly
-  rather than importing `groot.vla.data.transform`.
+  does *not* leak into this closure (§2): `WANPolicyHeadConfig` also carries
+  `vl_self_attention_cfg`/`load_pretrained_det_decode_layer_path` fields that
+  reference `groot.vla.model.n1_5.*` and an internal NVIDIA filesystem path, but
+  checked `WANPolicyHead.__init__` line-by-line (2026-07-13) — neither is ever
+  `instantiate()`d or read; genuinely dead config fields for this checkpoint, not a
+  hidden dependency. Denormalization (§5, resolved) needs
+  `groot/vla/model/dreamzero/transform/dreamzero_cotrain.py` read for reference only
+  (channel padding order) — not vendored, hand-rolled instead. **Do not `pip install`
+  their package**: the pyproject hard-requires `tensorrt`, `ray`, `mujoco`,
+  `deepspeed`, and a `gear` package, none of which the inference loop needs (and
+  `tensorrt` won't install on ROCm). Own venv: torch 2.8.0, transformers 4.51.3,
+  diffusers 0.30.2, py3.11 (or 3.12, both satisfy the repo's `>=3.11`), plus `einops`,
+  `peft` (LoRA plumbing `WANPolicyHead.__init__` imports unconditionally),
+  `hydra-core`/`omegaconf` (only for `instantiate`, not the training config tree) —
+  **confirmed installable clean together** on a RunPod `runpod-torch-v280` H100 image
+  (torch 2.8.0+cu128 preinstalled, reused via `--system-site-packages`), 2026-07-13.
+  Checkpoint `GEAR-Dreams/DreamZero-DROID`: **confirmed public, no HF auth needed**;
+  10 safetensors shards, ~48.7 GB total (`config.json` + `model.safetensors` carry the
+  trained deltas; the base Wan2.1-I2V-14B-480P VAE/T5/CLIP/DiT weights are pulled
+  separately from `Wan-AI/Wan2.1-I2V-14B-480P`, also public, and then overwritten
+  `strict=False` — two downloads, not one). **Skip the checkpoint's `tensorrt/`
+  subtree** (~35 GB: ONNX export + prebuilt `.trt` engine) — irrelevant to the PyTorch
+  SDPA path. Verify: single-GPU `ip_size=1` parity vs their 2-GPU server on identical
+  DROID inputs (their `test_client_AR.py` gives the harness); confirm actual bf16
+  resident footprint at load — the ~48.7 GB DROID checkpoint shards likely overlap
+  substantially with the base Wan2.1-I2V-14B-480P download (same DiT/VAE/T5/CLIP
+  architecture, DROID shards are the fine-tuned deltas loaded `strict=False` on top),
+  so don't assume the two downloads sum to resident GPU memory — measure at load.
 - **Phase 2 (bench):** RunPod H100 + MI300X rows in `bench_control_loop` /
   `CONTROL_LOOP_BENCH.md`: warm chunk latency (vs their ~3 s H100 claim),
   decisions/sec under state carryover, **KV memory per session** — back-of-envelope
@@ -213,20 +241,21 @@ is a Phase-0 design question, not a commitment.
   is dead code, §2; `seed = 1140`), roboarena-specific observation/action conversion
   in `ARDroidRoboarenaPolicy` — vendor components (down through `WANPolicyHead`),
   never the eval-harness wrapper above it (LingBot lesson).
-- **Action denormalization lives outside the action head (new finding, 2026-07-13):**
-  unlike LingBot-VA (whose quantile stats ship inside the research repo's own task
-  config), `WANPolicyHead.lazy_joint_video_action` returns raw normalized
-  `action_pred` — denormalization happens in `GrootSimPolicy.unapply`, which goes
-  through the GR00T-N1.5 `ComposedModalityTransform` / `DatasetMetadata` stack (the
-  heavy framework this plan originally worried the *model* needed, and doesn't — it's
-  narrowly here instead). Decision for Phase 1: read `experiment_cfg/metadata.json`'s
-  `statistics.action` (q01/q99 or mean/std, per the checkpoint) directly and apply the
-  transform ourselves — matching LingBot-VA's `_denormalize_actions`/`_recondition`
-  pattern — rather than depending on `groot.vla.data.transform`. Unverified whether
-  the transform is a plain per-channel quantile/z-score (LingBot-VA shape) or
-  something more stateful (e.g. `relative_action_per_horizon`, seen referenced in
-  `sim_policy.py`) — read `metadata.json` from the actual checkpoint before committing
-  to a denorm implementation.
+- ~~Action denormalization lives outside the action head~~ **RESOLVED 2026-07-13**
+  (was an open risk as of the earlier revision of this doc): denormalization happens
+  in `GrootSimPolicy.unapply`, which goes through the GR00T-N1.5
+  `ComposedModalityTransform`/`DatasetMetadata` stack we don't want as a dependency —
+  but fetching the actual `GEAR-Dreams/DreamZero-DROID` checkpoint's
+  `experiment_cfg/{conf.yaml,metadata.json}` on the H100 pod (no weights needed, just
+  those two small files) confirmed it's the exact same flat per-channel q01/q99
+  quantile formula LingBot-VA already reimplements
+  (`(x+1)/2*(q99-q01)+q01`) — **not** the stateful `relative_action_per_horizon` path
+  this doc previously worried about (that's real in the codebase, referenced in
+  `sim_policy.py`, but not what `oxe_droid`'s transform stanza in `conf.yaml` uses).
+  §1's table has the exact stats-dict path and channel layout
+  (`joint_position`(7)+`gripper_position`(1)=8, zero-padded to the model's 32-wide
+  action register). Phase 1 hand-rolls this against `metadata.json`, never importing
+  `groot.vla.data.transform` — confirmed low-risk, not just hoped-for.
 - **DROID embodiment semantics:** `embodiment_id` values and the 3-camera layout live
   in checkpoint/config; the engine must carry them per-config. Post-train checkpoints
   (AgiBot/YAM) change all of them, including the action-transform shape above.

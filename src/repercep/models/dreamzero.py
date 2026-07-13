@@ -121,13 +121,19 @@ class _DreamZeroPipeline(Protocol):
 class DreamZeroConfig:
     """Load-time + rollout configuration for :class:`DreamZeroEngine`.
 
-    Defaults are the reference 14B DROID config verified 2026-07-12
-    (``wan_flow_matching_action_tf.yaml`` + the WebSocket server): one latent
-    frame per block, 3-camera 880-token frames, 32-action blocks, a 21-frame
-    (~18.5k token) attention window, 16-step flow matching, CFG 5.0, sigma
-    shift 5.0, bf16, SDPA attention (the ROCm-portable path — flash-attn is
-    optional and try/except-guarded in the reference code, no stub needed
-    unlike LingBot-VA).
+    Defaults are read from the **actual released checkpoint's `config.json`**
+    (``GEAR-Dreams/DreamZero-DROID``, fetched 2026-07-13 on an H100 pod — not
+    the research repo's generic demo config, which uses different geometry:
+    the demo/socket-server comments say ``num_frame_per_block=1``,
+    ``num_action_per_block=32``, but the shipped DROID checkpoint's DiT was
+    trained with ``num_frame_per_block=2``, ``num_action_per_block=24``,
+    ``max_chunk_size=4`` — these are structural (baked into RoPE/registers),
+    not a runtime choice, so they must match the checkpoint being served, not
+    the docs). 3-camera 880-token frames, a 21-frame (~18.5k token) attention
+    window, 16-step joint flow matching, CFG 5.0, sigma shift 5.0, bf16, SDPA
+    attention (the ROCm-portable path — flash-attn is optional and
+    try/except-guarded in the reference code, no stub needed unlike
+    LingBot-VA).
     """
 
     repo: str = DEFAULT_REPO
@@ -135,17 +141,30 @@ class DreamZeroConfig:
     dtype: str = "bfloat16"
     # The task instruction — DreamZero's goal conditioning is textual (umT5).
     prompt: str | None = None
-    # Chunked generation geometry (reference yaml names kept for greppability).
-    num_frame_per_block: int = 1
+    # Chunked generation geometry -- DreamZero-DROID checkpoint values (see
+    # class docstring), not the research repo's generic demo/socket-server
+    # defaults.
+    num_frame_per_block: int = 2
     frame_seqlen: int = 880  # tokens/frame across 2 exterior + 1 wrist camera
-    num_action_per_block: int = 32
+    num_action_per_block: int = 24
     num_state_per_block: int = 1
-    # DROID's common 7-DoF end-effector-delta + gripper convention
-    # (dx, dy, dz, droll, dpitch, dyaw, gripper). Unconfirmed against the
-    # checkpoint's actual action-head config — a Phase-1 verify item, same
-    # caveat as LingBotVAConfig.used_action_dim.
-    action_dim: int = 7
-    used_action_dim: int | None = None
+    # The model's padded action-register width (config.json `action_dim` /
+    # `max_action_dim` -- DreamZero-DROID is trained jointly across multiple
+    # embodiments' action spaces zero-padded into one 32-wide channel).
+    action_dim: int = 32
+    # DROID's *used* wire width, confirmed against the checkpoint's
+    # experiment_cfg/conf.yaml (2026-07-13): action_concat_order =
+    # [action.joint_position (7), action.gripper_position (1)] = 8, occupying
+    # indices [0:8] of the padded action_dim=32 tensor (zero-padded at the
+    # end, per DreamTransform's `np.pad(..., (0, max_action_dim - n))`) --
+    # NOT the cartesian-delta 7-DoF this field previously guessed. Denorm is
+    # q01/q99 quantile per channel from experiment_cfg/metadata.json's
+    # `statistics.action.{joint_position,gripper_position}` -- same formula
+    # as LingBotVAConfig's used_action_dim / `_denormalize_actions`, verified
+    # against groot/vla/data/transform/state_action.py's `StateActionTransform`
+    # (mode="q99": `(x+1)/2*(q99-q01)+q01`), which we do NOT depend on --
+    # reimplemented directly, LingBot-VA style.
+    used_action_dim: int | None = 8
     # attn window in frames (default: local_attn_size=-1 sentinel in the
     # reference DiT config -> max_attention_size = attn_window_frames * frame_seqlen;
     # a non-default local_attn_size overrides this directly, in frames).
