@@ -125,6 +125,25 @@ from marginal session cost** — which is *why* resident-sessions jumps from an
 undifferentiated "1" to a measured "11": the reference number conflated
 weights (9.5 GiB) with session state into one 38.8 GiB blob per session.
 
+**Lever ladder + measured concurrency ceiling, same H100 seam** (2026-07-13,
+`docs/LINGBOT_VA_LEVERS_2026_07.md` — full ladder, negative results, and an
+important caveat, read before quoting these in isolation): portable
+config-flag levers alone (no CUDA-locked tooling) take the 754.6 ms row above
+to **342.2 ms (2.0×)** — CFG off + reduced action-denoise steps. That same
+lever config also **roughly halves session memory** (6.01 → 2.82 GiB
+measured), which compounds into a **measured (not extrapolated) 24 resident
+sessions on one H100**, up from the 11 above, with per-session step latency
+holding steady (no concurrency penalty) all the way to the HBM ceiling.
+**The catch, stated plainly:** the CFG-off lever measurably shifts the
+model's action-output distribution on specific channels (one channel's p50
+drops ~99%, others 5–78%) — the latency and memory wins are real and
+measured; whether the resulting policy is still task-correct is not
+validated (no offline task-success metric exists in this repo). Two rungs
+tried and reported as **negative results**, not hidden: `torch.compile` and
+FlexAttention both came out *slower* than the CFG-off baseline at the same
+config, plausibly compile/graph-break overhead not amortized in this run's
+warmup window — a follow-up, not resolved here.
+
 ---
 
 ## 3. External reference — LingBot-VA 2.0 paper, Table 3 (NOT measured by us)
@@ -174,6 +193,17 @@ project exists to fill — roughly a 10× window on this model.**
 - ~~LingBot-VA through the Repercep seam~~ — done 2026-07-11
   (`docs/LINGBOT_VA_SEAM_VERIFY.md`); both regimes now run under the same
   `bench_control_loop.py` binary (§2 table above).
-- Multi-session concurrency measurements (metric 4 is extrapolated from a
-  single session's marginal HBM today; measure N live sessions when the
-  serving layer exposes it).
+- ~~Multi-session concurrency measurements~~ — done for LingBot-VA/H100
+  2026-07-13 (`docs/LINGBOT_VA_LEVERS_2026_07.md`): 24 real sessions measured
+  via `bench_control_loop.py --sessions N`, not extrapolated, with a
+  per-session HBM curve and round-robin step latency showing no concurrency
+  penalty up to the HBM ceiling. V-JEPA-AC concurrency (this metric for the
+  energy-MPC regime) is still extrapolated only — open.
+- LingBot-VA serving-latency ladder — done 2026-07-13
+  (`docs/LINGBOT_VA_LEVERS_2026_07.md`): portable levers alone reach 2.0× the
+  H100 seam baseline (754.6→342.2 ms), with an important caveat (the winning
+  CFG-off lever measurably shifts the action-output distribution, not
+  validated for task correctness) and two disclosed negative results
+  (`torch.compile`, FlexAttention both came out slower here). MI300X
+  companion run for this ladder deferred — RunPod's GPU catalog had zero AMD
+  entries at all when checked (delisted, not merely out of stock).

@@ -58,9 +58,12 @@ Ranked by how cheaply they can bite:
    The strategy's Tier-1 item 1 ("planning service — energy-MPC as a served
    endpoint, not just a script path") is not done. No session caps, no
    idle-eviction, no backpressure, no auth on the WebSocket.
-5. **Metric 4 is extrapolated, not load-tested.** "11 / 30 resident
-   sessions/GPU" comes from one session's marginal HBM. Nobody has run N
-   concurrent sessions through the serving layer.
+5. **Metric 4 is extrapolated, not load-tested — partially resolved
+   2026-07-13.** LingBot-VA/H100 now has a *measured* 24-session number
+   (`docs/LINGBOT_VA_LEVERS_2026_07.md`), not extrapolated — real HBM curve,
+   real round-robin step latency, no penalty found up to the ceiling. V-JEPA
+   ("11/30") and LingBot-VA/MI300X ("30") are still extrapolated only; this
+   is one vendor of one regime, not the whole metric.
 6. **The Rust crates and FP8/AMX kernels serve the generation path only.**
    The control-regime hot loop (`vjepa2_ac.py`, `lingbot_va*.py`) touches none
    of them — the "paged latent-cache manager" crate is exactly what the
@@ -75,7 +78,7 @@ Ranked by how cheaply they can bite:
 |---|---|
 | T1.1 Harden closed-loop serving (multi-session, planning service, streaming energy) | **Partial** — WS session exists; `plan()` unserved; no multi-session mgmt |
 | T1.2 Novel measured action-loop mechanism (batching, KV/latent reuse, energy-eval batching) | **Done and exceeded** — batching+bf16 measured both vendors; KV growing-window designed+GPU-verified; two publishable negative findings; CEM shared-prefix still open (the remaining half) |
-| T1.3 192 GiB → "runs what H100 can't" for control | **Partial** — 30-vs-11 sessions/GPU measured (capacity story is real); not load-tested, no headline demo |
+| T1.3 192 GiB → "runs what H100 can't" for control | **Partial, strengthened 2026-07-13** — LingBot-VA/H100 now has a real measured 24-session load test (`docs/LINGBOT_VA_LEVERS_2026_07.md`); V-JEPA and the MI300X row are still extrapolated only, no headline cross-vendor demo yet |
 | T1.4 Cosmos 3 action model on the seam | **Not started** — single-model-bet hedge is now LingBot-VA (done) instead; Cosmos 3 path still open |
 | T2.5 Real proprioceptive pose through `WorldState` (the credible robot demo) | **Not started** (zeros; `REFINE` note in `vjepa2_ac.py`) |
 | T2.6 FVD at N≥100 (generation credibility) | **Not done** |
@@ -282,22 +285,35 @@ AMD vacuum (§3.1). Sequence revenue in that order.
    closes Tier-1 item 1 and makes the wedge *demoable over the wire*.
 7. **Goal-image → goal-embedding endpoint** (the missing API for real
    energy-MPC use; walkthrough Part 5 names it).
-8. **N-session load test** — run N live sessions to failure on one GPU;
-   converts metric 4 from extrapolated to measured (and likely a headline:
-   "30+ resident robot sessions on one MI300X, measured").
+8. ~~**N-session load test**~~ — done for LingBot-VA/H100 2026-07-13
+   (`docs/LINGBOT_VA_LEVERS_2026_07.md`): 24 sessions measured, not
+   extrapolated, no OOM, no latency penalty found up to the HBM ceiling.
+   Still open: V-JEPA (either vendor) and LingBot-VA/MI300X (RunPod's AMD
+   catalog was empty when checked — retry when it returns).
 9. **LingBot-VA grounded recondition test** (real observations mid-session) —
    the untested half of the policy regime.
 
 ### P1 — Highest-performing (the publishable wedge work)
 
-10. **Portable LingBot-VA serving rungs** (the 927→142 ms ladder, reimplemented
-    vendor-neutral): paged/ragged KV on SDPA (+ ROCm AITER path), HIP/CUDA-graph
-    runtime-overhead elimination, async chunk pipeline. Target: **754.6 →
-    <400 ms/chunk on both vendors** without TensorRT/FlashInfer. Each rung is a
-    leaderboard row + a blog post + a design-partner selling point.
-11. **CEM shared-prefix paged KV** (ADR-0009's scoped-out second dimension) —
-    wire the Rust `repercep-cache` crate into the control path (it was built
-    for exactly this and currently serves nothing on the wedge). This is the
+10. **Portable LingBot-VA serving rungs** — first ladder measured 2026-07-13
+    (`docs/LINGBOT_VA_LEVERS_2026_07.md`): config-flag levers alone reach
+    **342.2 ms/chunk on H100** (2.0×, beats the <400ms target), but with a
+    real, unresolved caveat — the winning lever (CFG off) measurably shifts
+    the action-output distribution, not validated for task quality — and two
+    disclosed negative results (`torch.compile`, FlexAttention both slower
+    here, not yet root-caused). Still open: isolating step-count-only levers
+    from the CFG change; paged/ragged KV on SDPA + ROCm AITER; the MI300X
+    companion run (deferred, RunPod AMD catalog empty when checked).
+11. ~~**CEM shared-prefix paged KV**~~ (ADR-0009's scoped-out second
+    dimension) — **done 2026-07-13**, and simpler than expected: CEM's
+    lockstep-uniform rollouts don't need paged/ragged machinery, just a
+    batch-dimension generalization of the existing growing-window cache
+    (`docs/adr/0009-kv-latent-reuse.md` §"CEM-batched resolution"). CPU-parity
+    verified, ships opt-in (`plan_batched_kv=False`) pending its own
+    real-weights GPU verify — next GPU session should add that. The Rust
+    `repercep-cache` crate remains unwired into the control path (it's
+    metadata-only page bookkeeping, no tensor storage — doesn't actually fit
+    this design without further work, see the ADR). This is the
     remaining "novel mechanism" of strategy T1.2.
 12. **Sliding-window decision** (ADR-0009 open item): measure
     attention-sinks-style approximation vs reinit **on planning quality**
