@@ -251,18 +251,85 @@ different max width. `DreamZeroConfig` needs a `max_state_dim` field distinct fr
   bypassing `AutoConfig` entirely. `padding="max_length", max_length=512` (matches
   LingBot-VA's T5 padding convention).
 
-**Not yet done:** the actual `repercep.models.dreamzero_pipeline` module (this was
-all done in a standalone smoke-test script, not yet wired into
-`_DreamZeroPipeline`); the KV-cache **session-swap mechanism** (`WANPolicyHead` has
-*no* named/multi-session cache API like LingBot-VA's `wan_va` transformer — its
-`kv_cache1`/`current_start_frame`/`language`/`ys`/`clip_feas` are plain mutable
-instance attributes on one `nn.Module`, not keyed by session. Serving N concurrent
-sessions on one resident model needs the pipeline to save/restore these attributes
-per `session_id` around each call — new architectural finding, not previously
-known, and a real difference from LingBot-VA's native multi-session support);
-`encode_observation`'s real image loading (the smoke test used random pixels, not
-a decoded image file); real-vs-reference parity (needs `test_client_AR.py` + actual
-DROID eval data).
+**Done as of §2c below:** the actual `repercep.models.dreamzero_pipeline` module
+(this section originally described a standalone smoke-test script only); the
+session-swap mechanism; real (file-loaded) image encoding. **Still not done:**
+real-vs-reference parity (needs `test_client_AR.py` + actual DROID eval data —
+what's verified so far is "runs correctly end-to-end," not "matches the
+reference's numbers on real robot data").
+
+## 2c. The engine seam, wired and GPU-verified — 2026-07-13
+
+`repercep.models.dreamzero_pipeline.DreamZeroPipeline` now implements
+`_DreamZeroPipeline` for real (`src/repercep/models/dreamzero_pipeline.py`),
+against the same `sys.path`-inserted `groot` package as §2b — still no
+vendoring, no `pip install`. **`DreamZeroEngine.reset() → plan() → step() →
+plan()` ran end-to-end on the H100** against the real DROID checkpoint,
+through the actual Repercep seam this time, not a standalone script:
+
+```
+reset():  3.4s  context=(3, 56320)      step_index=0
+plan():   3.0s  action.space=dreamzero_chunk_droid  len=8
+step():   3.2s  step_index=1  context=(2, 56320)
+plan():   0.0s  (reused the chunk step() already parked -- no extra model call)
+peak HBM: 60.3 GiB
+```
+
+`56320 = 16 × 44 × 80` (out_dim × H_latent × W_latent, the flattened
+`WorldState.context` — same convention as `lingbot_va_pipeline.flatten_latent5d`).
+The second `plan()` returning instantly confirms `DreamZeroEngine`'s
+parked-action reuse (`session.pending_actions`, set by `step()`'s internal
+`infer_chunk` call) is correctly wired all the way through the pipeline —
+this is the Phase-0 chunk-loop design (validated against fakes back in
+`776649c`) now proven against the real model, not just a plausible contract.
+
+**Design decisions this pipeline makes, not fully forced by the reference API:**
+
+- **`encode_observation` runs a real forward pass**, not a lightweight encode.
+  DreamZero has no standalone "just encode the seed frame" primitive the way
+  LingBot-VA's streaming VAE does — `lazy_joint_video_action` bundles cache
+  creation + the seed frame's K/V write + the first block's denoise loop into
+  one call whenever `current_start_frame == 0`. So `DreamZeroEngine.reset()`
+  costs one real chunk's latency (~3-4s), not a cheap encode — this is
+  inherent to the model, not a pipeline inefficiency.
+- **Session-swap, not native named caching**: `_swap_in`/`_swap_out` in
+  `dreamzero_pipeline.py` save/restore `WANPolicyHead`'s eight mutable
+  instance attributes (`kv_cache1`, `kv_cache_neg`, `crossattn_cache`,
+  `crossattn_cache_neg`, `clip_feas`, `ys`, `current_start_frame`,
+  `language`) around every call, keyed by `session_id` in a plain dict — the
+  architectural gap flagged in §2b, now actually built and working (verified
+  by the two-session-worth-of-calls above never cross-contaminating; a
+  dedicated concurrent-two-session test is still open, see below).
+- **`recondition()`/`infer_chunk()` split maps onto one `latent_video` param**:
+  `recondition()` just stashes `obs_latent` (or `None` for imagination) on
+  the session; `infer_chunk()` passes it through as `lazy_joint_video_action`'s
+  `latent_video` argument. `data["images"]` still has to be shape-correct
+  even when its content is bypassed by `latent_video` — a zero tensor of the
+  right `(1, num_frame_per_block, 2×176, 2×320, 3)` shape works (confirmed:
+  the reference reads `videos.shape` for sizing before checking
+  `latent_video is not None`).
+- **`embodiment_id` and action/state denorm stats are read from the
+  checkpoint at pipeline-construction time** (`_resolve_embodiment_id`,
+  `_load_action_stats` — both parse `experiment_cfg/{conf.yaml,metadata.json}`
+  once at `load()`), not hardcoded to DROID's specific numbers — the pipeline
+  would resolve correctly for a differently-co-trained checkpoint pointed at
+  by `DreamZeroConfig.repo`, though only DROID's channel keys
+  (`joint_position`+`gripper_position`) are wired in `_DROID_ACTION_KEYS`.
+
+**Not yet exercised, real open items:**
+- **Real (non-synthetic) DROID camera images** — every run so far used
+  random-pixel PNGs. Shapes and the pipeline's own arithmetic are confirmed;
+  visual/task quality is not.
+- **True concurrent multi-session** — the session-swap mechanism has run
+  sequentially (one session, several calls); two sessions interleaved on one
+  resident model (the actual point of building a swap mechanism at all) is
+  untested.
+- **`release()`/`close()`'s leak-freedom** — called once at the end of the
+  smoke run without asserting the session dict actually emptied.
+- **Levers (Phase 2)**: this was all `TORCHDYNAMO_DISABLE=1` (eager), default
+  8-of-16 DiT-cache skip (§2 point 5's correction), `ip_size=1` un-batched
+  CFG. None of the latency levers from §4 Phase 2 have been touched.
+- **Real parity** — `test_client_AR.py` + actual DROID eval data, still open.
 
 ## 3. Mapping onto the `InteractiveWorldModel` seam
 

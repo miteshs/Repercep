@@ -1,11 +1,12 @@
-"""Tests for the DreamZero engine's model-agnostic chunk-loop layer (Phase 0).
+"""Tests for the DreamZero engine's model-agnostic chunk-loop layer.
 
 Exercises Protocol conformance, session bookkeeping, and — with an injected
 fake pipeline — the recondition-then-predict step loop and policy-mode plan.
 Mirrors ``test_lingbot_va.py``: torch-dependent parts skip cleanly without
-torch; the model-specific pipeline is unstarted Phase-1 work and
-``DreamZeroEngine.load`` is asserted to raise unconditionally (see
-``docs/DREAMZERO_PORT_PLAN.md``).
+torch; the model-specific pipeline (:mod:`repercep.models.dreamzero_pipeline`)
+is GPU-only and asserted here only to raise the setup recipe absent the
+research repo (see ``docs/DREAMZERO_PORT_PLAN.md`` §2b for the GPU-verified
+real forward pass this pipeline is built from).
 """
 
 from __future__ import annotations
@@ -114,17 +115,17 @@ def test_engine_not_ready_without_pipeline() -> None:
     assert engine.info().ready is False
 
 
-def test_load_raises_unconditionally_phase_0() -> None:
-    # Phase 1 (vendoring CausalWanModel etc.) hasn't landed — load() always
-    # fails with the port recipe, unlike LingBot-VA's load() which only fails
-    # absent the research package.
-    with pytest.raises(NotImplementedError, match="DREAMZERO_PORT_PLAN"):
+def test_load_requires_research_repo() -> None:
+    # Without the research repo importable as 'groot' the real-pipeline
+    # build fails with the setup recipe (the GPU box sys.path-inserts it per
+    # the port plan) -- same pattern as LingBot-VA's load().
+    with pytest.raises(RuntimeError, match="DREAMZERO_PORT_PLAN"):
         _toy_engine(pipeline=None).load()
 
 
 def test_load_is_noop_when_pipeline_already_injected() -> None:
     # A test (or future advanced caller) that injects a pipeline directly
-    # must not be tripped up by load()'s unconditional raise.
+    # must not be tripped up by load() trying to build a real one.
     engine = _toy_engine(_FakePipeline())
     engine.load()  # must not raise
     assert engine.is_loaded

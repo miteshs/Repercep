@@ -1,16 +1,17 @@
-"""DreamZero engine — the third model on the interactive seam (Phase 0 scaffold).
+"""DreamZero engine — the third model on the interactive seam.
 
 DreamZero (NVIDIA GEAR, 2026) is an autoregressive **world-action model**: a
 ``CausalWanModel`` — Wan2.1-I2V-14B-480P DiT extended with action/state
 registers — over Wan2.1 VAE latents, trained with flow matching, generating
-**block-by-block** with a named per-layer KV cache. Per block it jointly
-denoises video-latent noise and action-register noise; the action-register
-slice decodes into an executed action chunk. Same policy regime as
-LingBot-VA (the model proposes its own actions; no external CEM), but a
-different backbone/cache shape and attached to the GR00T 2 ecosystem. See
+**block-by-block** with a per-layer KV cache. Per block it jointly denoises
+video-latent noise and action-register noise; the action-register slice
+decodes into an executed action chunk. Same policy regime as LingBot-VA (the
+model proposes its own actions; no external CEM), but a different
+backbone/cache shape and attached to the GR00T 2 ecosystem. See
 ``docs/DREAMZERO_PORT_PLAN.md`` for the full scoping (interfaces verified
 against ``dreamzero0/dreamzero`` ``socket_test_optimized_AR.py`` +
-``groot/vla/model/dreamzero/``).
+``groot/vla/model/dreamzero/``, and §2b for the GPU-verified real forward
+pass, 2026-07-13).
 
 This module wraps it as an
 :class:`~repercep.runtime.interactive.InteractiveWorldModel`. What is
@@ -19,27 +20,39 @@ session bookkeeping, the recondition-then-predict :meth:`DreamZeroEngine.step`,
 and the policy-mode :meth:`DreamZeroEngine.plan`. They run against an
 injected ``pipeline`` (see :class:`_DreamZeroPipeline`), so the loop is
 exercised on CPU without weights — the ``vjepa2_ac.py`` / ``lingbot_va.py``
-pattern. Unlike LingBot-VA, there is no pipeline module yet: the model-
-specific half (vendoring ``CausalWanModel``, the SDPA attention path,
-schedulers, and the VAE/T5/CLIP encoders) is Phase 1 of the port plan, so
-:meth:`DreamZeroEngine.load` raises ``NotImplementedError`` unconditionally
-with the recipe until it lands.
+pattern. The model-specific pipeline
+(:mod:`repercep.models.dreamzero_pipeline`, Phase 1) ``sys.path``-inserts the
+research repo rather than vendoring or ``pip install``-ing it (same
+discipline as ``lingbot_va_pipeline.py``'s ``import wan_va``); its denoise
+loop is GPU-verified working, but the pipeline module itself hasn't yet been
+exercised through this engine's chunk loop end-to-end (only via a standalone
+smoke-test script) — see the port plan §2b for exactly what's confirmed vs.
+still open.
 
-Chunk-loop geometry note (the DreamZero-specific numbers, vs LingBot-VA's
-4-frame chunks): one block is a *single* latent frame
-(``num_frame_per_block=1``); the executed unit per :meth:`step`/:meth:`plan`
-is one **action** chunk of ``num_action_per_block=32`` actions. The KV cache
-carries a full negative-prompt copy for CFG plus a 512-token cross-attn
-cache, and resets when the attention window (``attn_window_frames=21``
-frames) fills or the task/language changes — bookkeeping the pipeline owns,
-not this layer.
+Chunk-loop geometry note (the DreamZero-DROID checkpoint's actual numbers —
+confirmed against its real ``config.json``, not the research repo's generic
+demo/socket-server comments, which describe a different geometry — see the
+port plan §1's correction): one block is **two** latent frames
+(``num_frame_per_block=2``); the executed unit per :meth:`step`/:meth:`plan`
+is one **action** chunk of ``num_action_per_block=24`` actions,
+``action_dim=32`` padded (DROID's real wire width is 8 — see
+``DreamZeroConfig.used_action_dim``). The KV cache carries a full
+negative-prompt copy for CFG plus a 512-token cross-attn cache, and resets
+when the attention window (``attn_window_frames=21`` frames) fills or the
+task/language changes — bookkeeping the pipeline owns, not this layer.
 
-State note (same caveat as LingBot-VA): the native serving state is a
-per-session mutable KV cache inside the transformer, so the seam's "previous
-state is not mutated" branching guarantee does not hold in v0 — the engine
-keeps one live branch per session. A base shared with ``lingbot_va`` ("chunked
-VA over a Wan-family causal DiT with named KV cache") is a Phase-0 design
-question per the port plan, not a commitment made here.
+State note (same caveat as LingBot-VA, **plus a further wrinkle verified on
+GPU**): the native serving state is a per-session mutable KV cache inside
+the transformer, so the seam's "previous state is not mutated" branching
+guarantee does not hold in v0 — the engine keeps one live branch per
+session. Worse than LingBot-VA's case: ``WANPolicyHead`` has *no* named
+multi-session cache API at all (unlike ``wan_va``'s ``cache_name`` kwarg) —
+its cache/clock/language state are plain mutable instance attributes on one
+``nn.Module``, so ``dreamzero_pipeline.py`` implements its own session-swap
+(save/restore those attributes around every call) rather than delegating to
+a native per-session keying mechanism. A base shared with ``lingbot_va``
+("chunked VA over a Wan-family causal DiT with named KV cache") is a
+Phase-0 design question per the port plan, not a commitment made here.
 """
 
 from __future__ import annotations
@@ -255,31 +268,24 @@ class DreamZeroEngine:
     # --- loading (the model-specific port, Phase 1 — not landed) ---
 
     def load(self) -> None:
-        """Build the real pipeline. Not yet — Phase 1 of the port plan.
+        """Build the real pipeline (GPU: needs ``groot`` importable + the checkpoint).
 
-        Unlike :meth:`LingBotVAEngine.load` (which fails only when the
-        research package isn't importable), there is no
-        ``repercep.models.dreamzero_pipeline`` module yet: vendoring
-        ``CausalWanModel`` + the SDPA attention path + schedulers +
-        VAE/T5/CLIP encoders from ``groot/vla/model/dreamzero/modules/`` is
-        unstarted work. Raises unconditionally (idempotent only in the sense
-        that an already-injected test pipeline short-circuits it) until that
-        lands. Do **not** ``pip install`` the ``dreamzero0/dreamzero``
-        package as a shortcut: its pyproject hard-requires ``tensorrt``,
-        ``ray``, ``mujoco``, ``deepspeed``, and a ``gear`` package, none of
-        which the inference loop needs — and ``tensorrt`` won't install on
-        ROCm. See ``docs/DREAMZERO_PORT_PLAN.md`` Phase 1.
+        The model-specific half lives in
+        :mod:`repercep.models.dreamzero_pipeline` (Phase 1, GPU-verified on
+        an H100 2026-07-13 — see ``docs/DREAMZERO_PORT_PLAN.md`` §2b): the
+        research repo is ``sys.path``-inserted (``REPERCEP_DREAMZERO_SRC``
+        env var, or already on ``sys.path``) rather than vendored or
+        ``pip install``-ed — its pyproject hard-requires ``tensorrt``,
+        ``ray``, ``mujoco``, ``deepspeed``, and a ``gear`` package that plain
+        imports never touch (and ``tensorrt`` won't install on ROCm). Raises
+        ``RuntimeError`` with the setup recipe when the research package
+        isn't importable, same as :meth:`LingBotVAEngine.load`. Idempotent.
         """
         if self._pipeline is not None:
             return
-        raise NotImplementedError(
-            "DreamZero pipeline not ported yet (Phase 1, docs/DREAMZERO_PORT_PLAN.md): "
-            "vendor CausalWanModel + wan2_1_attention (SDPA path) + schedulers + "
-            "VAE/T5/CLIP encoders from groot/vla/model/dreamzero/modules/ into a new "
-            "repercep.models.dreamzero_pipeline module against the GEAR-Dreams/DreamZero-DROID "
-            "checkpoint. Do not pip install dreamzero0/dreamzero directly (pulls in "
-            "tensorrt/ray/mujoco/deepspeed/gear; tensorrt won't build on ROCm)."
-        )
+        from repercep.models.dreamzero_pipeline import build_pipeline
+
+        self._pipeline = build_pipeline(self._backend, self._config)
 
     # --- the interactive seam ---
 
