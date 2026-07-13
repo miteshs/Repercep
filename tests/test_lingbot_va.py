@@ -46,17 +46,35 @@ class _FakePipeline:
         self.reset_calls: list[tuple[str, str | None]] = []
         self.recondition_calls: list[tuple[str, tuple[int, ...], int]] = []
         self.close_calls: list[str] = []
+        self.encode_calls: list[str] = []
+        # Per-session state, keyed explicitly by session_id — mirrors the real
+        # pipeline's ``self._sessions`` dict closely enough to exercise the
+        # session-association bug the ``session_id`` parameter fixes (see
+        # ``test_interleaved_resets_associate_observations_with_correct_session``).
+        self.session_state: dict[str, dict[str, object]] = {}
 
     def reset(self, session_id: str, prompt: str | None) -> None:
         self.reset_calls.append((session_id, prompt))
+        self.session_state[session_id] = {"prompt": prompt}
 
     def close(self, session_id: str) -> None:
         self.close_calls.append(session_id)
 
-    def encode_observation(self, conditioning: ConditioningInput) -> torch.Tensor:
+    def encode_observation(
+        self, session_id: str, conditioning: ConditioningInput
+    ) -> torch.Tensor:
         import torch
 
-        return torch.zeros(self.chunk, self.dim)
+        self.encode_calls.append(session_id)
+        # A distinct value per call (0.0 on the first call, preserving the
+        # existing single-session tests' expectation) so two sessions'
+        # encoded observations are guaranteed distinguishable regardless of
+        # call order — the old ``next(reversed(...))`` bug would have made
+        # every encode land on whichever session was *last reset*, silently
+        # aliasing distinct sessions' observations.
+        latent = torch.full((self.chunk, self.dim), float(len(self.encode_calls) - 1))
+        self.session_state[session_id]["init_latent"] = latent
+        return latent
 
     def infer_chunk(
         self, session_id: str, frame_st_id: int, init_latent: torch.Tensor | None
@@ -196,3 +214,75 @@ def test_step_rejects_foreign_world_state() -> None:
     foreign = WorldState(context=torch.zeros(1, 8), step_index=0, session_id="nope")
     with pytest.raises(KeyError, match="unknown session"):
         engine.step(foreign, Action(values=[0.0] * 30))
+
+
+# --- session-ordering (encode_observation's explicit session_id, Part 2b) ---
+
+
+def test_interleaved_resets_associate_observations_with_correct_session() -> None:
+    """Regression test for the ``next(reversed(self._sessions))`` bug.
+
+    Simulates the ordering that lookup got wrong directly at the pipeline
+    level: two sessions opened back-to-back (``reset("A")``, ``reset("B")``)
+    *before* either's observation is encoded. Under the old "most recently
+    reset session" lookup, ``encode_observation`` for "A" would silently have
+    resolved to "B" (whichever session was inserted last), because that
+    lookup ignored which session the caller actually meant. Threading
+    ``session_id`` explicitly through the Protocol removes the ambiguity
+    regardless of call order — this test would have failed under the old
+    approach (both latents landing on session "B"'s slot) and passes now.
+    """
+    pytest.importorskip("torch")
+    import torch
+
+    pipeline = _FakePipeline()
+    pipeline.reset("sess-a", "prompt a")
+    pipeline.reset("sess-b", "prompt b")  # "B" is now the most-recently-inserted session.
+    latent_a = pipeline.encode_observation("sess-a", ConditioningInput())
+    latent_b = pipeline.encode_observation("sess-b", ConditioningInput())
+
+    assert pipeline.session_state["sess-a"]["init_latent"] is latent_a
+    assert pipeline.session_state["sess-b"]["init_latent"] is latent_b
+    assert not torch.equal(latent_a, latent_b)
+    assert pipeline.encode_calls == ["sess-a", "sess-b"]
+
+
+def test_two_engine_sessions_keep_distinct_contexts() -> None:
+    """End-to-end (through ``LingBotVAEngine.reset``): two sessions opened on
+    one engine get their own, non-aliased ``WorldState.context`` — the
+    engine-level face of the same fix.
+    """
+    torch = pytest.importorskip("torch")
+    pipeline = _FakePipeline()
+    engine = _toy_engine(pipeline)
+
+    state_a = engine.reset(ConditioningInput(), RolloutParams())
+    state_b = engine.reset(ConditioningInput(), RolloutParams())
+
+    assert state_a.session_id != state_b.session_id
+    assert not torch.equal(state_a.context, state_b.context)
+    assert pipeline.session_state[state_a.session_id]["init_latent"] is state_a.context
+    assert pipeline.session_state[state_b.session_id]["init_latent"] is state_b.context
+
+
+# --- latent flatten/unflatten round trip (Part 2c CPU-testable helpers) ---
+
+
+def test_flatten_unflatten_latent_roundtrip() -> None:
+    """``flatten_latent5d``/``unflatten_latent`` (extracted from the
+    recondition/encode/infer_chunk call sites in ``lingbot_va_pipeline.py``)
+    round-trip in both directions given the fixed ``(c, h, w)`` geometry —
+    exactly the kind of reshape/permute-order bug that's silent (wrong
+    numbers, not a crash) and cheap to catch here vs. on a GPU pod.
+    """
+    torch = pytest.importorskip("torch")
+    from repercep.models.lingbot_va_pipeline import flatten_latent5d, unflatten_latent
+
+    c, t, h, w = 3, 4, 5, 6
+    latent5d = torch.randn(1, c, t, h, w)
+    flat = flatten_latent5d(latent5d)
+    assert tuple(flat.shape) == (t, c * h * w)
+    assert torch.equal(unflatten_latent(flat, c, h, w), latent5d)
+
+    flat2 = torch.randn(t, c * h * w)
+    assert torch.equal(flatten_latent5d(unflatten_latent(flat2, c, h, w)), flat2)

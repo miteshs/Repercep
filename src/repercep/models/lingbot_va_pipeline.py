@@ -75,6 +75,31 @@ def _ensure_flash_attn_stub() -> None:
         sys.modules["flash_attn"] = stub
 
 
+def flatten_latent5d(latent5d: torch.Tensor) -> torch.Tensor:
+    """``(1, C, T, H, W)`` -> ``(T, C*H*W)`` — the seam's ``WorldState.context`` layout.
+
+    Batch-1 5-D pipeline latents (video-VAE convention) flattened to the
+    seam's 2-D per-step embedding rows. Inverse of :func:`unflatten_latent`.
+    Standalone (no ``wan_va``/pipeline dependency) so it's unit-testable on
+    CPU without the research repo — this exact reshape/permute order is the
+    kind of thing that silently corrupts a rollout if it drifts, so a
+    round-trip test guards it (``tests/test_lingbot_va.py``).
+    """
+    _c, t, _h, _w = latent5d.shape[1:]
+    return latent5d[0].permute(1, 0, 2, 3).reshape(int(t), -1)
+
+
+def unflatten_latent(flat: torch.Tensor, c: int, h: int, w: int) -> torch.Tensor:
+    """``(T, C*H*W)`` -> ``(1, C, T, H, W)``, given the fixed per-frame geometry.
+
+    Inverse of :func:`flatten_latent5d`. The geometry (``c, h, w``) isn't
+    recoverable from the flat tensor alone — it's ``LingBotVAPipeline``'s
+    ``_latent_geom``, fixed by the first :meth:`LingBotVAPipeline.encode_observation`
+    call — so the caller supplies it.
+    """
+    return flat.reshape(-1, c, h, w).permute(1, 0, 2, 3).unsqueeze(0)
+
+
 def build_pipeline(backend: Backend, config: LingBotVAConfig) -> LingBotVAPipeline:
     """Import the research package and construct the real pipeline."""
     _ensure_flash_attn_stub()
@@ -128,6 +153,17 @@ class LingBotVAPipeline:
             .eval()
             .requires_grad_(False)
         )
+        if config.compile_transformer:
+            # torch.compile wraps in an OptimizedModule that proxies
+            # attribute access (``clear_cache``/``create_empty_cache``/
+            # ``clear_pred_cache``) through to the original module, so the
+            # named-KV-cache protocol calls below still work unmodified. The
+            # cache-mutation kwargs (``cache_name``, ``update_cache``) are
+            # dynamic per-call values, which is exactly where graph breaks
+            # are most likely — see ``scripts/bench_lingbot_va_levers.py``
+            # rung 3 for how that's measured (and reported as
+            # "not measurable" rather than faked, if it breaks).
+            self._transformer = torch.compile(self._transformer)
 
         self._scheduler = FlowMatchScheduler(shift=5.0, sigma_min=0.0, extra_one_step=True)
         self._action_scheduler = FlowMatchScheduler(shift=1.0, sigma_min=0.0, extra_one_step=True)
@@ -181,20 +217,27 @@ class LingBotVAPipeline:
             "init_latent": None,
         }
 
-    def encode_observation(self, conditioning: ConditioningInput) -> torch.Tensor:
+    def encode_observation(
+        self, session_id: str, conditioning: ConditioningInput
+    ) -> torch.Tensor:
         """Streaming-VAE encode of the seed observation → flattened ``(T, D)``.
 
         ``conditioning.uri`` is a directory holding one ``<cam_key>.png`` per
-        camera (the reference demo layout). The 5-D latent is cached on the
-        *most recently reset* session (reset → encode is the seam's call
-        order) and returned flattened for ``WorldState.context``.
+        camera (the reference demo layout). The 5-D latent is cached on
+        ``session_id`` explicitly and returned flattened for
+        ``WorldState.context``. ``session_id`` is threaded through rather
+        than inferred from "the most recently reset session" (a
+        ``next(reversed(self._sessions))`` lookup used to do that) — that
+        inference is only correct if ``reset`` → ``encode_observation`` never
+        interleaves across sessions, which concurrent/async session opens can
+        violate (see ``tests/test_lingbot_va.py``'s interleaved-reset test).
         """
-        latent5d = _encode_obs_dir(self, conditioning)
-        session = self._sessions[next(reversed(self._sessions))]
+        latent5d = _encode_obs_dir(self, session_id, conditioning)
+        session = self._sessions[session_id]
         session["init_latent"] = latent5d
-        c, t, h, w = latent5d.shape[1:]
+        c, _t, h, w = latent5d.shape[1:]
         self._latent_geom = (int(c), int(h), int(w))
-        return latent5d[0].permute(1, 0, 2, 3).reshape(int(t), -1)
+        return flatten_latent5d(latent5d)
 
     def infer_chunk(
         self, session_id: str, frame_st_id: int, init_latent: torch.Tensor | None
@@ -297,7 +340,9 @@ def _encode_prompt(
     return embeds, negative
 
 
-def _encode_obs_dir(pipe: LingBotVAPipeline, conditioning: ConditioningInput) -> torch.Tensor:
+def _encode_obs_dir(
+    pipe: LingBotVAPipeline, session_id: str, conditioning: ConditioningInput
+) -> torch.Tensor:
     """Per-camera PNGs → resized clip → streaming-VAE latents (5-D, normalized)."""
     import os
 
@@ -309,7 +354,7 @@ def _encode_obs_dir(pipe: LingBotVAPipeline, conditioning: ConditioningInput) ->
     if not conditioning.uri:
         raise ValueError("LingBot-VA reset needs conditioning.uri = obs image directory")
     task = pipe._task
-    session = pipe._sessions[next(reversed(pipe._sessions))]
+    session = pipe._sessions[session_id]
     videos = []
     for key in task.obs_cam_keys:
         img = np.array(Image.open(os.path.join(conditioning.uri, f"{key}.png")).convert("RGB"))
@@ -448,8 +493,7 @@ def _infer_chunk(
                 actions[:, :, 0:1] = 0
 
     actions[:, ~action_mask] *= 0
-    flat_latents = latents[0].permute(1, 0, 2, 3).reshape(int(latents.shape[2]), -1)
-    return flat_latents, _denormalize_actions(task, actions)
+    return flatten_latent5d(latents), _denormalize_actions(task, actions)
 
 
 def _repeat_for_cfg(d: dict[str, Any], session: dict[str, Any], bsz: int) -> dict[str, Any]:
@@ -495,7 +539,7 @@ def _recondition(
     latent5d: torch.Tensor | None
     if obs_latent is not None and pipe._latent_geom is not None:
         c, h, w = pipe._latent_geom
-        latent5d = obs_latent.reshape(-1, c, h, w).permute(1, 0, 2, 3).unsqueeze(0)
+        latent5d = unflatten_latent(obs_latent, c, h, w)
     elif frame_st_id == 0:
         latent5d = session["init_latent"]
     else:

@@ -72,7 +72,9 @@ class _VAPipeline(Protocol):
 
     def reset(self, session_id: str, prompt: str | None) -> None: ...
 
-    def encode_observation(self, conditioning: ConditioningInput) -> torch.Tensor: ...
+    def encode_observation(
+        self, session_id: str, conditioning: ConditioningInput
+    ) -> torch.Tensor: ...
 
     def infer_chunk(
         self, session_id: str, frame_st_id: int, init_latent: torch.Tensor | None
@@ -138,6 +140,13 @@ class LingBotVAConfig:
     guidance_scale: float = 5.0
     action_guidance_scale: float = 1.0
     attn_mode: str = "torch"
+    # torch.compile the transformer at construction time (see
+    # ``scripts/bench_lingbot_va_levers.py`` rung 3). One-time compile cost on
+    # the first forward per distinct input shape; the named-KV-cache mutation
+    # (``cache_name``/``update_cache`` kwargs) may trigger graph breaks — the
+    # lever bench documents that failure mode instead of fabricating a number
+    # when it hits one.
+    compile_transformer: bool = False
 
 
 @dataclass(slots=True)
@@ -212,7 +221,7 @@ class LingBotVAEngine:
         assert self._pipeline is not None
         session_id = uuid.uuid4().hex
         self._pipeline.reset(session_id, self._config.prompt)
-        init_latent = self._pipeline.encode_observation(conditioning)
+        init_latent = self._pipeline.encode_observation(session_id, conditioning)
         self._sessions[session_id] = _Session()
         return WorldState(context=init_latent, step_index=0, session_id=session_id)
 

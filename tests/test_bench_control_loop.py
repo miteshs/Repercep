@@ -72,6 +72,101 @@ def test_bench_control_loop_result_is_json_serializable() -> None:
     assert json.loads(json.dumps(result))["plan_horizon"] == 2
 
 
+def test_bench_control_loop_sessions_default_is_backward_compatible() -> None:
+    """``sessions`` defaults to 1: no concurrency phase runs, and the result
+    matches the pre-flag shape (just an added ``concurrency: None`` key).
+    """
+    pytest.importorskip("torch")
+    engine = _clb.build_engine(_fake_args())
+    result = _clb.bench_control_loop(
+        engine, warmup=1, step_iters=3, plan_calls=1, horizon=2, action_dim=4
+    )
+    assert result["concurrency"] is None
+    assert result["step_ms_warm"] > 0
+
+
+def test_bench_control_loop_sessions_n_reports_true_measured_curve() -> None:
+    """``--sessions N`` (N>1): opens N sessions, records a true incremental
+    HBM curve (not the single-session extrapolation), round-robins >=3 step()
+    calls per session, and asserts finiteness — the Part 2a concurrency
+    hardening. Exercised generically through ``--fake`` (CPU has no HBM
+    story, but the round-robin/finite-assertion/session-bookkeeping logic is
+    identical to the GPU path).
+    """
+    pytest.importorskip("torch")
+    engine = _clb.build_engine(_fake_args())
+    result = _clb.bench_control_loop(
+        engine, warmup=1, step_iters=3, plan_calls=1, horizon=2, action_dim=4, sessions=3
+    )
+    conc = result["concurrency"]
+    assert conc is not None
+    assert conc["sessions_requested"] == 3
+    assert conc["resident_sessions_measured"] == 3
+    assert len(conc["hbm_curve_gib"]) == 3
+    assert len(conc["marginal_gib_measured_per_session"]) == 3
+    assert len(conc["step_ms_per_session_at_n_resident"]) == 3
+    assert conc["round_robin_rounds"] == 3
+    assert conc["all_finite"] is True
+    # Every per-session step latency was actually measured (>=3 timed rounds).
+    assert all(ms is not None and ms >= 0 for ms in conc["step_ms_per_session_at_n_resident"])
+
+
+def test_bench_control_loop_sessions_raises_on_non_finite_step() -> None:
+    """The finite-result assertion actually fires on NaN/inf, rather than
+    silently accepting a corrupted rollout.
+    """
+    pytest.importorskip("torch")
+    import dataclasses
+
+    engine = _clb.build_engine(_fake_args())
+
+    real_step = engine.step
+    real_reset = engine.reset
+    reset_calls = {"n": 0}
+
+    def _counting_reset(conditioning: object, params: object) -> object:
+        reset_calls["n"] += 1
+        return real_reset(conditioning, params)
+
+    def _poison_step(state: object, action: object) -> object:
+        new_state, latent_step = real_step(state, action)
+        # Only the concurrency phase opens a 2nd+ session (main flow resets
+        # once) — poisoning gates on that instead of a magic step() call
+        # count, so it doesn't depend on plan()'s internal CEM rollout count.
+        if reset_calls["n"] > 1:
+            ctx = new_state.context.clone()
+            ctx[0, 0] = float("nan")
+            new_state = dataclasses.replace(new_state, context=ctx)
+        return new_state, latent_step
+
+    engine.step = _poison_step
+    engine.reset = _counting_reset
+    with pytest.raises(AssertionError, match="non-finite"):
+        _clb.bench_control_loop(
+            engine, warmup=0, step_iters=1, plan_calls=1, horizon=2, action_dim=4, sessions=2
+        )
+
+
+def test_lingbot_va_lever_overrides_only_discloses_non_default() -> None:
+    """RESULT-line disclosure (CONTROL_LOOP_BENCH.md §4): only flags that
+    differ from ``LingBotVAConfig``'s defaults appear.
+    """
+    args = _fake_args(
+        engine="lingbot-va",
+        guidance_scale=1.0,  # non-default (CFG off)
+        action_guidance_scale=1.0,  # default
+        video_steps=5,  # default
+        action_steps=4,  # non-default
+        attn_mode="flex",  # non-default
+        compile=False,  # default
+    )
+    overrides = _clb.lingbot_va_lever_overrides(args)
+    assert overrides == {"guidance_scale": 1.0, "action_steps": 4, "attn_mode": "flex"}
+
+    # vjepa2-ac: never discloses LingBot-VA levers.
+    assert _clb.lingbot_va_lever_overrides(_fake_args()) == {}
+
+
 def test_bench_control_loop_chunked_engine_forces_real_plan_call() -> None:
     """LingBot-VA-shaped (chunked) engines: plan() must do real work, not a
     cache hit off the pending_actions a preceding step() parked (the bug this

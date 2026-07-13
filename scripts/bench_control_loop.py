@@ -104,7 +104,42 @@ def build_engine(args: argparse.Namespace) -> Any:
     # not a toy-weights CPU stand-in).
     if args.fake:
         raise NotImplementedError("--fake is not supported for --engine lingbot-va")
-    return LingBotVAEngine(backend, LingBotVAConfig(prompt=args.prompt))
+    return LingBotVAEngine(
+        backend,
+        LingBotVAConfig(
+            prompt=args.prompt,
+            guidance_scale=args.guidance_scale,
+            action_guidance_scale=args.action_guidance_scale,
+            num_inference_steps=args.video_steps,
+            action_num_inference_steps=args.action_steps,
+            attn_mode=args.attn_mode,
+            compile_transformer=args.compile,
+        ),
+    )
+
+
+# Defaults mirrored from ``LingBotVAConfig`` — used to detect (and disclose)
+# non-default lever flags in the RESULT line, per CONTROL_LOOP_BENCH.md §4's
+# "disclose CFG scale, denoise step counts, attention path" submission rule.
+_LINGBOT_VA_LEVER_DEFAULTS = {
+    "guidance_scale": 5.0,
+    "action_guidance_scale": 1.0,
+    "video_steps": 5,
+    "action_steps": 10,
+    "attn_mode": "torch",
+    "compile": False,
+}
+
+
+def lingbot_va_lever_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """Non-default LingBot-VA lever flags, for RESULT-line disclosure."""
+    if args.engine != "lingbot-va":
+        return {}
+    return {
+        flag: getattr(args, flag)
+        for flag, default in _LINGBOT_VA_LEVER_DEFAULTS.items()
+        if getattr(args, flag) != default
+    }
 
 
 def bench_control_loop(
@@ -117,6 +152,8 @@ def bench_control_loop(
     action_dim: int = 7,
     obs_dir: str | None = None,
     seed: int = 0,
+    sessions: int = 1,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Measure the four leaderboard metrics on one persistent session.
 
@@ -127,6 +164,18 @@ def bench_control_loop(
     chunk); detected via ``_wire_action_dim`` (see ``repercep.models.lingbot_va``)
     so one harness drives both regimes without an engine-kind flag threaded
     through every call site.
+
+    ``sessions`` (default 1, backward compatible): when >1, opens
+    ``sessions - 1`` additional sessions on the SAME loaded engine after the
+    metrics above (which stay computed on session 0 alone, unperturbed), then
+    round-robins step() calls across all of them — a true N-measured resident
+    curve alongside metric 4's single-session extrapolation, so the
+    extrapolation's accuracy can be checked against reality (see
+    ``result["concurrency"]``).
+
+    ``extra``: caller-supplied fields merged into the result (e.g. disclosure
+    of non-default LingBot-VA lever flags — CFG scale, denoise step counts,
+    attention path — per CONTROL_LOOP_BENCH.md §4's submission rule).
     """
     torch.manual_seed(seed)
     on_gpu = torch.cuda.is_available()
@@ -206,8 +255,63 @@ def bench_control_loop(
         hbm_total_gib = 0.0
         resident_sessions = None
 
+    # 5. (optional) N-live-session concurrency: a true measured curve, not the
+    # metric-4 extrapolation from ONE session's marginal HBM. Opened AFTER the
+    # metrics above so session 0's numbers stay exactly what they were before
+    # this flag existed (sessions=1 is the unperturbed default path).
+    concurrency: dict[str, Any] | None = None
+    if sessions > 1:
+        states = [state]
+        hbm_curve_gib = [peak_gib]  # peak after session 0 (already open above)
+        for _ in range(sessions - 1):
+            s = engine.reset(conditioning, RolloutParams(horizon=horizon))
+            _sync()
+            states.append(s)
+            hbm_curve_gib.append(torch.cuda.max_memory_allocated() / 1024**3 if on_gpu else 0.0)
+        marginal_gib = [
+            round(hbm_curve_gib[0] - baseline_gib, 2),
+            *[round(hbm_curve_gib[i] - hbm_curve_gib[i - 1], 2) for i in range(1, len(states))],
+        ]
+
+        # Round-robin: 1 untimed warmup pass, then >=3 timed passes per session.
+        def _round_robin(rounds: int, *, timed: bool) -> list[list[float]]:
+            per_session_ms: list[list[float]] = [[] for _ in states]
+            for _ in range(rounds):
+                for i, s in enumerate(states):
+                    _sync()
+                    t0 = time.perf_counter()
+                    s, _ = engine.step(s, rand_action())
+                    _sync()
+                    states[i] = s
+                    if timed:
+                        per_session_ms[i].append((time.perf_counter() - t0) * 1000)
+                    if not torch.isfinite(s.context).all():
+                        raise AssertionError(
+                            f"non-finite WorldState.context at session {i} "
+                            f"({sessions} resident) — NaN/inf under N-session concurrency"
+                        )
+            return per_session_ms
+
+        _round_robin(1, timed=False)
+        per_session_step_ms = _round_robin(3, timed=True)
+
+        concurrency = {
+            "sessions_requested": sessions,
+            "hbm_curve_gib": [round(x, 2) for x in hbm_curve_gib],
+            "marginal_gib_measured_per_session": marginal_gib,
+            "avg_marginal_gib_measured": round(sum(marginal_gib) / len(marginal_gib), 2),
+            "single_session_extrapolated_marginal_gib": round(session_gib, 2),
+            "resident_sessions_extrapolated": resident_sessions,
+            "resident_sessions_measured": sessions,
+            "step_ms_per_session_at_n_resident": [
+                round(sum(ms) / len(ms), 2) if ms else None for ms in per_session_step_ms
+            ],
+            "all_finite": True,
+            "round_robin_rounds": 3,
+        }
+
     info = engine.info()
-    return {
+    result = {
         "mode": "control_loop_bench_v0",
         "model": info.model_name,
         "device": info.device,
@@ -231,7 +335,11 @@ def bench_control_loop(
         "step_iters": step_iters,
         "plan_calls": plan_calls,
         "state_carryover": True,
+        "concurrency": concurrency,
     }
+    if extra:
+        result.update(extra)
+    return result
 
 
 def main() -> int:
@@ -258,6 +366,34 @@ def main() -> int:
         help="lingbot-va: the goal instruction (text-conditioned policy)",
     )
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--sessions",
+        type=int,
+        default=1,
+        help="open N sessions and round-robin step() across them (N>1: true "
+        "measured resident-session curve alongside the single-session extrapolation)",
+    )
+    # LingBot-VA serving-latency levers (scripts/bench_lingbot_va_levers.py's
+    # rungs), plumbed here so bench_control_loop.py can drive any of them
+    # too. Defaults match LingBotVAConfig's, so existing invocations are
+    # unaffected.
+    ap.add_argument("--guidance-scale", type=float, default=5.0, help="lingbot-va: video CFG scale")
+    ap.add_argument(
+        "--action-guidance-scale", type=float, default=1.0, help="lingbot-va: action CFG scale"
+    )
+    ap.add_argument("--video-steps", type=int, default=5, help="lingbot-va: video denoise steps")
+    ap.add_argument("--action-steps", type=int, default=10, help="lingbot-va: action denoise steps")
+    ap.add_argument(
+        "--attn-mode",
+        choices=["torch", "flashattn", "flex"],
+        default="torch",
+        help="lingbot-va: attention path ('flashattn' is H100-only, not portable)",
+    )
+    ap.add_argument(
+        "--compile",
+        action="store_true",
+        help="lingbot-va: torch.compile the transformer at load time",
+    )
     args = ap.parse_args()
 
     if args.engine == "lingbot-va" and not args.obs_dir:
@@ -265,6 +401,7 @@ def main() -> int:
 
     engine = build_engine(args)
     print(f"[clb] engine={args.engine} fake={args.fake}", flush=True)
+    overrides = lingbot_va_lever_overrides(args)
     result = bench_control_loop(
         engine,
         warmup=args.warmup,
@@ -274,6 +411,8 @@ def main() -> int:
         action_dim=args.action_dim,
         obs_dir=args.obs_dir,
         seed=args.seed,
+        sessions=args.sessions,
+        extra={"lingbot_va_non_default_levers": overrides} if overrides else None,
     )
     print("[clb] RESULT " + json.dumps(result), flush=True)
     return 0
