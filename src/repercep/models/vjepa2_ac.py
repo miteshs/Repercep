@@ -237,6 +237,17 @@ class VJepa2ACConfig:
     # Attention-sink prefix length for the "slide" policy (StreamingLLM-style
     # kept-forever frames), ignored under "reinit". 0 = no sink.
     kv_sink_frames: int = 0
+    # KV-cache the CEM-batched plan() path itself (ADR-0009's deferred second
+    # reuse dimension: the S candidates in one _rollout_energy_batched call
+    # share the pre-rollout context prefix, currently recomputed S times).
+    # Requires use_kv_cache=True and a predictor with supports_kv_cache; the
+    # growing-window precondition applies to the WHOLE horizon (see
+    # _rollout_energy_batched_cached) — falls back to the plain batched path
+    # whenever it doesn't hold, so this is never wrong, only sometimes not
+    # faster. Default False: GPU-verify is pending (CPU-parity-tested only so
+    # far), same discipline as the persistent-session path before its own
+    # verify landed.
+    plan_batched_kv: bool = False
 
 
 class VJepa2ACEngine:
@@ -560,6 +571,10 @@ class VJepa2ACEngine:
         import torch
 
         if self._config.plan_batched and getattr(self._predictor, "supports_batch", False):
+            if self._config.plan_batched_kv and self._config.use_kv_cache:
+                cached = self._rollout_energy_batched_cached(state, seqs, goal)
+                if cached is not None:
+                    return cached
             return self._rollout_energy_batched(state, seqs, goal)
         return torch.stack(
             [self._rollout_energy(state, seqs[i], goal) for i in range(int(seqs.shape[0]))]
@@ -590,6 +605,57 @@ class VJepa2ACEngine:
             energies: torch.Tensor = torch.linalg.vector_norm(
                 terminal - goal, dim=tuple(range(1, terminal.ndim))
             )
+        return energies
+
+    def _rollout_energy_batched_cached(
+        self, state: WorldState, seqs: torch.Tensor, goal: torch.Tensor
+    ) -> torch.Tensor | None:
+        """KV-cached terminal energies of all ``(S, H, A)`` candidates.
+
+        ADR-0009's deferred CEM-batched reuse dimension: the pre-rollout
+        context prefix is identical across all S candidates (block-causal —
+        a frame's K/V never depends on a later frame's action token), so its
+        K/V is computed **once** (:meth:`_CachedPredictor.init_cache`, batch
+        1) instead of recomputed inside every batched forward. Candidates
+        diverge from the first predicted frame on; from there each rollout
+        step is one single-frame query per candidate against the shared
+        cache (:meth:`_CachedPredictor.step_cached`, whose batch dimension
+        the adapter expands from 1 up to S on first use — see
+        ``_AcPredictorAdapter._advance_pending``), not a full O(window)
+        re-encode of the growing context S times.
+
+        Growing-window only, same soundness bound as the persistent-session
+        path (ADR-0009 Finding 2: eviction is not exact) — but checked over
+        the WHOLE horizon here, since all S candidates advance H steps
+        together and every one of those steps must stay eviction-free.
+        Returns ``None`` (never a wrong answer) when that doesn't hold, so
+        the caller falls back to :meth:`_rollout_energy_batched` — the exact
+        same fallback discipline ``step()`` uses for the single-candidate
+        cache.
+        """
+        import torch
+
+        self._ensure_predictor()
+        assert self._predictor is not None
+        if not getattr(self._predictor, "supports_kv_cache", False):
+            return None
+        predictor = cast("_CachedPredictor", self._predictor)
+        horizon = int(seqs.shape[1])
+        frames_now = int(state.context.shape[0]) // self._tokens_per_frame
+        if frames_now + horizon > self._config.context_frames:
+            return None
+
+        with torch.inference_mode():
+            cache = predictor.init_cache(state.context)
+            terminal = None
+            for t in range(horizon):
+                predicted, cache = predictor.step_cached(cache, seqs[:, t])
+                terminal = self._maybe_norm(predicted)
+                cache = predictor.append_frame(cache, terminal)
+        assert terminal is not None  # horizon >= 1 is guaranteed by plan()'s caller
+        energies: torch.Tensor = torch.linalg.vector_norm(
+            terminal - goal, dim=tuple(range(1, terminal.ndim))
+        )
         return energies
 
     def _resolve_frames(self, conditioning: ConditioningInput) -> torch.Tensor:
@@ -748,21 +814,36 @@ class _AcPredictorAdapter:
         zeros historical actions, so retaining the action-conditioned K/V
         would silently make cached multi-step rollouts a different model.
         Both passes touch only one frame of queries against the shared prefix.
+
+        ``action`` may be ``(action_dim,)`` (single session) or ``(S,
+        action_dim)`` (S CEM candidates sharing this cache — see
+        :meth:`_advance_pending`); the batch dimension threads through
+        automatically and ``predicted`` comes back shaped to match.
         """
+        import torch
+
         if cache.pending is None:
             raise ValueError("AC KV cache has no pending frame to predict from")
         in_dtype = cache.pending.dtype
         predicted, _ = self._advance_pending(cache, action)
-        zeros = action.new_zeros(self._adim)
+        zeros = torch.zeros_like(action)
         _unused, committed = self._advance_pending(cache, zeros)
         return predicted.to(in_dtype), committed
 
     def append_frame(self, cache: _AcKVCache, normed_block: torch.Tensor) -> _AcKVCache:
+        """Append a predicted, normed frame as the cache's new pending frame.
+
+        ``normed_block`` is ``(P, D)`` (single session) or ``(S, P, D)`` (S
+        CEM candidates, matching :meth:`step_cached`'s batched ``predicted``).
+        """
         if cache.pending is not None:
             raise ValueError("AC KV cache append requires a completed prediction step")
-        if normed_block.ndim != 2 or int(normed_block.shape[0]) != self._p:
+        batched = normed_block.ndim == 3
+        p_dim = int(normed_block.shape[1] if batched else normed_block.shape[0])
+        if normed_block.ndim not in (2, 3) or p_dim != self._p:
             raise ValueError("AC KV cache frame has the wrong patch-token shape")
-        return _AcKVCache(cache.layer_kv, cache.processed_frames, normed_block.unsqueeze(0))
+        pending = normed_block if batched else normed_block.unsqueeze(0)
+        return _AcKVCache(cache.layer_kv, cache.processed_frames, pending)
 
     def evict(self, cache: _AcKVCache, sink_frames: int = 0) -> _AcKVCache:
         """Approximate FIFO eviction of one completed frame's raw K/V.
@@ -833,17 +914,34 @@ class _AcPredictorAdapter:
     def _advance_pending(
         self, cache: _AcKVCache, action: torch.Tensor
     ) -> tuple[torch.Tensor, _AcKVCache]:
-        """Run one pending frame against the cached prefix at every layer."""
+        """Run one pending frame against the cached prefix at every layer.
+
+        ``action`` is ``(action_dim,)`` for a single session (the
+        persistent-session path, unchanged behavior) or ``(S, action_dim)``
+        for S CEM candidates sharing this cache's prefix and diverging from
+        here (:meth:`VJepa2ACEngine._rollout_energy_batched_cached`). The
+        cache's own batch dim starts at 1 (one shared prefix — see
+        :meth:`init_cache`) and is **expanded, not copied**, up to S on
+        first use by a batched caller; once a step has run with S
+        candidates, ``layer_kv``/``pending`` are genuinely batch-S (each
+        candidate's own committed K/V), so later expand calls become no-ops.
+        """
         import torch
         import torch.nn.functional as F  # noqa: N812
 
         assert cache.pending is not None
         predictor = self._predictor
+        batched = action.ndim == 2
+        actions_in = action if batched else action.unsqueeze(0)  # (S, adim)
+        s = int(actions_in.shape[0])
+
         visual = cache.pending
+        if int(visual.shape[0]) == 1 and s > 1:
+            visual = visual.expand(s, -1, -1)
         if self._cdtype is not None:
             visual = visual.to(self._cdtype)
         x = predictor.predictor_embed(visual)
-        action_row = action.to(dtype=x.dtype, device=x.device).reshape(1, 1, self._adim)
+        action_row = actions_in.to(dtype=x.dtype, device=x.device).unsqueeze(1)  # (S, 1, adim)
         state_row = torch.zeros_like(action_row)
         pieces = [predictor.action_encoder(action_row), predictor.state_encoder(state_row)]
         if self._action_tokens == 3:
@@ -859,6 +957,9 @@ class _AcPredictorAdapter:
                 if cache.processed_frames == 0:
                     k_old = k_new[:, :, :0]
                     v_old = v_new[:, :, :0]
+                elif int(k_old.shape[0]) == 1 and s > 1:
+                    k_old = k_old.expand(s, -1, -1, -1)
+                    v_old = v_old.expand(s, -1, -1, -1)
                 q = _ac_rotate_augmented(
                     block.attn, q, 1, predictor.grid_height, predictor.grid_width,
                     self._action_tokens, frame_offset=cache.processed_frames,
@@ -881,7 +982,9 @@ class _AcPredictorAdapter:
                 extended.append((k_all_raw, v_all))
 
         visual_out = x[:, self._action_tokens :]
-        visual_out = predictor.predictor_proj(predictor.predictor_norm(visual_out))[0]
+        visual_out = predictor.predictor_proj(predictor.predictor_norm(visual_out))
+        if not batched:
+            visual_out = visual_out[0]
         committed = _AcKVCache(tuple(extended), cache.processed_frames + 1, pending=None)
         return visual_out, committed
 

@@ -190,17 +190,22 @@ def test_ac_predictor_adapter_returns_next_frame_block() -> None:
     assert tuple(nxt.shape) == (4, 8)  # the trailing P rows = predicted next frame
 
 
-def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
-    """The real adapter's durable prefix keeps historical actions at zero.
+def _build_mini_ac_predictor() -> Any:
+    """A miniature two-layer AC predictor: the same augmented-token layout,
+    axial RoPE, block-causal attention and residual stack as the real
+    V-JEPA 2-AC predictor, batch-agnostic (``forward`` never hardcodes batch
+    size, so it exercises both the single-session and CEM-batched cache
+    paths). Shared by the growing-window and batched-KV parity tests below.
 
-    A miniature two-layer AC predictor exercises the same augmented token
-    layout, axial RoPE, block-causal attention and residual stack.  Multiple
-    cached steps must match the public full-forward contract, not merely the
-    first step where accidentally persisting the live action is invisible.
+    A factory function, not a module-level class: the classes subclass
+    ``nn.Module``, so defining them at import time would break this file's
+    "skip cleanly without torch" contract for every other test in it. Deferred
+    inside here, called only from tests that already ran
+    ``pytest.importorskip("torch")`` first.
     """
-    torch = pytest.importorskip("torch")
     nn = pytest.importorskip("torch.nn")
     functional = pytest.importorskip("torch.nn.functional")
+    import torch
 
     class _MiniAttention(nn.Module):  # type: ignore[name-defined,misc]
         def __init__(self, dim: int = 24, heads: int = 2) -> None:
@@ -289,8 +294,21 @@ def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
             x = x.view(batch, frames, 4, 24)[:, :, 2:].flatten(1, 2)
             return self.predictor_proj(self.predictor_norm(x))
 
+    return _MiniPredictor().eval()
+
+
+def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
+    """The real adapter's durable prefix keeps historical actions at zero.
+
+    A miniature two-layer AC predictor exercises the same augmented token
+    layout, axial RoPE, block-causal attention and residual stack.  Multiple
+    cached steps must match the public full-forward contract, not merely the
+    first step where accidentally persisting the live action is invisible.
+    """
+    torch = pytest.importorskip("torch")
+
     torch.manual_seed(4)
-    adapter = _AcPredictorAdapter(_MiniPredictor().eval(), tokens_per_frame=2, action_dim=3)
+    adapter = _AcPredictorAdapter(_build_mini_ac_predictor(), tokens_per_frame=2, action_dim=3)
     for initial_rows in (2, 4):  # empty prefix and one-frame prefix bootstrap
         context = torch.randn(initial_rows, 6)
         cache = adapter.init_cache(context)
@@ -301,6 +319,44 @@ def test_ac_predictor_adapter_cached_growth_matches_full_forward() -> None:
             assert torch.allclose(actual, expected, atol=2e-6)
             cache = adapter.append_frame(staged, actual)
             context = torch.cat([context, actual], dim=0)
+
+
+def test_ac_predictor_adapter_batched_step_cached_matches_per_candidate_loop() -> None:
+    """ADR-0009's deferred CEM-batched reuse dimension, at the adapter level.
+
+    S candidates advancing together through one shared, expanding-not-
+    copying cache must match running the exact same single-candidate
+    ``step_cached``/``append_frame`` path S times independently, one action
+    vector at a time. This is the thing that would silently break if the
+    batch expand in ``_advance_pending`` ever mixed candidates' K/V instead
+    of giving each its own after divergence.
+    """
+    torch = pytest.importorskip("torch")
+
+    torch.manual_seed(7)
+    adapter = _AcPredictorAdapter(_build_mini_ac_predictor(), tokens_per_frame=2, action_dim=3)
+    context = torch.randn(4, 6)  # 2-frame prefix + 1 pending frame
+    s, horizon = 3, 3
+    actions = torch.randn(s, horizon, 3)
+
+    batched_cache = adapter.init_cache(context)
+    batched_terminal = None
+    for t in range(horizon):
+        predicted, batched_cache = adapter.step_cached(batched_cache, actions[:, t])
+        batched_terminal = predicted
+        batched_cache = adapter.append_frame(batched_cache, predicted)
+    assert batched_terminal is not None
+    assert tuple(batched_terminal.shape) == (s, 2, 6)
+
+    for i in range(s):
+        cache = adapter.init_cache(context)
+        terminal = None
+        for t in range(horizon):
+            predicted, cache = adapter.step_cached(cache, actions[i, t])
+            terminal = predicted
+            cache = adapter.append_frame(cache, predicted)
+        assert terminal is not None
+        assert torch.allclose(batched_terminal[i], terminal, atol=1e-5)
 
 
 def test_step_appends_patch_token_frame_block() -> None:
@@ -722,3 +778,130 @@ def test_kv_cache_disabled_when_predictor_lacks_support() -> None:
     nxt, _ = engine.step(state, Action(values=[1.0, 1.0, 1.0, 1.0]))
     assert engine._kv_cache == {}  # never touched
     assert torch.allclose(nxt.context[-1], state.context[-1] + torch.ones(4))
+
+
+# --- KV/latent reuse (ADR-0009): engine-side seam, CEM-batched plan() path ---
+
+
+class _BatchedKVCacheFakePredictor:
+    """Toy dynamics for the batched-KV-cache seam: next frame = (sum of all
+    live frames so far) + action, generalized to a CEM candidate batch (S).
+
+    The cache IS the running sum (sum is associative, so appending a frame
+    just adds it in) — starts batch-1 (one shared prefix) and naturally
+    broadcasts to batch-S the first time it's added to an (S, D) action/
+    normed-block, exactly mirroring the real adapter's expand-on-first-
+    divergence behavior, without needing explicit ``.expand()`` calls in this
+    toy. Same "wrong sum = wrong answer, not just slower" sensitivity as
+    ``_KVCacheFakePredictor``, generalized to the batch dimension.
+    """
+
+    supports_kv_cache = True
+    supports_batch = True
+
+    def __init__(self) -> None:
+        self.init_cache_calls = 0
+
+    def __call__(self, context: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        if context.ndim == 3:
+            return (context.sum(dim=1) + action).unsqueeze(1)
+        return context.sum(dim=0) + action
+
+    def init_cache(self, context: torch.Tensor) -> torch.Tensor:
+        self.init_cache_calls += 1
+        return context.sum(dim=0)  # (D,): batch-1 shared-prefix running sum
+
+    def step_cached(
+        self, cache: torch.Tensor, action: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return cache + action, cache  # predict only; cache unchanged until append
+
+    def append_frame(self, cache: torch.Tensor, normed_block: torch.Tensor) -> torch.Tensor:
+        return cache + normed_block  # running sum grows; broadcasts (D,) -> (S, D)
+
+
+def test_rollout_energy_batched_cached_matches_uncached_batched_path() -> None:
+    """The KV-cached CEM-batched rollout must match the plain batched path
+    (which itself is proven against the per-candidate loop by
+    ``test_batched_candidate_energies_match_loop``) — same answer, cheaper.
+    Growing-window precondition holds here (frames + horizon <= cap).
+    """
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(2)
+    ctx0 = torch.randn(2, 4)
+    goal = torch.randn(4)
+    seqs = torch.randn(5, 3, 4)  # S=5, H=3, A=4
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(
+            action_dim=4, context_frames=8, use_kv_cache=True, plan_batched_kv=True
+        ),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_BatchedKVCacheFakePredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+
+    cached = engine._rollout_energy_batched_cached(state, seqs, goal)
+    uncached = engine._rollout_energy_batched(state, seqs, goal)
+    assert cached is not None
+    assert torch.allclose(cached, uncached, atol=1e-5)
+
+    # And the public dispatch (_candidate_energies -> plan()) actually
+    # reaches the cached path when configured on, not just when called
+    # directly.
+    predictor = cast("_BatchedKVCacheFakePredictor", engine._predictor)
+    calls_before = predictor.init_cache_calls
+    dispatched = engine._candidate_energies(state, seqs, goal)
+    assert torch.allclose(dispatched, uncached, atol=1e-5)
+    assert predictor.init_cache_calls == calls_before + 1
+
+
+def test_rollout_energy_batched_cached_falls_back_past_growing_window() -> None:
+    """Once frames_now + horizon would exceed the cap, the cached path
+    returns ``None`` (never a wrong answer) instead of using a cache it
+    isn't sound for — ``_candidate_energies`` then falls back to the plain
+    batched path, which must still land on the same, correct answer.
+    """
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(3)
+    ctx0 = torch.randn(3, 4)  # 3 frames already -- context_frames=4, horizon=3 overflows
+    goal = torch.randn(4)
+    seqs = torch.randn(4, 3, 4)  # S=4, H=3, A=4
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(
+            action_dim=4, context_frames=4, use_kv_cache=True, plan_batched_kv=True
+        ),
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_BatchedKVCacheFakePredictor(),
+    )
+    state = engine.reset(ConditioningInput(), RolloutParams())
+
+    assert engine._rollout_energy_batched_cached(state, seqs, goal) is None
+    dispatched = engine._candidate_energies(state, seqs, goal)
+    reference = engine._rollout_energy_batched(state, seqs, goal)
+    assert torch.allclose(dispatched, reference)
+
+
+def test_rollout_energy_batched_cached_disabled_by_default() -> None:
+    """``plan_batched_kv`` defaults to ``False`` — GPU-verify is pending
+    (CPU-parity-tested only so far), so opting in must be explicit."""
+    torch = pytest.importorskip("torch")
+    ctx0 = torch.randn(2, 4)
+    goal = torch.randn(4)
+    seqs = torch.randn(3, 2, 4)
+
+    engine = VJepa2ACEngine(
+        cast("Backend", _NamedBackend("fake")),
+        VJepa2ACConfig(action_dim=4, context_frames=8, use_kv_cache=True),  # plan_batched_kv unset
+        encoder=_FakeEncoder(ctx0.clone()),
+        predictor=_BatchedKVCacheFakePredictor(),
+    )
+    assert engine._config.plan_batched_kv is False
+    state = engine.reset(ConditioningInput(), RolloutParams())
+    predictor = cast("_BatchedKVCacheFakePredictor", engine._predictor)
+
+    engine._candidate_energies(state, seqs, goal)
+    assert predictor.init_cache_calls == 0  # cached path never even attempted

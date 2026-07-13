@@ -1,18 +1,20 @@
 # ADR-0009 — KV/latent reuse across rollout steps (the structural latency lever)
 
-- **Status:** Implemented for the *growing*-window regime; the *sliding*-
-  window (eviction) regime is **not achievable as an exact operation** for
-  this model — GPU-verified 2026-07-11 against the real pretrained weights
-  (not assumed; see §"Verification findings" below). The `step()`
-  engine-side seam (§"Decision") and real torch-hub predictor adapter are
-  implemented. The engine is CPU-tested against a cache-sensitive fake; the
-  adapter is CPU-tested through a miniature multi-layer AC predictor with the
-  real augmented-token/RoPE/block-causal structure. Earlier direct GPU work
-  verified the growing-window algorithm bit-close-correct on real weights;
-  the eviction case is **incorrect by construction**, not merely unbuilt. The
-  CEM-batched-candidate path remains design-only (a
-  separate, harder lift — §"scope note" below), now doubly so since it would
-  inherit the same eviction problem for horizons that exceed the window.
+- **Status:** Implemented for the *growing*-window regime, on both the
+  persistent-session (`step()`) and CEM-batched (`plan()`) call paths; the
+  *sliding*-window (eviction) regime is **not achievable as an exact
+  operation** for this model — GPU-verified 2026-07-11 against the real
+  pretrained weights (not assumed; see §"Verification findings" below). The
+  `step()` engine-side seam (§"Decision") and real torch-hub predictor
+  adapter are implemented and GPU-verified. The CEM-batched path
+  (`_rollout_energy_batched_cached`, §"CEM-batched resolution" below) is
+  implemented and CPU-parity-tested against the same adapter machinery the
+  `step()` path already GPU-verified — real-weights GPU-verify of *this*
+  path specifically is still pending, so it ships opt-in
+  (`plan_batched_kv=False` by default). The eviction case is **incorrect by
+  construction**, not merely unbuilt, and inherits into the CEM-batched path
+  too: the growing-window precondition is checked over the *whole* rollout
+  horizon there, not just one step.
 - **Date:** 2026-07-11
 - **Relates to:** ADR-0008 (interactive world-model seam),
   `docs/LEVERS_2026_07_H100.md` (batching + bf16, GPU-verified same day),
@@ -179,6 +181,83 @@ matters more for real serving anyway** — it's what metric #1 of
 directly measures, and is the online robot-control-loop cost, not just the
 offline-planning cost.
 
+## CEM-batched resolution (2026-07-13)
+
+The "paged-attention-style machinery" the scope note above worried about
+turns out to be unnecessary for CEM specifically, because CEM's rollouts are
+**lockstep-uniform**: all `S` candidates advance exactly `H` horizon steps
+together, so per-candidate divergence is a dense `(S, ...)` batch, not a
+ragged structure needing a page table. `branch(cache) -> Any` (the design-only
+primitive from §"Decision") is not needed either — the resolution below
+reuses the existing `_CachedPredictor` methods unchanged, generalized to
+accept a batch dimension.
+
+**The mechanism — reuse, not new methods.** `_AcKVCache`'s `layer_kv` and
+`pending` tensors already carry a leading batch dimension; it was always 1 in
+the `step()` path. `_AcPredictorAdapter._advance_pending` (which
+`step_cached` calls) now detects when `action` is `(S, action_dim)` instead
+of `(action_dim,)`, and **expands — not copies —** the batch-1 prefix K/V and
+pending frame up to `S` via `.expand()` (a view) at the point where a batched
+caller first uses them. `torch.cat([k_old, k_new], dim=2)` (concatenating the
+expanded prefix with the batch-S new-frame K/V along the *token* dimension,
+not the batch dimension) is what turns the cache genuinely batch-`S` from
+that point on — `cat` always allocates, so the expanded view's zero-stride
+trick only has to survive one call, not the whole rollout. `step_cached` and
+`append_frame` needed no new methods, only shape generalization (`action`
+`(S, A)` in, `predicted` `(S, P, D)` out; `normed_block` `(S, P, D)` in for
+`append_frame`) — the *same* two-pass real-action/zero-action-commit logic
+that `step_cached`'s docstring already documents for the single-session case
+applies unchanged per-candidate.
+
+**The engine side — `VJepa2ACEngine._rollout_energy_batched_cached`.** Given
+`state` and `(S, H, A)` candidate sequences: checks the growing-window
+precondition over the **whole horizon** (`frames_now + H <= context_frames`
+— stricter than `step()`'s single-step check, since all `S` candidates must
+stay eviction-free for all `H` steps, not just one), returns `None` if it
+doesn't hold (never a wrong answer — `_candidate_energies` falls back to the
+existing `_rollout_energy_batched`, exactly `step()`'s own fallback
+discipline for its cache), otherwise builds one shared-prefix cache via
+`init_cache(state.context)` and loops `step_cached` → `append_frame` for `H`
+steps, computing the terminal energy from the last predicted, normed block —
+the same energy formula `_rollout_energy_batched` uses.
+
+**Cost.** Where `_rollout_energy_batched` recomputes the full `O(window)`
+prefix attention inside the batched SDPA call at every one of the `H`
+timesteps (`S` times over, since the batch dim doesn't change that), the
+cached path pays the prefix cost once (`init_cache`, batch 1) and each
+subsequent step is a single-frame query per candidate against the shared
+cache — the same `O(window²) -> O(window)` asymptotic win the `step()` path
+already has, now applied per rollout inside `plan()` too.
+
+**Verification — CPU parity only so far, opt-in until GPU-verified.** Two
+tiers, mirroring how the `step()` path's own KV cache was verified before it
+was trusted on real weights:
+1. *Adapter level* (`test_ac_predictor_adapter_batched_step_cached_matches_per_candidate_loop`):
+   `S` candidates run through the batched path in one shared cache must match
+   running the same miniature real-RoPE-structure predictor's
+   `step_cached`/`append_frame` `S` times independently — proves the
+   expand-not-copy batching doesn't mix candidates' K/V. Deliberately broken
+   twice while writing it (forgot the expand entirely; expanded the wrong
+   tensor — `v_old` in place of `k_old`) to confirm the test actually catches
+   both a crash-class and a silent-wrong-value-class regression, not just the
+   happy path — same discipline as the `step()` path's original
+   branch-safety test.
+2. *Engine level* (`test_rollout_energy_batched_cached_matches_uncached_batched_path`,
+   `..._falls_back_past_growing_window`, `..._disabled_by_default`): a toy
+   batched+cacheable predictor (running-sum dynamics, same "wrong sum = wrong
+   answer" sensitivity as the `step()` path's `_KVCacheFakePredictor`) proves
+   the engine's dispatch, growing-window precondition, and default-off gating
+   are correct, independent of the real RoPE math (already proven at tier 1).
+
+This is CPU-parity evidence the *algorithm and its integration* are correct
+against known-good references, exactly what the `step()` path's CPU tests
+were before its GPU verify — not yet evidence the real predictor's actual
+forward matches under this batching. `plan_batched_kv` therefore defaults to
+`False`; flip it only after a real-weights GPU verify (mirroring
+`scripts/verify_kv_growing_window.py`'s methodology, extended to a batch of
+candidates) confirms energies match the uncached batched path within fp32
+tolerance, the same bar `step()`'s cache cleared before its default flipped.
+
 ## Verification findings (2026-07-11)
 
 Findings 1–2 came from wrapping the real torch-hub predictor (`facebookresearch/vjepa2`,
@@ -303,6 +382,14 @@ throughout this ADR) is the meaningful metric here.
 - Session `WorldState.context` (the wire-safe embedding window) is unchanged;
   the cache is engine-held state keyed by `session_id`, mirroring the pattern
   `LingBotVAPipeline` already established for its own named KV cache.
+- The CEM-batched dimension (§"CEM-batched resolution") no longer needs the
+  paged-attention machinery the original scope note anticipated — CEM's
+  lockstep-uniform rollouts (every candidate advances the same `H` steps)
+  make the shared-prefix reuse a dense batch expand, not a ragged page table.
+  Implemented, CPU-parity-tested, opt-in (`plan_batched_kv=False`) pending
+  its own real-weights GPU verify — the growing-window win it delivers is the
+  *offline planning* cost (`plan()`), complementary to (not a replacement
+  for) the `step()` path's *online control-loop* win.
 
 ## Revisit if
 
