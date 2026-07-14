@@ -103,6 +103,19 @@ def _toy_engine(pipeline: _FakePipeline | None = None) -> DreamZeroEngine:
     )
 
 
+def test_config_phase2_lever_defaults_are_the_true_baseline() -> None:
+    """Phase-2 lever fields (docs/DREAMZERO_PORT_PLAN.md §4) default to the
+    true full-compute baseline, not the reference's silent approximations —
+    ``num_dit_steps=16`` (not the reference's undisclosed default of 8) and
+    every other lever off/unset.
+    """
+    cfg = DreamZeroConfig()
+    assert cfg.num_dit_steps == 16
+    assert cfg.cfg_batched is False
+    assert cfg.compile is False
+    assert cfg.local_attn_size is None
+
+
 # --- Protocol conformance / readiness (no torch) ---
 
 

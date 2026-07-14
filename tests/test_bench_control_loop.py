@@ -167,6 +167,106 @@ def test_lingbot_va_lever_overrides_only_discloses_non_default() -> None:
     assert _clb.lingbot_va_lever_overrides(_fake_args()) == {}
 
 
+def test_build_engine_dreamzero_constructs_configured_engine() -> None:
+    """``build_engine`` wires every dreamzero CLI lever into ``DreamZeroConfig``
+    without needing GPU/weights — construction alone never calls ``load()``.
+    """
+    pytest.importorskip("torch")
+    from repercep.models.dreamzero import DreamZeroEngine
+
+    args = _fake_args(
+        engine="dreamzero",
+        fake=False,
+        prompt="pick up the mug",
+        dz_cfg_scale=1.0,
+        num_dit_steps=8,
+        dit_cache_dynamic=True,
+        cfg_batched=True,
+        compile=True,
+        attn_window=12,
+    )
+    engine = _clb.build_engine(args)
+    assert isinstance(engine, DreamZeroEngine)
+    cfg = engine._config
+    assert cfg.prompt == "pick up the mug"
+    assert cfg.cfg_scale == 1.0
+    assert cfg.num_dit_steps == 8
+    assert cfg.enable_dit_cache is True
+    assert cfg.cfg_batched is True
+    assert cfg.compile is True
+    assert cfg.local_attn_size == 12
+
+
+def test_build_engine_dreamzero_fake_unsupported() -> None:
+    with pytest.raises(NotImplementedError, match="dreamzero"):
+        _clb.build_engine(_fake_args(engine="dreamzero", fake=True))
+
+
+def test_dreamzero_lever_overrides_only_discloses_non_default() -> None:
+    args = _fake_args(
+        engine="dreamzero",
+        fake=False,
+        dz_cfg_scale=1.0,  # non-default
+        num_dit_steps=16,  # default
+        dit_cache_dynamic=False,  # default
+        cfg_batched=True,  # non-default
+        compile=False,  # default
+        attn_window=None,  # default
+    )
+    overrides = _clb.dreamzero_lever_overrides(args)
+    assert overrides == {"dz_cfg_scale": 1.0, "cfg_batched": True}
+
+    # lingbot-va / vjepa2-ac: never disclose DreamZero levers.
+    assert _clb.dreamzero_lever_overrides(_fake_args()) == {}
+
+
+def test_bench_control_loop_dreamzero_chunk_shape_and_forces_real_plan_call() -> None:
+    """Mirrors the LingBot-VA chunked-engine test above, but for DreamZero's
+    different chunk-geometry field (``num_action_per_block`` rows directly,
+    not ``frame_chunk_size x action_per_frame``) — exercises
+    ``_chunk_len``'s dispatch and the shared pending_actions-clearing fix.
+    """
+    pytest.importorskip("torch")
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from repercep.models.dreamzero import DreamZeroConfig, DreamZeroEngine
+    from test_dreamzero import _FakePipeline, _NamedBackend
+
+    class _CountingPipeline(_FakePipeline):
+        def __init__(self, num_frame_per_block: int = 2, action_dim: int = 8, dim: int = 4) -> None:
+            super().__init__(num_frame_per_block=num_frame_per_block, action_dim=action_dim, dim=dim)
+            self.infer_chunk_calls = 0
+
+        def infer_chunk(  # type: ignore[override]
+            self, session_id: str, current_start_frame: int, init_latent: object
+        ) -> tuple[object, object]:
+            self.infer_chunk_calls += 1
+            return super().infer_chunk(session_id, current_start_frame, init_latent)
+
+    pipeline = _CountingPipeline(num_frame_per_block=2, action_dim=8, dim=4)
+    engine = DreamZeroEngine(
+        _NamedBackend("fake"),  # type: ignore[arg-type]
+        DreamZeroConfig(prompt="test", num_action_per_block=3, action_dim=8, used_action_dim=8),
+        pipeline=pipeline,
+    )
+
+    result = _clb.bench_control_loop(
+        engine, warmup=1, step_iters=1, plan_calls=2, horizon=2, obs_dir="unused"
+    )
+    assert result["state_carryover"] is True
+    # The rand_action chunk was sized off num_action_per_block=3, not
+    # LingBot's frame_chunk_size x action_per_frame fields (which DreamZero's
+    # config doesn't have) -- confirmed via the executed chunk shape pushed
+    # to recondition().
+    assert pipeline.recondition_calls[0][1] == (3, 8)
+    # warmup step + timed step + goal step = 3 step()-driven infer_chunk
+    # calls, then one REAL infer_chunk per timed plan() call (pending_actions
+    # cleared each time) -- 3 + 2 = 5, same discipline as LingBot-VA's test.
+    assert pipeline.infer_chunk_calls == 3 + 2
+
+
 def test_bench_control_loop_chunked_engine_forces_real_plan_call() -> None:
     """LingBot-VA-shaped (chunked) engines: plan() must do real work, not a
     cache hit off the pending_actions a preceding step() parked (the bug this

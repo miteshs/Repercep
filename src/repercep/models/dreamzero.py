@@ -213,6 +213,35 @@ class DreamZeroConfig:
     # forward is the obvious single-GPU lever (port plan §2.5), a pipeline
     # concern this config doesn't encode.
     ip_size: int = 1
+    # --- Phase-2 latency levers (docs/DREAMZERO_PORT_PLAN.md §4) ---
+    # The reference's static DiT-call-skip cap (`NUM_DIT_STEPS` env, port plan
+    # §2 point 5) defaults to 8 *unconditionally*, with no opt-in flag — so
+    # their own "~3s/chunk H100" claim is already running an approximation.
+    # 16 here is the true full-computation baseline, set explicitly so a run
+    # is reproducible rather than silently inheriting that undisclosed
+    # default; pass 8 to reproduce their default path instead.
+    num_dit_steps: int = 16
+    # Batch cond+uncond into one forward instead of the reference's two
+    # sequential calls per denoise step (port plan §2 point 4/§4 lever 1) —
+    # the single-GPU differentiator vs. their 2-GPU ip=2 split, which only
+    # splits the same two sequential calls across ranks. Needs pipeline
+    # support (dreamzero_pipeline.py); the pipeline warns and falls back to
+    # sequential CFG until the batching is GPU-verified against the research
+    # clone's actual `_run_diffusion_steps`.
+    cfg_batched: bool = False
+    # torch.compile the transformer at pipeline-construction time (mirrors
+    # LingBotVAConfig.compile_transformer). Phase 1 forced eager mode
+    # (TORCHDYNAMO_DISABLE=1) after hitting FailOnRecompileLimitHit from
+    # rank-changing history tensors (port plan §2b) — this flag is the
+    # Phase-2 lever to retry that, isolated per engine load rather than a
+    # blanket env var.
+    compile: bool = False
+    # KV-window override, in frames. None keeps the checkpoint's own default
+    # (local_attn_size=-1 sentinel -> max_attention_size =
+    # attn_window_frames * frame_seqlen, i.e. attn_window_frames above). A
+    # smaller window trades context for KV memory (port plan §4 rung 5) — the
+    # lever most directly connected to the resident-sessions/GPU headline.
+    local_attn_size: int | None = None
 
 
 @dataclass(slots=True)

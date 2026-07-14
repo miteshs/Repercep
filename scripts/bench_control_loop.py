@@ -20,6 +20,8 @@ Emits one verbatim ``RESULT`` JSON line (repo provenance convention).
     python scripts/bench_control_loop.py --engine vjepa2-ac --fake   # CPU toy weights (CI)
     python scripts/bench_control_loop.py --engine lingbot-va \
         --obs-dir /workspace/lingbot-va/example/demo                # real weights, GPU
+    python scripts/bench_control_loop.py --engine dreamzero \
+        --obs-dir /workspace/dreamzero/example/droid                # real weights, GPU
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ _setup()
 import torch  # noqa: E402
 
 from repercep.backend.registry import select_backend  # noqa: E402
+from repercep.models.dreamzero import DreamZeroConfig, DreamZeroEngine  # noqa: E402
 from repercep.models.lingbot_va import LingBotVAConfig, LingBotVAEngine  # noqa: E402
 from repercep.models.vjepa2_ac import VJepa2ACConfig, VJepa2ACEngine  # noqa: E402
 from repercep.runtime.types import (  # noqa: E402
@@ -98,12 +101,26 @@ def build_engine(args: argparse.Namespace) -> Any:
                 predictor=_ToyPredictor(),
             )
         return VJepa2ACEngine(backend, cfg)
-    # LingBot-VA: policy-regime engine (Phase-1 pipeline, docs/LINGBOT_VA_PORT_PLAN.md
-    # §4). Needs a real prompt + seed-observation directory (--prompt/--obs-dir);
-    # the fake path is unsupported (its rollout is a real chunked denoise loop,
-    # not a toy-weights CPU stand-in).
+    # LingBot-VA / DreamZero: policy-regime engines (Phase-1 pipelines,
+    # docs/LINGBOT_VA_PORT_PLAN.md §4 / docs/DREAMZERO_PORT_PLAN.md §4). Both
+    # need a real prompt + seed-observation directory (--prompt/--obs-dir);
+    # the fake path is unsupported (their rollout is a real chunked denoise
+    # loop, not a toy-weights CPU stand-in).
     if args.fake:
-        raise NotImplementedError("--fake is not supported for --engine lingbot-va")
+        raise NotImplementedError(f"--fake is not supported for --engine {args.engine}")
+    if args.engine == "dreamzero":
+        return DreamZeroEngine(
+            backend,
+            DreamZeroConfig(
+                prompt=args.prompt,
+                cfg_scale=args.dz_cfg_scale,
+                num_dit_steps=args.num_dit_steps,
+                enable_dit_cache=args.dit_cache_dynamic,
+                cfg_batched=args.cfg_batched,
+                compile=args.compile,
+                local_attn_size=args.attn_window,
+            ),
+        )
     return LingBotVAEngine(
         backend,
         LingBotVAConfig(
@@ -130,6 +147,18 @@ _LINGBOT_VA_LEVER_DEFAULTS = {
     "compile": False,
 }
 
+# Defaults mirrored from ``DreamZeroConfig`` (docs/DREAMZERO_PORT_PLAN.md §4)
+# — note ``compile`` is a shared flag name with LingBot-VA's, disclosed under
+# whichever engine is actually selected.
+_DREAMZERO_LEVER_DEFAULTS = {
+    "dz_cfg_scale": 5.0,
+    "num_dit_steps": 16,
+    "dit_cache_dynamic": False,
+    "cfg_batched": False,
+    "compile": False,
+    "attn_window": None,
+}
+
 
 def lingbot_va_lever_overrides(args: argparse.Namespace) -> dict[str, Any]:
     """Non-default LingBot-VA lever flags, for RESULT-line disclosure."""
@@ -140,6 +169,31 @@ def lingbot_va_lever_overrides(args: argparse.Namespace) -> dict[str, Any]:
         for flag, default in _LINGBOT_VA_LEVER_DEFAULTS.items()
         if getattr(args, flag) != default
     }
+
+
+def dreamzero_lever_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """Non-default DreamZero lever flags, for RESULT-line disclosure."""
+    if args.engine != "dreamzero":
+        return {}
+    return {
+        flag: getattr(args, flag)
+        for flag, default in _DREAMZERO_LEVER_DEFAULTS.items()
+        if getattr(args, flag) != default
+    }
+
+
+def _chunk_len(config: Any) -> int:
+    """Executed-chunk row count for a chunked (policy-regime) engine's config.
+
+    Dispatches on field presence rather than an engine-kind flag, matching
+    the ``is_chunked``/``_wire_action_dim`` duck-typing already used here:
+    LingBot-VA's chunk is ``frame_chunk_size x action_per_frame`` rows;
+    DreamZero's is ``num_action_per_block`` rows directly (one action per
+    block-frame-slot, not per-frame x per-frame-count).
+    """
+    if hasattr(config, "num_action_per_block"):
+        return config.num_action_per_block
+    return config.frame_chunk_size * config.action_per_frame
 
 
 def bench_control_loop(
@@ -203,7 +257,7 @@ def bench_control_loop(
 
     def rand_action() -> Action:
         if is_chunked:
-            n = engine._config.frame_chunk_size * engine._config.action_per_frame
+            n = _chunk_len(engine._config)
             return Action(values=torch.randn(n * engine._wire_action_dim()).tolist())
         return Action(values=torch.randn(action_dim).tolist())
 
@@ -344,7 +398,9 @@ def bench_control_loop(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--engine", choices=["vjepa2-ac", "lingbot-va"], default="vjepa2-ac")
+    ap.add_argument(
+        "--engine", choices=["vjepa2-ac", "lingbot-va", "dreamzero"], default="vjepa2-ac"
+    )
     ap.add_argument("--backend", choices=["auto", "cuda", "rocm", "cpu"], default="auto")
     ap.add_argument("--dtype", choices=sorted(_DTYPES), default="bf16")
     ap.add_argument(
@@ -358,12 +414,14 @@ def main() -> int:
     ap.add_argument("--plan-samples", type=int, default=64)
     ap.add_argument("--plan-cem-iters", type=int, default=3)
     ap.add_argument(
-        "--obs-dir", default=None, help="lingbot-va: dir with <cam_key>.png seed images"
+        "--obs-dir",
+        default=None,
+        help="lingbot-va/dreamzero: dir with seed camera images",
     )
     ap.add_argument(
         "--prompt",
         default="Pick the green cube and place it inside the blue box",
-        help="lingbot-va: the goal instruction (text-conditioned policy)",
+        help="lingbot-va/dreamzero: the goal instruction (text-conditioned policy)",
     )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
@@ -392,16 +450,48 @@ def main() -> int:
     ap.add_argument(
         "--compile",
         action="store_true",
-        help="lingbot-va: torch.compile the transformer at load time",
+        help="lingbot-va/dreamzero: torch.compile the transformer at load time",
+    )
+    # DreamZero serving-latency levers (docs/DREAMZERO_PORT_PLAN.md §4),
+    # plumbed the same way as the LingBot-VA levers above.
+    ap.add_argument("--dz-cfg-scale", type=float, default=5.0, help="dreamzero: CFG scale")
+    ap.add_argument(
+        "--num-dit-steps",
+        type=int,
+        default=16,
+        help="dreamzero: DiT calls actually run per 16-step denoise loop "
+        "(the reference's own undisclosed default is 8 -- pass 8 to "
+        "reproduce their path, 16 for the true full-compute baseline)",
+    )
+    ap.add_argument(
+        "--dit-cache-dynamic",
+        action="store_true",
+        help="dreamzero: enable the cosine-similarity dynamic DiT-cache skip schedule",
+    )
+    ap.add_argument(
+        "--cfg-batched",
+        action="store_true",
+        help="dreamzero: batch cond+uncond into one forward (falls back to "
+        "sequential with a warning until GPU-verified)",
+    )
+    ap.add_argument(
+        "--attn-window",
+        type=int,
+        default=None,
+        help="dreamzero: override local_attn_size (KV window, in frames)",
     )
     args = ap.parse_args()
 
-    if args.engine == "lingbot-va" and not args.obs_dir:
-        ap.error("--engine lingbot-va requires --obs-dir")
+    if args.engine in ("lingbot-va", "dreamzero") and not args.obs_dir:
+        ap.error(f"--engine {args.engine} requires --obs-dir")
 
     engine = build_engine(args)
     print(f"[clb] engine={args.engine} fake={args.fake}", flush=True)
-    overrides = lingbot_va_lever_overrides(args)
+    extra: dict[str, Any] = {}
+    if overrides := lingbot_va_lever_overrides(args):
+        extra["lingbot_va_non_default_levers"] = overrides
+    if overrides := dreamzero_lever_overrides(args):
+        extra["dreamzero_non_default_levers"] = overrides
     result = bench_control_loop(
         engine,
         warmup=args.warmup,
@@ -412,7 +502,7 @@ def main() -> int:
         obs_dir=args.obs_dir,
         seed=args.seed,
         sessions=args.sessions,
-        extra={"lingbot_va_non_default_levers": overrides} if overrides else None,
+        extra=extra or None,
     )
     print("[clb] RESULT " + json.dumps(result), flush=True)
     return 0

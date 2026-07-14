@@ -144,6 +144,7 @@ class DreamZeroPipeline:
         self._action_stats = _load_action_stats(root, _DROID_ACTION_KEYS)
         self._tokenizer = _load_tokenizer()
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._cfg_batched_warned = False
 
     # --- _DreamZeroPipeline protocol ---
 
@@ -231,6 +232,7 @@ class DreamZeroPipeline:
         from transformers.feature_extraction_utils import BatchFeature
 
         cfg = self._config
+        self._apply_levers(cfg)
         text_ids, text_mask = self._tokenize(session["prompt"])
         neg_ids, neg_mask = self._tokenize("")
         state = torch.zeros(
@@ -265,6 +267,38 @@ class DreamZeroPipeline:
         used_dim = cfg.used_action_dim or cfg.action_dim
         actions = _denormalize_actions(actions_norm, self._action_stats, used_dim)
         return video_pred, actions
+
+    def _apply_levers(self, cfg: DreamZeroConfig) -> None:
+        """Wire the Phase-2 latency levers (port plan §4) into the reference's
+        own env-var / instance-attribute knobs, read fresh every ``_infer``
+        call so a levers script can mutate ``engine._config`` between rungs
+        without reconstructing the whole model (mirrors how
+        ``bench_lingbot_va_levers.py`` mutates ``engine._config`` in place).
+
+        The env-var string format (``"True"``/``"False"``) mirrors the
+        research repo's usual ``os.environ.get(..., "False") == "True"``
+        convention — **not yet confirmed against the actual
+        ``should_run_model`` source** (port plan §2 point 5); verify on the
+        GPU pod before trusting lever numbers that depend on it.
+        """
+        os.environ["NUM_DIT_STEPS"] = str(cfg.num_dit_steps)
+        os.environ["DYNAMIC_CACHE_SCHEDULE"] = "True" if cfg.enable_dit_cache else "False"
+        if cfg.local_attn_size is not None:
+            self._action_head.local_attn_size = cfg.local_attn_size
+        if cfg.cfg_batched and not self._cfg_batched_warned:
+            self._cfg_batched_warned = True
+            import warnings
+
+            warnings.warn(
+                "DreamZeroConfig.cfg_batched=True requested, but batching "
+                "cond+uncond into one forward (port plan §4 lever 1) is not "
+                "yet implemented in DreamZeroPipeline -- falling back to the "
+                "reference's sequential cond/uncond forwards. Implementing "
+                "this needs WANPolicyHead._run_diffusion_steps read from the "
+                "research clone on a GPU pod (not available in this "
+                "environment) -- see docs/DREAMZERO_PORT_PLAN.md §4.",
+                stacklevel=2,
+            )
 
     def _tokenize(self, text: str) -> tuple[torch.Tensor, torch.Tensor]:
         enc = self._tokenizer(
