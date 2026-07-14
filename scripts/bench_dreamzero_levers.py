@@ -5,43 +5,63 @@ Follows the ``bench_lingbot_va_levers.py`` house style (timed stages, warm-up
 then measure, one verbatim ``RESULT`` JSON line) but ladders through the
 DreamZero-specific levers scoped in ``docs/DREAMZERO_PORT_PLAN.md`` §4:
 
-- **rung 0 (true baseline)**: ``num_dit_steps=16`` — every DiT call in the
-  16-step joint denoise loop actually runs. This is deliberately NOT the
-  reference's own out-of-the-box behavior (see rung 0b) — it is the
-  full-compute number everything else in this ladder is measured against.
-- **rung 0b (reference default)**: ``num_dit_steps=8`` — the static
-  ``NUM_DIT_STEPS`` skip the reference silently runs with no opt-in flag
-  (port plan §2 point 5). Their published "~3s/chunk H100" claim is already
-  this number, not rung 0's — reported side by side so the two are never
-  conflated.
-- **rung 1 (batched CFG)**: ``cfg_batched=True`` — the single-GPU
-  differentiator vs. the reference's 2-GPU ``ip=2`` split (which only
-  distributes the same two sequential cond/uncond forwards across ranks,
-  same total compute). ``DreamZeroPipeline`` does not yet implement the
-  batched forward (needs ``WANPolicyHead._run_diffusion_steps`` read from the
-  research clone on a GPU pod) — it warns and falls back to sequential CFG.
-  This script detects that fallback and reports the rung as not measurable
+**Construction-time vs per-call levers (GPU-verified 2026-07-14, see
+``dreamzero_pipeline.build_pipeline``'s docstring for the full story):**
+``num_dit_steps``/``enable_dit_cache`` are baked into ``WANPolicyHead`` at
+construction time (env vars read once in ``__init__``) — changing them on an
+already-loaded engine is a silent no-op, so every rung touching either one
+here does a **fresh engine load**, unlike ``cfg_scale``/``cfg_batched``/
+``local_attn_size``, which are genuinely per-call-mutable and share rung 0's
+already-loaded engine.
+
+- **rung 0 (true baseline, fresh load)**: ``num_dit_steps=16`` — falls
+  through the reference's own mask-preset ``if/elif`` chain to the
+  ``else: all-True`` 16-of-16 mask (there is no discrete "16" preset; any
+  value outside ``{5,6,7,8}`` lands here — 16 is simply the least surprising
+  choice). This is deliberately NOT the reference's own out-of-the-box
+  behavior (see rung 0b) — it is the full-compute number everything else in
+  this ladder is measured against.
+- **rung 0b (reference default, fresh load)**: ``num_dit_steps=8`` — the
+  static skip the reference silently runs with no opt-in flag (port plan §2
+  point 5). Their published "~3s/chunk H100" claim is already this number,
+  not rung 0's.
+- **rung 1 (batched CFG, shares rung 0's engine)**: ``cfg_batched=True`` —
+  the single-GPU differentiator vs. the reference's 2-GPU ``ip=2`` split
+  (which only distributes the same two sequential cond/uncond forwards
+  across ranks, same total compute). ``DreamZeroPipeline`` does not yet
+  implement the batched forward (needs ``WANPolicyHead._run_diffusion_steps``
+  read from the research clone) — it warns and falls back to sequential CFG;
+  this script detects that fallback and reports the rung as not measurable
   rather than silently recording a sequential-CFG number under a "batched"
   label.
-- **rung 2 (cfg_scale=1)**: sets the CFG combine weight to 1 (mathematically
-  ``flow_pred = cond``). Whether the reference's ``_run_diffusion_steps``
-  actually *skips* the uncond forward at this value (a real latency win, as
-  confirmed for LingBot-VA's ``guidance_scale=1.0``) or still runs both
-  passes and only changes the combine math (no latency win) is **not
-  confirmed** for DreamZero — this rung reports the number with that
-  uncertainty disclosed, not asserted as a win.
-- **rung 3 (DiT-step scan + dynamic cache)**: ``num_dit_steps`` in
-  ``{12, 8, 4}``, plus the independent dynamic cosine-similarity skip
-  schedule (``enable_dit_cache=True``) at the rung-0 step count — two
-  separate skip mechanisms (port plan §2 point 5), reported separately.
-- **rung 4 (torch.compile)**: new ``DreamZeroConfig.compile`` flag. Cold
-  (first chunk, compile tax included) and warm reported separately. Phase 1
-  hit ``FailOnRecompileLimitHit`` running eager-forced
+- **rung 2 (cfg_scale=1, shares rung 0's engine)**: sets the CFG combine
+  weight to 1 (mathematically ``flow_pred = cond``) — a plain instance
+  attribute on ``WANPolicyHead``, confirmed genuinely per-call-mutable.
+  Whether the reference's ``_run_diffusion_steps`` also *skips* the uncond
+  forward at this value (a real latency win, as confirmed for LingBot-VA's
+  ``guidance_scale=1.0``) or still runs both passes and only changes the
+  combine math (no latency win) is **not confirmed** for DreamZero — this
+  rung reports the number with that uncertainty disclosed, not asserted as a
+  win.
+- **rung 3 (DiT-step-mask presets, fresh load each)**: the only three other
+  hand-tuned presets besides rung 0b's 8 — ``{7, 6, 5}`` (see
+  ``dreamzero_pipeline.DIT_STEP_MASK_PRESETS``). There is no "12" or "4"
+  preset; those values (an earlier draft of this script's choice) would have
+  silently collapsed to rung 0's full-16 mask.
+- **rung 3b (dynamic DiT cache, fresh load)**: the independent
+  cosine-similarity skip schedule (``enable_dit_cache=True``) — a different
+  mechanism from the static presets above (port plan §2 point 5), also
+  construction-time-only.
+- **rung 4 (torch.compile, fresh load)**: new ``DreamZeroConfig.compile``
+  flag. Cold (first chunk, compile tax included) and warm reported
+  separately. Phase 1 hit ``FailOnRecompileLimitHit`` running eager-forced
   (``TORCHDYNAMO_DISABLE=1``) — if compile still breaks here, this reports
   "not measurable" rather than a fabricated number (LingBot-VA's rung 3 was
   itself a negative result; this may be too).
-- **rung 5 (KV window)**: ``local_attn_size`` reduced from the checkpoint
-  default (21 frames) — primarily a KV-memory lever (pair with
+- **rung 5 (KV window, shares rung 0's engine)**: ``local_attn_size``
+  reduced from the checkpoint default (21 frames) — lives on
+  ``WANPolicyHead.model`` (the DiT), read fresh per call, confirmed
+  per-call-mutable. Primarily a KV-memory lever (pair with
   ``bench_control_loop.py --engine dreamzero --attn-window N --sessions N``
   for the marginal-HBM side of this number); latency is reported here as a
   secondary signal.
@@ -68,6 +88,7 @@ informatively).
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 import time
@@ -140,6 +161,21 @@ def _load_engine(backend: Backend, **cfg_kwargs: Any) -> tuple[DreamZeroEngine, 
     return engine, time.perf_counter() - t
 
 
+def _free_engine(engine: DreamZeroEngine) -> None:
+    """Drop a resident engine's ~42 GiB model before loading the next one.
+
+    GPU-verified 2026-07-14: DreamZero's weights alone are ~42.8 GiB (port
+    plan §2b) -- large enough that two resident copies exceed an 80 GiB H100
+    (confirmed by a CUDA OOM mid-construction of a 2nd fresh engine when a
+    prior rung's engine was never freed). Every rung requiring a fresh load
+    must free the previous one first; only one model may be resident at a
+    time in this script.
+    """
+    engine._pipeline = None
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
 def _open_session(engine: DreamZeroEngine, obs_dir: str, prompt: str) -> WorldState:
     return engine.reset(
         ConditioningInput(kind=ConditioningKind.IMAGE, uri=obs_dir), RolloutParams()
@@ -182,26 +218,6 @@ def _run_chunks(
         torch.cat(action_rows, dim=0) if action_rows else torch.zeros(0, 1, dtype=torch.float32)
     )
     return state, chunk_ms, actions_cat
-
-
-def _run_rung_detecting_fallback(
-    engine: DreamZeroEngine,
-    state: WorldState,
-    goal: torch.Tensor,
-    *,
-    warmup: int,
-    measure: int,
-) -> tuple[WorldState, list[float], torch.Tensor, list[str]]:
-    """Like :func:`_run_chunks`, but also captures any
-    ``DreamZeroPipeline._apply_levers`` fallback warnings (e.g.
-    ``cfg_batched`` not yet implemented) so the caller can mark the rung
-    "not measurable" instead of recording a misleadingly-labeled number.
-    """
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=warmup, measure=measure)
-        messages = [str(w.message) for w in caught]
-    return state, chunk_ms, actions, messages
 
 
 def main() -> int:
@@ -248,43 +264,41 @@ def main() -> int:
 
     goal = torch.zeros(1)  # policy-regime: the prompt is the goal; tensor unused
 
-    # --- rungs 0 - 3 (except dynamic-cache/step-scan, see below): one load,
-    # reused. num_dit_steps/enable_dit_cache/cfg_scale are read fresh every
-    # _infer call (DreamZeroPipeline._apply_levers), so mutating
-    # engine._config between rungs is enough -- no cache-shape dependency the
-    # way LingBot-VA's guidance_scale has, so no fresh reset() is strictly
-    # required, but one is taken per rung anyway for a clean per-rung
-    # first-block prime, matching house style. ---
+    # --- rung 0: fresh load, the shared engine for every per-call-mutable
+    # lever below (cfg_batched, cfg_scale, local_attn_size — all confirmed
+    # genuinely per-call-read, see dreamzero_pipeline.DreamZeroPipeline._apply_levers).
     engine, load_s = _load_engine(backend, repo=args.repo, prompt=args.prompt)
-    print(f"[levers] load (rungs 0-3, shared): {load_s:.1f}s", flush=True)
+    print(f"[levers] load (rung 0 + shared per-call levers): {load_s:.1f}s", flush=True)
 
     torch.manual_seed(args.seed)
     state = _open_session(engine, args.obs_dir, args.prompt)
     state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=args.warmup, measure=args.measure)
-    _record("rung0_baseline_16steps", chunk_ms, actions, extra={"num_dit_steps": 16})
-
-    engine._config.num_dit_steps = 8
-    torch.manual_seed(args.seed)
-    state = _open_session(engine, args.obs_dir, args.prompt)
-    state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=args.warmup, measure=args.measure)
-    _record(
-        "rung0b_reference_default_8steps",
-        chunk_ms,
-        actions,
-        extra={
-            "num_dit_steps": 8,
-            "note": "the reference's own undisclosed default (NUM_DIT_STEPS=8) "
-            "-- their published ~3s/chunk H100 claim is this number, not rung 0's",
-        },
-    )
-    engine._config.num_dit_steps = 16
+    _record("rung0_baseline_full16", chunk_ms, actions, extra={"num_dit_steps": "full (16)"})
+    engine.release(state)  # each rung sharing `engine` must close its session before the
+    # next one's _open_session -- otherwise pipeline._sessions accumulates one
+    # live KV cache per rung (GPU-verified 2026-07-14: OOM'd well before rung
+    # 5 with 5 sessions' worth of cache resident simultaneously, a leak this
+    # release() call fixes, same discipline release()'s own leak-check
+    # already covers for single-session churn -- this is the multi-rung case).
 
     engine._config.cfg_batched = True
     torch.manual_seed(args.seed)
-    state = _open_session(engine, args.obs_dir, args.prompt)
-    state, chunk_ms, actions, fallback_msgs = _run_rung_detecting_fallback(
-        engine, state, goal, warmup=args.warmup, measure=args.measure
-    )
+    # The one-time cfg_batched fallback warning fires on whichever _infer()
+    # call happens FIRST after cfg_batched flips True -- that's _open_session
+    # (reset()'s encode_observation), not _run_chunks. An earlier version of
+    # this script only wrapped _run_chunks in catch_warnings, so the warning
+    # fired (and was consumed) during _open_session, outside the monitored
+    # window -- fallback_msgs came back empty and the rung was silently
+    # mis-recorded as a "measurable" batched-CFG number that was actually
+    # just the sequential-CFG fallback (GPU-verified 2026-07-14). Both calls
+    # must share one catch_warnings window.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        state = _open_session(engine, args.obs_dir, args.prompt)
+        state, chunk_ms, actions = _run_chunks(
+            engine, state, goal, warmup=args.warmup, measure=args.measure
+        )
+        fallback_msgs = [str(w.message) for w in caught]
     if fallback_msgs:
         rungs["rung1_cfg_batched"] = {
             "measurable": False,
@@ -296,81 +310,50 @@ def main() -> int:
         print("[levers] rung1_cfg_batched: not measurable -- pipeline fell back", flush=True)
     else:
         _record("rung1_cfg_batched", chunk_ms, actions, extra={"cfg_batched": True})
+    engine.release(state)
     engine._config.cfg_batched = False
 
+    # cfg_scale=1.0 is wrapped in try/except: GPU-verified 2026-07-14 that it
+    # DOES skip the uncond forward (resolving the uncertainty this rung
+    # started out disclosing) -- `if self.cfg_scale != 1.0` gates a second
+    # prediction in _run_diffusion_steps -- but the reference's own CFG
+    # combine code unconditionally unpacks `predictions[1]` right after,
+    # crashing with IndexError. Their own demo config never sets cfg_scale=1,
+    # so this call path is plausibly untested upstream; not a bug we
+    # introduced, but real, so this rung reports it rather than crashing the
+    # whole ladder (same discipline as rung 4's compile guard).
     engine._config.cfg_scale = 1.0
-    torch.manual_seed(args.seed)
-    state = _open_session(engine, args.obs_dir, args.prompt)
-    state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=args.warmup, measure=args.measure)
-    _record(
-        "rung2_cfg_scale_1",
-        chunk_ms,
-        actions,
-        extra={
-            "cfg_scale": 1.0,
-            "note": "whether this actually skips the reference's uncond forward "
-            "(a real latency lever, confirmed for LingBot-VA's guidance_scale=1.0) "
-            "or only changes the CFG combine math (no latency win) is NOT "
-            "confirmed for DreamZero -- read _run_diffusion_steps to resolve",
-        },
-    )
-    engine._config.cfg_scale = 5.0
-
-    for steps in (12, 8, 4):
-        engine._config.num_dit_steps = steps
+    try:
         torch.manual_seed(args.seed)
         state = _open_session(engine, args.obs_dir, args.prompt)
-        state, chunk_ms, actions = _run_chunks(
-            engine, state, goal, warmup=args.warmup, measure=args.measure
-        )
-        _record(f"rung3_dit_steps_{steps}", chunk_ms, actions, extra={"num_dit_steps": steps})
-    engine._config.num_dit_steps = 16
-
-    engine._config.enable_dit_cache = True
-    torch.manual_seed(args.seed)
-    state = _open_session(engine, args.obs_dir, args.prompt)
-    state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=args.warmup, measure=args.measure)
-    _record(
-        "rung3_dynamic_dit_cache",
-        chunk_ms,
-        actions,
-        extra={"num_dit_steps": 16, "enable_dit_cache": True},
-    )
-    engine._config.enable_dit_cache = False
-
-    # --- rung 4: torch.compile — needs a fresh transformer construction. ---
-    try:
-        compiled_engine, compiled_load_s = _load_engine(
-            backend, repo=args.repo, prompt=args.prompt, compile=True
-        )
-        torch.manual_seed(args.seed)
-        state = _open_session(compiled_engine, args.obs_dir, args.prompt)
-        # Cold: first measured chunk, compile tax included.
-        state, cold_ms, _cold_actions = _run_chunks(
-            compiled_engine, state, goal, warmup=0, measure=1
-        )
-        # Warm: compile already paid for, isolated from rungs 0-3's mean.
-        state, warm_ms, warm_actions = _run_chunks(
-            compiled_engine, state, goal, warmup=args.warmup, measure=args.measure
-        )
-        _record(
-            "rung4_torch_compile",
-            warm_ms,
-            warm_actions,
-            extra={
-                "load_seconds": round(compiled_load_s, 1),
-                "cold_first_chunk_ms": round(cold_ms[0], 1) if cold_ms else None,
-            },
-        )
-    except Exception as exc:  # the graph-break/compile failure mode itself
-        rungs["rung4_torch_compile"] = {
+        try:
+            state, chunk_ms, actions = _run_chunks(
+                engine, state, goal, warmup=args.warmup, measure=args.measure
+            )
+            _record("rung2_cfg_scale_1", chunk_ms, actions, extra={"cfg_scale": 1.0})
+        finally:
+            engine.release(state)
+    except Exception as exc:
+        rungs["rung2_cfg_scale_1"] = {
             "measurable": False,
+            "note": "cfg_scale=1.0 DOES skip the reference's uncond forward "
+            "(confirmed -- a real latency lever, matching LingBot-VA's "
+            "guidance_scale=1.0) but crashes this call path: the CFG-combine "
+            "code unconditionally unpacks a 2nd (uncond) prediction that "
+            "was never computed. Plausibly untested upstream at cfg_scale=1.",
             "error": f"{type(exc).__name__}: {exc}",
         }
-        print(f"[levers] rung4 torch.compile: not measurable — {exc}", flush=True)
+        print(f"[levers] rung2_cfg_scale_1: not measurable — {exc}", flush=True)
+    engine._config.cfg_scale = 5.0
 
-    # --- rung 5: KV window (local_attn_size). Primarily a memory lever --
-    # pair with bench_control_loop.py --attn-window N --sessions N for the
+    # --- rung 5: KV window (local_attn_size) -- still shares `engine`
+    # (moved up from its original position at the end of this ladder so ALL
+    # engine-sharing rungs run back-to-back, before `engine` is freed for the
+    # fresh-load rungs below; DreamZero's ~42.8 GiB weights don't leave room
+    # for two resident models on an 80 GiB H100, GPU-verified 2026-07-14 by a
+    # mid-construction OOM when a prior rung's engine was kept alive
+    # unnecessarily). Primarily a memory lever -- pair with
+    # bench_control_loop.py --attn-window N --sessions N for the
     # marginal-HBM side; latency reported here as a secondary signal. ---
     for window in (12, 6):
         engine._config.local_attn_size = window
@@ -389,7 +372,87 @@ def main() -> int:
                 "--attn-window for the marginal-HBM/session-density side",
             },
         )
+        engine.release(state)
     engine._config.local_attn_size = None
+    _free_engine(engine)
+
+    # --- rung 0b + rung 3: num_dit_steps is construction-time-only (baked
+    # into WANPolicyHead.__init__'s dit_step_mask) -- each value needs a
+    # fresh engine, not a config mutation on the shared engine above (an
+    # earlier version of this script mutated in place and silently measured
+    # rung 0's mask for every "different" rung, GPU-verified 2026-07-14).
+    # Each iteration frees its engine before the next loads -- only one
+    # ~42.8 GiB model resident at a time (see _free_engine).
+    for steps in (8, 7, 6, 5):
+        s_engine, s_load_s = _load_engine(
+            backend, repo=args.repo, prompt=args.prompt, num_dit_steps=steps
+        )
+        torch.manual_seed(args.seed)
+        state = _open_session(s_engine, args.obs_dir, args.prompt)
+        state, chunk_ms, actions = _run_chunks(
+            s_engine, state, goal, warmup=args.warmup, measure=args.measure
+        )
+        name = "rung0b_reference_default_8steps" if steps == 8 else f"rung3_dit_steps_{steps}"
+        extra = {"num_dit_steps": steps, "load_seconds": round(s_load_s, 1)}
+        if steps == 8:
+            extra["note"] = (
+                "the reference's own undisclosed default (NUM_DIT_STEPS=8) -- "
+                "their published ~3s/chunk H100 claim is this number, not rung 0's"
+            )
+        _record(name, chunk_ms, actions, extra=extra)
+        _free_engine(s_engine)
+
+    # --- rung 3b: the independent dynamic cosine-similarity skip schedule --
+    # also construction-time-only (same __init__ block), also a fresh load. ---
+    dc_engine, dc_load_s = _load_engine(
+        backend, repo=args.repo, prompt=args.prompt, enable_dit_cache=True
+    )
+    torch.manual_seed(args.seed)
+    state = _open_session(dc_engine, args.obs_dir, args.prompt)
+    state, chunk_ms, actions = _run_chunks(
+        dc_engine, state, goal, warmup=args.warmup, measure=args.measure
+    )
+    _record(
+        "rung3b_dynamic_dit_cache",
+        chunk_ms,
+        actions,
+        extra={"enable_dit_cache": True, "load_seconds": round(dc_load_s, 1)},
+    )
+    _free_engine(dc_engine)
+
+    # --- rung 4: torch.compile — needs a fresh transformer construction. ---
+    try:
+        compiled_engine, compiled_load_s = _load_engine(
+            backend, repo=args.repo, prompt=args.prompt, compile=True
+        )
+        try:
+            torch.manual_seed(args.seed)
+            state = _open_session(compiled_engine, args.obs_dir, args.prompt)
+            # Cold: first measured chunk, compile tax included.
+            state, cold_ms, _cold_actions = _run_chunks(
+                compiled_engine, state, goal, warmup=0, measure=1
+            )
+            # Warm: compile already paid for, isolated from rungs 0-3's mean.
+            state, warm_ms, warm_actions = _run_chunks(
+                compiled_engine, state, goal, warmup=args.warmup, measure=args.measure
+            )
+            _record(
+                "rung4_torch_compile",
+                warm_ms,
+                warm_actions,
+                extra={
+                    "load_seconds": round(compiled_load_s, 1),
+                    "cold_first_chunk_ms": round(cold_ms[0], 1) if cold_ms else None,
+                },
+            )
+        finally:
+            _free_engine(compiled_engine)
+    except Exception as exc:  # the graph-break/compile failure mode itself
+        rungs["rung4_torch_compile"] = {
+            "measurable": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        print(f"[levers] rung4 torch.compile: not measurable — {exc}", flush=True)
 
     result = {
         "bench": "dreamzero_levers",

@@ -99,8 +99,50 @@ def _ensure_groot_importable() -> None:
         raise RuntimeError(_IMPORT_HELP) from exc
 
 
+#: The reference's static DiT-call-skip mask only has hand-tuned presets for
+#: these four values (``WANPolicyHead.__init__``, GPU-verified 2026-07-14 by
+#: reading ``wan_flow_matching_action_tf.py`` directly) -- ``NUM_DIT_STEPS``
+#: set to anything else (including unset, or our "full compute" choice of 16)
+#: falls through to the ``else`` branch, an all-``True`` 16-of-16 mask. There
+#: is no smooth 1-16 range; a DiT-step-scan lever must sweep exactly these
+#: four values plus "full" (any other value), not arbitrary integers.
+DIT_STEP_MASK_PRESETS = (5, 6, 7, 8)
+
+
 def build_pipeline(backend: Backend, config: DreamZeroConfig) -> DreamZeroPipeline:
-    """Import the research package and construct the real pipeline."""
+    """Import the research package and construct the real pipeline.
+
+    Sets two env vars ``WANPolicyHead.__init__`` reads **once, at
+    construction time, before any pipeline call runs** (GPU-verified
+    2026-07-14 by reading the source directly -- both assumptions this
+    function's env vars replace were wrong until then):
+
+    - ``TORCHDYNAMO_DISABLE``: forces eager mode unless ``config.compile``
+      opts in. The reference wraps several submodules (TextEncoder,
+      ImageEncoder, VAE, the flow-matching scheduler's
+      ``multistep_uni_p_bh_update``) in ``torch.compile`` unconditionally at
+      construction time, and the scheduler's history tensors change rank step
+      to step, which hits Dynamo's ``FailOnRecompileLimitHit`` on the very
+      first chunk (port plan §2b).
+    - ``NUM_DIT_STEPS``: baked into ``self.dit_step_mask`` at
+      ``WANPolicyHead.__init__`` (see :data:`DIT_STEP_MASK_PRESETS`) --
+      **not** re-read per call, despite being named like a per-call
+      parameter. A first attempt at wiring this from inside ``_infer()``
+      (post-construction) silently had zero effect: every chunk kept logging
+      the reference's own default 8-step mask regardless of
+      ``config.num_dit_steps``, because the env var wasn't set until after
+      the model — and its mask — already existed. A fresh pipeline is
+      required to actually change this lever; mutating ``config.num_dit_steps``
+      on an already-built engine does nothing (same for
+      ``DYNAMIC_CACHE_SCHEDULE`` below, read at the same line).
+    - ``DYNAMIC_CACHE_SCHEDULE``: same construction-time-only story as
+      ``NUM_DIT_STEPS`` (same ``__init__`` block) -- ``"True"``/``"False"``
+      confirmed against the source's own
+      ``os.getenv(..., "False").lower() == "true"`` check.
+    """
+    os.environ["TORCHDYNAMO_DISABLE"] = "0" if config.compile else "1"
+    os.environ["NUM_DIT_STEPS"] = str(config.num_dit_steps)
+    os.environ["DYNAMIC_CACHE_SCHEDULE"] = "True" if config.enable_dit_cache else "False"
     _ensure_groot_importable()
     return DreamZeroPipeline(backend, config)
 
@@ -269,22 +311,30 @@ class DreamZeroPipeline:
         return video_pred, actions
 
     def _apply_levers(self, cfg: DreamZeroConfig) -> None:
-        """Wire the Phase-2 latency levers (port plan §4) into the reference's
-        own env-var / instance-attribute knobs, read fresh every ``_infer``
-        call so a levers script can mutate ``engine._config`` between rungs
-        without reconstructing the whole model (mirrors how
-        ``bench_lingbot_va_levers.py`` mutates ``engine._config`` in place).
+        """Wire the Phase-2 latency levers (port plan §4) that ARE plain
+        per-call-read instance attributes -- confirmed by reading the
+        source directly, 2026-07-14. ``num_dit_steps``/``enable_dit_cache``
+        are NOT here: they're baked into ``self.dit_step_mask`` /
+        ``self.dynamic_cache_schedule`` once at ``WANPolicyHead.__init__``
+        (see :func:`build_pipeline`'s docstring) and mutating them here had
+        silently zero effect until that was caught on the first real H100
+        run -- a fresh pipeline is required to change either.
 
-        The env-var string format (``"True"``/``"False"``) mirrors the
-        research repo's usual ``os.environ.get(..., "False") == "True"``
-        convention — **not yet confirmed against the actual
-        ``should_run_model`` source** (port plan §2 point 5); verify on the
-        GPU pod before trusting lever numbers that depend on it.
+        - ``cfg_scale``: ``WANPolicyHead.cfg_scale`` is a plain attribute
+          (``__init__`` hardcodes ``self.cfg_scale = 5.0``, read fresh at the
+          CFG-combine line every diffusion step) that was previously never
+          wired from ``DreamZeroConfig`` at all -- invisible until now only
+          because our config default (5.0) happened to match theirs.
+        - ``local_attn_size``: lives on ``self._action_head.model`` (the
+          actual DiT / ``CausalWanModel``), **not** ``self._action_head``
+          itself (``WANPolicyHead`` reads ``self.model.local_attn_size`` at
+          its reset-condition check) -- read fresh per call by the DiT's own
+          forward-path attribute accesses, so this one genuinely is
+          per-call-mutable, unlike the two env-var levers above.
         """
-        os.environ["NUM_DIT_STEPS"] = str(cfg.num_dit_steps)
-        os.environ["DYNAMIC_CACHE_SCHEDULE"] = "True" if cfg.enable_dit_cache else "False"
+        self._action_head.cfg_scale = cfg.cfg_scale
         if cfg.local_attn_size is not None:
-            self._action_head.local_attn_size = cfg.local_attn_size
+            self._action_head.model.local_attn_size = cfg.local_attn_size
         if cfg.cfg_batched and not self._cfg_batched_warned:
             self._cfg_batched_warned = True
             import warnings

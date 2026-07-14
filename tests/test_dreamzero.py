@@ -103,6 +103,32 @@ def _toy_engine(pipeline: _FakePipeline | None = None) -> DreamZeroEngine:
     )
 
 
+def test_build_pipeline_sets_torchdynamo_disable_before_groot_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test (caught on the 2026-07-14 H100 run): ``config.compile``
+    must control ``TORCHDYNAMO_DISABLE`` *before* the research package/model
+    is imported/constructed, or the reference's own unconditional
+    ``torch.compile`` wrapping of the flow-matching scheduler hits
+    ``FailOnRecompileLimitHit`` on the very first chunk (port plan §2b) --
+    silently reintroduced when the Phase-2 ``compile`` lever field was added
+    without wiring its actual mechanism.
+    """
+    import os
+
+    monkeypatch.delenv("REPERCEP_DREAMZERO_SRC", raising=False)
+    monkeypatch.delenv("TORCHDYNAMO_DISABLE", raising=False)
+    from repercep.models.dreamzero_pipeline import build_pipeline
+
+    with pytest.raises(RuntimeError, match="DREAMZERO_PORT_PLAN"):
+        build_pipeline(cast("Backend", _NamedBackend("fake")), DreamZeroConfig())
+    assert os.environ["TORCHDYNAMO_DISABLE"] == "1"
+
+    with pytest.raises(RuntimeError, match="DREAMZERO_PORT_PLAN"):
+        build_pipeline(cast("Backend", _NamedBackend("fake")), DreamZeroConfig(compile=True))
+    assert os.environ["TORCHDYNAMO_DISABLE"] == "0"
+
+
 def test_config_phase2_lever_defaults_are_the_true_baseline() -> None:
     """Phase-2 lever fields (docs/DREAMZERO_PORT_PLAN.md §4) default to the
     true full-compute baseline, not the reference's silent approximations —

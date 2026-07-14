@@ -391,25 +391,45 @@ is a Phase-0 design question, not a commitment.
   substantially with the base Wan2.1-I2V-14B-480P download (same DiT/VAE/T5/CLIP
   architecture, DROID shards are the fine-tuned deltas loaded `strict=False` on top),
   so don't assume the two downloads sum to resident GPU memory — measure at load.
-- **Phase 2 (bench):** RunPod H100 + MI300X rows in `bench_control_loop` /
-  `CONTROL_LOOP_BENCH.md`: warm chunk latency (vs their ~3 s H100 claim),
-  decisions/sec under state carryover, **KV memory per session** — back-of-envelope
-  says ~800 KB/token × 18.5k tokens × 2 (CFG) ≈ **~30 GB/session at full window**,
-  which would make resident-sessions/GPU the headline: H100 holds ~1, MI300X ~5.
-  If that holds under measurement it is the cleanest "runs what H100 can't" story yet
-  (strategy T1.3) — but it is arithmetic until measured. Levers ladder, in order:
-  CFG cond+uncond batched into one forward (vs their sequential/2-GPU), DiT-cache
-  on/off (quality-flagged), step count, KV window (`local_attn_size`), SDPA vs ROCm
-  AITER. MI300X via the guarded SDPA fallback; no stub needed.
+- **Phase 2 (bench): H100 DONE 2026-07-14** — RunPod H100 row in
+  `CONTROL_LOOP_BENCH.md`, full levers ladder in `DREAMZERO_LEVERS_2026_07.md`,
+  real DROID camera frames (`scripts/extract_droid_debug_frames.py`, from the
+  research clone's own bundled debug episode — the standing synthetic-input
+  caveat below is resolved), `release()`/leak check passed. Headline numbers:
+  true full-16-step baseline 5671.6 ms/chunk, dynamic DiT-cache schedule
+  1780.2 ms (3.19×, beats every static preset). **The ~30 GB/session
+  back-of-envelope below landed close (22.88 GiB measured) and the "H100 ~1
+  session" prediction is now confirmed empirically, not just extrapolated** —
+  a live 2-session run OOM'd mid-forward-pass at full compute. **MI300X row:
+  not yet attempted** — check AMD availability first (deferred for LingBot-VA's
+  ladder too, per that doc). **Parity vs. the reference server: attempted,
+  deferred** — `GrootSimPolicy` needs `ComposedModalityTransform`, the
+  GR00T-N1.5 dataset-schema stack §5 below already flagged as
+  deliberately-not-vendored; a construction probe hit a real dependency chain
+  (tianshou API mismatch, missing `albumentations`) confirming that call, not
+  just caution. Three real GPU-verified corrections to keep in mind for any
+  future Phase-2 work: `num_dit_steps`/`enable_dit_cache` are read once at
+  `WANPolicyHead.__init__` from env vars, never per-call (a lever sweep must
+  reload the whole model per value, not mutate config on a live engine); the
+  only discrete `NUM_DIT_STEPS` presets are `{5,6,7,8}` (anything else,
+  including "16", falls through to the full-16 mask — there's no smooth
+  1-16 range); `cfg_scale` was never wired into the model at all until this
+  pass (see `dreamzero_pipeline.DreamZeroPipeline._apply_levers`).
+  Back-of-envelope that's now measured: ~800 KB/token × 18.5k tokens × 2 (CFG)
+  ≈ ~30 GB/session at full window, resident-sessions/GPU the headline: H100
+  holds 1 (confirmed), MI300X TBD.
 - **Phase 3 (serving):** wire into `/v2/world/session` next to LingBot-VA; the
   session-state object already generalized to "context + engine-held cache" in the
   LingBot port. N-session load test per the LingBot-VA levers methodology.
 
 ## 5. Risks
 
-- **Per-session KV memory (~30 GB est.) is 5× LingBot-VA's** — could flip the
-  multi-session economics story from "many sessions/GPU" to "MI300X-only
-  multi-session." Measure before claiming either.
+- ~~Per-session KV memory (~30 GB est.) is 5× LingBot-VA's~~ **MEASURED
+  2026-07-14**: 22.88 GiB/session at full window (close to the estimate),
+  ~3.8× LingBot-VA's 6.01 GiB. H100 confirmed 1 session (empirically, not
+  just extrapolated — a 2-session run OOM'd). MI300X still open — that's the
+  real "many sessions/GPU or MI300X-only" question now, not resolved either
+  way yet.
 - **ip=1 is code-supported but likely under-tested upstream** (their launch docs are
   2-GPU only) — Phase-1 parity check is the gate, not an afterthought.
 - **Research code hygiene:** hardcoded inference constants (`num_inference_steps =

@@ -204,7 +204,9 @@ class DreamZeroConfig:
     # similarity of the last two action-noise predictions >0.95/0.93 skips
     # the next 4/2 calls, reusing the last prediction verbatim) — off by
     # default, quality impact is ours to measure, not the pipeline's default
-    # stance.
+    # stance. Same construction-time-only caveat as num_dit_steps above (same
+    # WANPolicyHead.__init__ block, read via DYNAMIC_CACHE_SCHEDULE) --
+    # requires a fresh pipeline to change, GPU-verified 2026-07-14.
     enable_dit_cache: bool = False
     attn_mode: str = "sdpa"
     # ip=2 only splits CFG (rank 0 conditional / rank 1 unconditional,
@@ -217,9 +219,18 @@ class DreamZeroConfig:
     # The reference's static DiT-call-skip cap (`NUM_DIT_STEPS` env, port plan
     # §2 point 5) defaults to 8 *unconditionally*, with no opt-in flag — so
     # their own "~3s/chunk H100" claim is already running an approximation.
-    # 16 here is the true full-computation baseline, set explicitly so a run
-    # is reproducible rather than silently inheriting that undisclosed
-    # default; pass 8 to reproduce their default path instead.
+    # GPU-verified 2026-07-14 (wan_flow_matching_action_tf.py's
+    # WANPolicyHead.__init__, read directly): only {5, 6, 7, 8} have
+    # hand-tuned partial masks -- any OTHER value, including this field's own
+    # default of 16, falls through to the full 16-of-16 (all-True) mask. 16
+    # is not "16 discrete skip levels"; it is simply the least surprising
+    # sentinel for "full compute", picked because it equals num_inference_steps.
+    # This env var is read ONCE at pipeline construction
+    # (dreamzero_pipeline.build_pipeline), never per-call -- changing it on an
+    # already-loaded engine's config does nothing; a fresh pipeline is
+    # required (see build_pipeline's docstring for the full story, including
+    # the silent-no-op this caused before it was caught on the first H100
+    # run).
     num_dit_steps: int = 16
     # Batch cond+uncond into one forward instead of the reference's two
     # sequential calls per denoise step (port plan §2 point 4/§4 lever 1) —

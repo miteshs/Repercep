@@ -144,6 +144,61 @@ FlexAttention both came out *slower* than the CFG-off baseline at the same
 config, plausibly compile/graph-break overhead not amortized in this run's
 warmup window — a follow-up, not resolved here.
 
+### DreamZero-DROID (16.5B autoregressive world-action model, Wan2.1 DiT + action/state registers) — policy regime
+
+H100 only so far (MI300X deferred — see §5), 2026-07-14, real DROID camera
+frames (extracted from the research clone's own bundled 419-frame debug
+episode via `scripts/extract_droid_debug_frames.py`, not random pixels —
+`docs/DREAMZERO_PORT_PLAN.md`'s standing synthetic-input caveat is now
+resolved). "Step"/chunk = one block (2 latent frames, 24 actions,
+`used_action_dim=8` wire width). All numbers below are **true full-16-step
+compute** (`num_dit_steps=16`, the config default) — see the levers doc
+(`docs/DREAMZERO_LEVERS_2026_07.md`) for why this is NOT what the reference's
+own "~3s/chunk H100" claim measures.
+
+| metric | H100 (Repercep seam) |
+|---|---|
+| chunk latency (warm, full 16-step) | **5890.6 ms** (0.2/s) |
+| planning-decisions/sec | **0.165** (6.06 s/plan) |
+| energy-evals/sec | n/a (policy regime) |
+| one-time weight load | 42.78 GiB |
+| session marginal HBM (full attention window) | **22.88 GiB** |
+| resident sessions/GPU | **1** — confirmed both by extrapolation (`(79.2−42.78)//22.88`) AND empirically: a live 2-session run OOM'd mid-forward-pass at true full compute (§ below) |
+
+Verbatim provenance (single-session baseline, `--warmup 12` to fill the
+~10-block/21-frame attention window before measuring so
+`session_marginal_gib` reflects steady state, not an under-warmed number):
+
+```json
+{"mode": "control_loop_bench_v0", "model": "dreamzero-droid", "device": "cuda:0", "dtype": "bfloat16", "load_seconds": 286.1, "reset_seconds": 5.882, "step_ms_warm": 5890.61, "steps_per_sec": 0.2, "plan_seconds": 6.057, "planning_decisions_per_sec": 0.1651, "plan_horizon": 4, "cem": null, "energy_evals_per_plan": null, "energy_evals_per_sec": null, "weights_gib": 42.78, "session_marginal_gib": 22.88, "hbm_total_gib": 79.2, "resident_sessions_per_gpu": 1, "step_iters": 20, "plan_calls": 1, "state_carryover": true, "concurrency": null}
+```
+
+**The "H100 tops out at ~1 session" prediction (port plan §4/§5) is
+confirmed, not just arithmetic:** a `--sessions 2` run at this same full-16-
+step config OOM'd (`CUDA out of memory`, 79.14/79.18 GiB in use) partway
+through the round-robin phase — two live sessions' KV caches genuinely do not
+fit alongside the 42.78 GiB weights on an 80 GiB H100 once both approach the
+full attention window. This is the ~5× LingBot-VA per-session memory cost the
+port plan's back-of-envelope (~30 GB/session) flagged as a risk, landing
+close to the estimate (22.88 GiB measured, same order of magnitude). MI300X
+(192 GiB) is the natural next data point for whether this becomes a
+multi-session story there — deferred, see §5.
+
+**`release()`/`close()` leak check: passed** (3 open/release cycles,
+`engine._sessions`/`pipeline._sessions` both empty after every release) —
+with one nuance worth carrying forward: GPU memory does **not** drop
+immediately at `release()` time (stayed flat across all 3 cycles in the
+check) — `close()` only clears bookkeeping; the model's own live cache
+attributes (`WANPolicyHead.kv_cache1` etc., plain mutable instance attributes,
+no per-session native keying) are only overwritten — and thus freed — the
+next time a session's `_swap_in` runs. Not a leak (confirmed no growth across
+cycles), but reclaim is deferred to next-use, not eager.
+
+**Serving-latency ladder: `docs/DREAMZERO_LEVERS_2026_07.md`** — the full
+16-step baseline above is 3.2× the reference's own undisclosed 8-step
+default (3068.8 ms), and the dynamic DiT-cache schedule reaches **1780.2 ms**
+(3.2× the true baseline, beating even the most aggressive static preset).
+
 ---
 
 ## 3. External reference — LingBot-VA 2.0 paper, Table 3 (NOT measured by us)
@@ -207,3 +262,27 @@ project exists to fill — roughly a 10× window on this model.**
   (`torch.compile`, FlexAttention both came out slower here). MI300X
   companion run for this ladder deferred — RunPod's GPU catalog had zero AMD
   entries at all when checked (delisted, not merely out of stock).
+- **DreamZero-DROID H100 row + levers ladder + release-check — done
+  2026-07-14** (row above; ladder in `docs/DREAMZERO_LEVERS_2026_07.md`).
+  Real DROID camera frames (no longer synthetic). Confirmed empirically (not
+  just extrapolated) that H100 tops out at 1 resident session at full
+  compute. **MI300X row: not yet attempted** — the natural next question is
+  whether DreamZero's much larger per-session HBM cost (22.88 GiB vs
+  LingBot-VA's 6.01 GiB) turns MI300X's extra headroom (192 vs 80 GiB) into
+  a multi-session story the way it wasn't quite for LingBot-VA (30 vs 11, a
+  capacity story either way) — check `runpodctl gpu list | grep -i instinct`
+  for current AMD availability first.
+- **DreamZero parity vs. the reference server — attempted, deferred.**
+  The reference's own `GrootSimPolicy` wrapper reads the same checkpoint
+  config our pipeline does and calls the same `WANPolicyHead.
+  lazy_joint_video_action`, so a construction probe was attempted
+  (2026-07-14, capped ~30 min): it requires `groot.vla.data.transform.
+  ComposedModalityTransform`, exactly the GR00T-N1.5 dataset-schema stack
+  the port plan (§5) deliberately chose not to vendor. Construction hit a
+  real multi-step dependency chain (`tianshou` API mismatch — pin `0.5.1`,
+  not the PyPI-default `2.0.1` which removed `tianshou.policy.BasePolicy` —
+  then a missing `albumentations`, likely more beyond that) rather than
+  resolving in the capped budget. Confirms the original vendoring boundary
+  was the right call, not just caution; a future session's parity check
+  should budget for standing up that transform stack properly rather than
+  attempting it as a quick add-on.
