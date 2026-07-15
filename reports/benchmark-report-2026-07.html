@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Repercep.AI Benchmark Report</title>
+<style>
+@font-face{
+  font-family:'Archivo';
+  src:url('fonts/archivo-var.woff2') format('woff2');
+  font-weight:100 900;
+  font-display:swap;
+}
+@font-face{
+  font-family:'Plex Mono';
+  src:url('fonts/plexmono-400.woff2') format('woff2');
+  font-weight:400;
+  font-display:swap;
+}
+@font-face{
+  font-family:'Plex Mono';
+  src:url('fonts/plexmono-500.woff2') format('woff2');
+  font-weight:500;
+  font-display:swap;
+}
+:root{
+  --ink:#171B23;
+  --ink-2:#5A6274;
+  --line:#DFE2E9;
+  --line-strong:#C6CAD4;
+  --teal:#0F6C5C;
+  --teal-bg:#E7F3EF;
+  --teal-border:#1F7A5C;
+  --amber:#A96A10;
+  --amber-bg:#FBF1DF;
+  --amber-border:#B5762A;
+  --nvidia:#2E9E44;
+  --amd:#D23B3B;
+  --sans:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --serif:Georgia,'Iowan Old Style','Palatino Linotype',serif;
+}
+@page{margin:0;size:letter}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--serif);
+  color:var(--ink);
+  font-size:10.6pt;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.page{
+  width:816px;
+  padding:40px 64px 4px;
+  page-break-before:always;
+  page-break-inside:auto;
+  break-before:page;
+}
+.page:first-child{page-break-before:auto;break-before:auto;padding-top:56px}
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:10px;
+  margin-bottom:26px;
+}
+.brand{font-family:var(--sans);font-weight:800;letter-spacing:.06em;font-size:10pt;color:var(--ink)}
+.confidential{font-family:var(--mono);font-size:8.4pt;letter-spacing:.08em;color:var(--ink-2);text-transform:uppercase}
+h1{font-family:var(--sans);font-weight:800;font-size:26pt;line-height:1.12;margin:0 0 14px;color:var(--ink)}
+.lede{font-size:12pt;line-height:1.5;color:var(--ink-2);margin:0 0 26px;max-width:640px}
+.metabar{
+  border-top:1px solid var(--line-strong);
+  border-bottom:1px solid var(--line-strong);
+  padding:14px 0;
+  margin-bottom:30px;
+  font-family:var(--mono);
+  font-size:8.6pt;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  row-gap:6px;
+}
+.metabar b{font-family:var(--sans);font-weight:700;color:var(--ink)}
+h2.sect{
+  font-family:var(--sans);
+  font-size:14.5pt;
+  font-weight:800;
+  margin:0 0 14px;
+  display:flex;
+  align-items:baseline;
+  gap:10px;
+}
+h2.sect .num{color:var(--teal);font-family:var(--mono);font-weight:700;font-size:12pt}
+h3.sub{font-family:var(--sans);font-size:11.5pt;font-weight:700;margin:22px 0 10px}
+p{margin:0 0 14px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0 8px}
+.tile{border:1px solid var(--line-strong);padding:16px 18px;border-radius:2px}
+.tile .n{font-family:var(--sans);font-weight:800;font-size:23pt;line-height:1;color:var(--ink)}
+.tile .n sup{font-size:12pt}
+.tile .d{font-family:var(--serif);font-size:9.3pt;color:var(--ink-2);margin-top:6px;line-height:1.4}
+hr.rule{border:none;border-top:1px solid var(--line-strong);margin:26px 0}
+table{width:100%;border-collapse:collapse;margin:14px 0 20px;font-size:9.3pt}
+th{
+  font-family:var(--mono);
+  font-size:7.6pt;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  color:var(--ink-2);
+  text-align:left;
+  padding:5px 10px 8px 0;
+  border-bottom:1px solid var(--ink);
+  font-weight:500;
+}
+td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;font-family:var(--serif)}
+td.num,th.num{font-family:var(--mono);text-align:right}
+tr:last-child td{border-bottom:1px solid var(--line-strong)}
+.chip{
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:7.4pt;
+  font-weight:500;
+  padding:2px 7px;
+  border-radius:9px;
+  border:1px solid;
+  letter-spacing:.03em;
+}
+.chip.nv{color:var(--nvidia);border-color:var(--nvidia)}
+.chip.amd{color:var(--amd);border-color:var(--amd)}
+.tablecap{font-family:var(--mono);font-size:8.2pt;color:var(--ink-2);margin:18px 0 4px}
+.box{border-left:3px solid;padding:14px 18px;margin:16px 0 22px;font-size:9.6pt}
+.box .lbl{font-family:var(--mono);font-size:7.6pt;letter-spacing:.08em;text-transform:uppercase;font-weight:700;margin-bottom:8px;display:block}
+.box.finding{background:var(--teal-bg);border-color:var(--teal-border)}
+.box.finding .lbl{color:var(--teal-border)}
+.box.caveat{background:var(--amber-bg);border-color:var(--amber-border)}
+.box.caveat .lbl{color:var(--amber-border)}
+.box p{margin:0 0 8px}
+.box p:last-child{margin-bottom:0}
+ul.limits{margin:10px 0 0;padding-left:18px}
+ul.limits li{margin-bottom:10px}
+.pagefoot{
+  margin-top:36px;
+  border-top:1px solid var(--line);
+  padding-top:10px;
+  padding-bottom:20px;
+  font-family:var(--mono);
+  font-size:7.6pt;
+  color:var(--ink-2);
+}
+.sources{font-family:var(--mono);font-size:8.2pt;color:var(--ink-2);line-height:1.7}
+code{font-family:var(--mono);font-size:.94em;background:#F1F2F5;padding:1px 4px;border-radius:2px}
+.tile,.box,tr,table{break-inside:avoid;page-break-inside:avoid}
+h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 -->
+<div class="page">
+  <div class="topbar">
+    <span class="brand">REPERCEP.AI</span>
+    <span class="confidential">Confidential — Prepared for Investor Diligence</span>
+  </div>
+
+  <h1>Benchmark Report: World-Model<br>Serving Across NVIDIA and AMD Silicon</h1>
+  <p class="lede">Measured performance of the Repercep.AI runtime on H100 and MI300X across all three world-model regimes — energy-based control (V-JEPA 2-AC), policy-driven control (LingBot-VA, DreamZero), and generation (Cosmos, Wan) — with full methodology and disclosed caveats.</p>
+
+  <div class="metabar">
+    <div><b>Date</b> July 15, 2026</div>
+    <div><b>Latest measurements</b> July 15, 2026 (AMD Developer Cloud) / July 14, 2026 (RunPod)</div>
+    <div><b>Hardware</b> H100 SXM 80GB &middot; MI300X 192GB &middot; RTX 2000 Ada &middot; Xeon SPR</div>
+    <div><b>Provenance</b> raw JSON result lines archived in-repo</div>
+  </div>
+
+  <h3 class="sub" style="margin-top:0">Executive summary</h3>
+  <p>The Repercep.AI runtime is a vendor-neutral serving layer for world models. It now serves <b>all three</b> workload regimes through one backend seam: two flavors of the <b>control regime</b> — energy-based, action-conditioned planning (V-JEPA 2-AC class, output is plans reached by search) and policy-driven video-action serving (LingBot-VA, DreamZero class, output is plans generated directly by the model) — plus the <b>generation regime</b> (Cosmos, Wan video diffusion). Both control regimes are the strategic lead: closed-loop, state-carrying serving is a workload we believe nobody else publishes a leaderboard for, and this report now includes measured cross-vendor numbers for both control mechanisms, not just one.</p>
+
+  <p>Six results matter most:</p>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="n">7<sup>%</sup></div>
+      <div class="d">MI300X vs H100 gap on the energy-MPC control rollout step — that workload is effectively silicon-agnostic today.</div>
+    </div>
+    <div class="tile">
+      <div class="n">6<sup>&times;</sup></div>
+      <div class="d">more resident sessions on MI300X than H100 for our largest policy-control model (DreamZero, 16.5B) — the clearest "runs what H100 can't" capacity result measured yet.</div>
+    </div>
+    <div class="tile">
+      <div class="n">2.0<sup>&times;</sup></div>
+      <div class="d">portable serving-latency win on LingBot-VA from config-level levers alone — zero CUDA-locked tooling, reproduced against the model's own published acceleration ladder.</div>
+    </div>
+    <div class="tile">
+      <div class="n">3.2&ndash;3.8<sup>&times;</sup></div>
+      <div class="d">generation-regime speedup from our adaptive cache, reproduced on both vendors.</div>
+    </div>
+    <div class="tile">
+      <div class="n">1.6&ndash;2.1<sup>&times;</sup></div>
+      <div class="d">measured speedup from CEM-candidate batching (H100 / MI300X), at planning-quality parity.</div>
+    </div>
+    <div class="tile">
+      <div class="n">26&ndash;39<sup>%</sup></div>
+      <div class="d">lower cost per unit of work on MI300X at current cloud rental prices, across regimes.</div>
+    </div>
+  </div>
+
+  <div class="pagefoot">Every number in this report is a wall-clock measurement from our own harnesses, with the raw JSON result lines archived in the repository (<code>docs/CONTROL_LOOP_BENCH.md</code>, <code>docs/BENCH_2026_06_RUNPOD.md</code>). Where a comparison is not apples-to-apples, the caveat is stated inline, in this document, rather than in a footnote.</div>
+</div>
+
+<!-- PAGE 2 -->
+<div class="page">
+  <h2 class="sect"><span class="num">1</span>What was measured</h2>
+  <p>Three regimes, five models, two vendors, one runtime.</p>
+
+  <table>
+    <tr><th>Regime</th><th>Models</th><th>Vendors</th><th>Measured</th></tr>
+    <tr><td>Energy-based control</td><td>V-JEPA 2-AC (300M predictor + ViT-g encoder)</td><td>H100, MI300X</td><td>June 2026</td></tr>
+    <tr><td>Policy-driven control</td><td>LingBot-VA 2.0 (MoT DiT, Wan2.2 latents)</td><td>H100, MI300X</td><td>July 11&ndash;13, 2026</td></tr>
+    <tr><td>Policy-driven control</td><td>DreamZero-DROID (16.5B, Wan2.1-based, GR00T ecosystem)</td><td>H100, MI300X</td><td>July 14&ndash;15, 2026</td></tr>
+    <tr><td>Generation</td><td>Cosmos-Predict-7B</td><td>H100, MI300X</td><td>June 2026</td></tr>
+    <tr><td>Generation</td><td>Wan-2.2-T2V-A14B</td><td>H100, MI300X</td><td>May 2026</td></tr>
+  </table>
+  <p style="color:var(--ink-2);font-size:9.2pt">Earlier sessions additionally cover a bare MI300X on ROCm 7.2, an Ada-Lovelace (sm_89) correctness sweep, and CPU (Sapphire Rapids) smoke runs &mdash; summarized in &sect;6.</p>
+
+  <hr class="rule">
+
+  <h2 class="sect"><span class="num">2</span>Energy-based control: V-JEPA 2-AC (the original strategic lead)</h2>
+  <p>V-JEPA 2-AC (Meta) is the flagship of the energy-based, action-conditioned camp of world models: a robot controller rolls the world forward in latent space and plans actions by minimizing an energy function (CEM/MPC). No pixel decode, no diffusion &mdash; a fundamentally different serving problem from video generation, and one no serving stack (including NVIDIA's NIM) currently optimizes. To our knowledge this was the first published cross-vendor latency profile for this workload.</p>
+
+  <p class="tablecap">V-JEPA 2-AC latency profile &mdash; 8-frame context (2,048 tokens), CEM 64 samples &times; 3 iterations</p>
+  <table>
+    <tr><th>Metric</th><th class="num">NVIDIA H100</th><th class="num">AMD MI300X</th><th class="num">Gap</th></tr>
+    <tr><td>Rollout step (one latent world-step)</td><td class="num">70.8 ms (14.1/s)</td><td class="num">75.8 ms (13.2/s)</td><td class="num">1.07&times;</td></tr>
+    <tr><td>Full CEM plan, horizon 4 (768 forwards)</td><td class="num">55.6 s</td><td class="num">67.2 s</td><td class="num">1.21&times;</td></tr>
+    <tr><td>Full CEM plan, horizon 8 (1,536 forwards)</td><td class="num">110.9 s</td><td class="num">129.7 s</td><td class="num">1.17&times;</td></tr>
+    <tr><td>Peak GPU memory</td><td class="num">3.4 GiB / 80</td><td class="num">3.7 GiB / 192</td><td class="num">&mdash;</td></tr>
+  </table>
+
+  <p>The silicon gap is small (7% on the step, 17&ndash;21% on the plan) and the naive planner is far too slow for closed-loop control &mdash; robot control loops need 10&ndash;100 ms per decision, and a stock CEM plan costs tens of seconds. CEM-candidate batching (all 64 candidates as one forward per timestep) closes part of that gap at planning-quality parity:</p>
+
+  <p class="tablecap">Sequential vs candidate-batched CEM plan</p>
+  <table>
+    <tr><th>Horizon</th><th>GPU</th><th class="num">Sequential</th><th class="num">Batched</th><th class="num">Speedup</th></tr>
+    <tr><td>H=4</td><td><span class="chip nv">NVIDIA</span> H100</td><td class="num">54.5 s</td><td class="num">35.1 s</td><td class="num">1.6&times;</td></tr>
+    <tr><td>H=8</td><td><span class="chip nv">NVIDIA</span> H100</td><td class="num">110.1 s</td><td class="num">70.2 s</td><td class="num">1.6&times;</td></tr>
+    <tr><td>H=4</td><td><span class="chip amd">AMD</span> MI300X</td><td class="num">68.4 s</td><td class="num">32.1 s</td><td class="num">2.1&times;</td></tr>
+    <tr><td>H=8</td><td><span class="chip amd">AMD</span> MI300X</td><td class="num">129.7 s</td><td class="num">60.8 s</td><td class="num">2.1&times;</td></tr>
+  </table>
+
+  <div class="box finding">
+    <span class="lbl">Finding &mdash; and why it de-risked the roadmap</span>
+    <p>Cutting forwards 64&times; bought only 1.6&ndash;2.1&times; wall time: the per-candidate forward is already compute-bound. This redirected optimization toward KV/latent reuse and a bf16 predictor path &mdash; exactly the class of lever the two policy-driven models in &sect;3 validate independently, on a different architecture.</p>
+  </div>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 3: NEW POLICY REGIME SECTION -->
+<div class="page">
+  <h2 class="sect"><span class="num">3</span>Policy-driven control: LingBot-VA and DreamZero (the second control regime)</h2>
+  <p>Energy-based control (&sect;2) searches for a plan by minimizing an energy function over sampled rollouts. The second control mechanism is structurally different: a policy-driven video-action model <i>generates</i> its own next action chunk directly &mdash; the denoise loop <b>is</b> the planner, with no external CEM/MPC search. Two models validate this regime end-to-end this cycle, on real camera input, not synthetic pixels: <b>LingBot-VA 2.0</b> (Ant Group/Robbyant, MoT DiT over Wan2.2 latents) and <b>DreamZero-DROID</b> (16.5B, Wan2.1-based, attached to NVIDIA's GR00T 2 ecosystem). Both regimes now run under the identical closed-loop harness &mdash; state carryover required, warm-vs-cold disclosed &mdash; so all numbers in &sect;2 and this section are directly comparable.</p>
+
+  <h3 class="sub">LingBot-VA 2.0</h3>
+  <p class="tablecap">Closed-loop chunk latency (4 latent frames, 32 actions/chunk)</p>
+  <table>
+    <tr><th>Metric</th><th class="num">NVIDIA H100</th><th class="num">AMD MI300X</th></tr>
+    <tr><td>Chunk latency, warm (default config)</td><td class="num">754.6 ms</td><td class="num">1198.1 ms</td></tr>
+    <tr><td>Resident sessions/GPU</td><td class="num">11</td><td class="num">30</td></tr>
+    <tr><td>Session marginal HBM</td><td class="num">6.01 GiB</td><td class="num">6.05 GiB</td></tr>
+  </table>
+  <p>Portable, config-only levers (CFG reduction + fewer action-denoise steps, zero CUDA-locked tooling) take the H100 chunk latency to <b>342.2 ms &mdash; 2.0&times; the baseline</b> &mdash; roughly halfway across the model's own published 927&rarr;466 ms "portable techniques" band, on top of an already-optimized starting point. That same lever config nearly doubles session density (11&rarr;24 measured, not extrapolated, with no per-session latency penalty up to the memory ceiling). The honest caveat: the CFG-reduction lever measurably shifts the model's action-output distribution on specific channels (one channel's p50 drops ~99%) &mdash; the latency and memory wins are real and measured; task-correctness of the resulting policy is not validated (no offline success metric exists for this model in our harness).</p>
+
+  <h3 class="sub">DreamZero-DROID</h3>
+  <p>DreamZero is the larger of the two policy models (16.5B parameters vs. LingBot-VA's mid-size DiT) and the first model on our seam attached to the GR00T ecosystem. All numbers below use real DROID robot camera frames (not synthetic input) and true full-compute (every one of 16 joint-denoise steps actually runs &mdash; the model's own undisclosed default silently skips half of them, see caveat below).</p>
+  <p class="tablecap">Closed-loop chunk latency (2 latent frames, 24 actions/chunk, full 16-step compute)</p>
+  <table>
+    <tr><th>Metric</th><th class="num">NVIDIA H100</th><th class="num">AMD MI300X</th></tr>
+    <tr><td>Chunk latency, warm</td><td class="num">5890.6 ms</td><td class="num">5646.6 ms</td></tr>
+    <tr><td>Resident sessions/GPU</td><td class="num">1</td><td class="num">6</td></tr>
+    <tr><td>Session marginal HBM</td><td class="num">22.88 GiB</td><td class="num">23.05 GiB</td></tr>
+    <tr><td>One-time weight load</td><td class="num">42.78 GiB</td><td class="num">42.78 GiB</td></tr>
+  </table>
+
+  <div class="box finding">
+    <span class="lbl">Finding &mdash; the clearest capacity story measured yet</span>
+    <p>DreamZero's per-session memory cost (~23 GiB, nearly identical across vendors) is roughly 4&times; LingBot-VA's &mdash; large enough that H100 holds exactly <b>one</b> resident session at full attention-window compute, confirmed empirically (a live 2-session run exhausted H100's 80 GiB mid-forward-pass, not merely an extrapolation). MI300X's 192 GiB headroom converts that into <b>six</b> resident sessions on the same unmodified engine code &mdash; the cleanest measured instance yet of large-memory silicon turning a hard capacity ceiling into serving headroom.</p>
+    <p>A second, unexplained result: DreamZero's MI300X chunk latency measured <i>slightly faster</i> than H100 (5646.6 vs 5890.6 ms) &mdash; the opposite of LingBot-VA's 1.59&times;-slower MI300X row. One run each; a repeat run to confirm this ordering is open work, stated here rather than smoothed over.</p>
+  </div>
+
+  <div class="box caveat">
+    <span class="lbl">Caveats &mdash; stated here, not in a footnote</span>
+    <p><b>The model's own published latency claim is not full compute.</b> DreamZero's reference implementation silently defaults to a static 8-of-16 DiT-step skip with no opt-in flag required &mdash; measured at 3068.8 ms/chunk on H100, 1.85&times; faster than the 5890.6 ms full-compute number in the table above. Both are real, measured numbers; they are not the same baseline, and this report states which is which rather than letting the faster one stand in for both. A dynamic cosine-similarity DiT-cache schedule we measured reaches 1780.2 ms &mdash; 3.19&times; the true baseline, faster than every static skip level.</p>
+    <p><b>Parity vs. the reference server is not yet validated.</b> Our engine reimplements the reference model's input-construction and denormalization logic directly (verified line-by-line against the published source), but a literal side-by-side run against the reference's own serving stack on held-out evaluation data has not been completed &mdash; it requires a dataset-transform dependency chain (GR00T-N1.5's <code>ComposedModalityTransform</code>) we deliberately have not vendored. This report's DreamZero numbers are latency, memory, and session-density claims; they are not yet an independent correctness claim.</p>
+  </div>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 4: Cosmos (renumbered 4) -->
+<div class="page">
+  <h2 class="sect"><span class="num">4</span>Generation regime: Cosmos-Predict-7B</h2>
+  <p>The generation benchmarks demonstrate two things: that our optimizations are vendor-neutral by construction, and that its results reproduce across sessions, stacks, and months. The workload is the model's reference configuration: 121 frames at 1280&times;704, 36 denoising steps, BF16.</p>
+
+  <p class="tablecap">Cosmos-Predict-7B, 121 frames / 36 steps &mdash; June 2026 run (May 2026 result in parentheses)</p>
+  <table>
+    <tr><th>Configuration</th><th class="num">NVIDIA H100</th><th class="num">AMD MI300X</th><th class="num">Gap</th></tr>
+    <tr><td>Baseline, no cache</td><td class="num">449.9 s (446.3)</td><td class="num">578.2 s (470 on ROCm 7.2)</td><td class="num">1.29&times;</td></tr>
+    <tr><td>Our adaptive cache</td><td class="num">139.4 s (138.4) = 3.23&times;</td><td class="num">154.0 s (154) = 3.75&times;</td><td class="num">1.10&times;</td></tr>
+    <tr><td>+ tuned FP8 attention (May, ROCm 7.2)</td><td class="num">&mdash; (net loss on Hopper)</td><td class="num">142 s</td><td class="num">&mdash;</td></tr>
+    <tr><td>Peak GPU memory</td><td class="num">52.5 GiB / 80</td><td class="num">52.5 GiB / 192</td><td class="num">&mdash;</td></tr>
+  </table>
+
+  <p><b>Reproducibility.</b> The June re-run reproduced the May numbers on fresh instances and different driver stacks (154.0 vs 154), and repeat runs in May varied by &plusmn;0.5%. Same-seed generations are bit-identical (MD5-verified) across sessions.</p>
+  <p><b>The deployable path is near vendor parity.</b> On the cache-accelerated path customers would actually run, MI300X is within 10% of H100. The wider 1.29&times; baseline gap in June is a stack artifact (untuned ROCm 6.3 attention), not silicon &mdash; the tuned May run measured the raw silicon gap at ~5&ndash;22% depending on configuration.</p>
+  <p><b>Cost per video favors AMD.</b> At current rental prices, one reference video costs $0.094 on MI300X vs $0.127 on H100 &mdash; 26% cheaper &mdash; on the adaptive path.</p>
+
+  <p>Against NVIDIA's own published H100 reference for this model (~380 s, their optimized CUDA-only stack), our cached path is 2.7&times; faster on H100 and 2.5&times; faster on MI300X. That is a shipped-system vs shipped-system comparison, and it needs two caveats:</p>
+
+  <div class="box caveat">
+    <span class="lbl">Caveats &mdash; stated here, not in a footnote</span>
+    <p>The 2.5&ndash;2.7&times; is a system comparison, not a hardware claim. NVIDIA's published path has no adaptive cache; ours does. At identical compute (no cache), MI300X measured 1.2&times; <i>slower</i> than NVIDIA's published H100 number. The legitimate claim is that our runtime ships an optimization NVIDIA's documented serving path lacks &mdash; on both vendors &mdash; not that AMD hardware outruns H100.</p>
+    <p>The adaptive cache is a quality/speed trade-off, not a free lunch. Cached output is a different valid generation of the same prompt (pixel-level LPIPS 0.645 vs the uncached reference, with ~28&ndash;30% reduced inter-frame motion at the speed-biased default threshold). Distribution-level quality evaluation (FVD at N&ge;50) is open work, gated before any external publication of the speed-vs-quality story.</p>
+  </div>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 5: Wan (renumbered 5) -->
+<div class="page">
+  <h2 class="sect"><span class="num">5</span>Generation regime: Wan-2.2-T2V-A14B</h2>
+  <p>Wan-2.2 (Alibaba's 14B-active MoE video model) exercises the runtime at the memory limit. Our runtime runs the canonical 81-frame / 40-step shape on a single H100 in <b>1,552.8 s at 72.6 GiB</b> &mdash; a fit that requires our VAE-tiling path, since the both-experts-resident model does not otherwise fit in 80 GB &mdash; and on MI300X (~1,700 s projected steady-state at 85.1 GiB) with no tiling needed, the 192 GB part absorbing it natively.</p>
+  <p>The Wan team's own H100 reference (1,041.5 s) uses CPU offload plus FP8 weight conversion we have not yet wired, so it is not apples-to-apples with our number; matching that configuration is known, unglamorous work. The relevant takeaway is the pattern: the same unmodified engine code produced both vendors' numbers, and large-memory silicon converts an engineering workaround (tiling, offload) into headroom &mdash; the same pattern DreamZero's session-density result (&sect;3) now shows for the control regime too.</p>
+
+  <hr class="rule">
+
+  <h2 class="sect"><span class="num">6</span>Portability: one runtime, four silicon targets</h2>
+  <p class="tablecap">Verified execution matrix (as of July 2026)</p>
+  <table>
+    <tr><th>Target</th><th>Depth verified</th><th>Evidence</th></tr>
+    <tr><td>AMD MI300X (CDNA3, ROCm)</td><td>Full model workloads, all three regimes</td><td>All tables above; first publicly reported Cosmos benchmark on any AMD GPU; first measured policy-regime cross-vendor row (search catalog in <code>docs/METHODOLOGY.md</code> &sect;5)</td></tr>
+    <tr><td>NVIDIA H100 (Hopper)</td><td>Full model workloads, all three regimes</td><td>All tables above</td></tr>
+    <tr><td>NVIDIA RTX 2000 Ada (sm_89)</td><td>Backend + kernel correctness</td><td>Full CUDA test sweep passes; our FP8 flash-attention kernel matches SDPA at 3.5% mean relative difference. No 7B+ model fits in 16 GB; not attempted, by design</td></tr>
+    <tr><td>Intel Xeon Sapphire Rapids (CPU)</td><td>End-to-end smoke</td><td>Wan-5B generates via the same engine code; explicitly not a latency target &mdash; exists so the backend seam and CI hold without a GPU</td></tr>
+  </table>
+  <p style="font-size:9.2pt;color:var(--ink-2)">The claim being evidenced is architectural: engine code is identical across rows; each new target is one backend class behind a stable protocol. Depth of verification varies by row and is stated rather than blurred.</p>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 6: Methodology (renumbered 7) -->
+<div class="page">
+  <h2 class="sect"><span class="num">7</span>Methodology and known limitations</h2>
+  <p>The full protocol is in <code>docs/METHODOLOGY.md</code> and <code>docs/CONTROL_LOOP_BENCH.md</code>, written deliberately for a skeptical reader. The short version: every headline is a wall-clock measurement from a scripted harness emitting a JSON result line (archived verbatim in the repo); model-load time is excluded from steady-state numbers, mirroring NVIDIA's disclosure convention; ROCm's first-run kernel-autotuning cost (~3&times; on a cold forward for generation-regime models, up to ~8&times; observed on DreamZero's first call) is measured, disclosed, and excluded via warm-up separation. State carryover is required for every closed-loop number: one session stays alive across all timed steps, matching how these models are actually served, not a fresh-session-per-call number that would structurally favor request/response framing.</p>
+
+  <p>Limitations we track openly:</p>
+  <ul class="limits">
+    <li><b>Single prompt/seed for most headline timings.</b> Run-to-run variance measured at &plusmn;0.5% across sessions for generation-regime numbers, but multi-prompt variance and an N=10 timing distribution remain open for the control regimes. DreamZero's MI300X-vs-H100 latency ordering (&sect;3) is a single run each and explicitly flagged as unconfirmed.</li>
+    <li><b>Cache quality is quantified only at pixel level so far.</b> FVD over a &ge;50-clip held-out set is the defined gate before publishing the Cosmos speed-vs-quality claim externally; tooling is built, generation of the reference set is pending.</li>
+    <li><b>Policy-regime task-correctness is not independently validated.</b> LingBot-VA's CFG-reduction lever measurably shifts action-output distribution (&sect;3); DreamZero's numbers are not yet checked against the reference server on held-out evaluation data (&sect;3). Both are latency/memory/capacity claims, not correctness claims, until that work lands.</li>
+    <li><b>The May MI300X generation-regime numbers were taken on a virtualized (VF) slice</b>; a bare-metal confirmation run is planned. DreamZero's MI300X row (&sect;3) was also taken on a virtualized slice (AMD Developer Cloud).</li>
+    <li><b>"First publicly reported" claims</b> are claims about the state of public disclosure on the date made (we catalog exactly where we searched), not global novelty claims &mdash; and we commit to updating, not arguing, if prior art surfaces.</li>
+  </ul>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 7: Conclusion + sources (renumbered 8) -->
+<div class="page">
+  <h2 class="sect"><span class="num">8</span>What the numbers say, in one paragraph</h2>
+  <p>World models split into two control mechanisms and one generation regime, and this report now has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime, new this cycle, adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, and task-correctness validation for the levers that trade latency for distributional shift. Measurement, not intuition, decides both next.</p>
+
+  <p style="margin-top:32px">Repercep.AI &mdash; Benchmark Report, July 2026</p>
+
+  <hr class="rule">
+
+  <h3 class="sub">Sources</h3>
+  <p class="sources">
+    docs/CONTROL_LOOP_BENCH.md &middot; docs/DREAMZERO_LEVERS_2026_07.md &middot; docs/LINGBOT_VA_LEVERS_2026_07.md &middot;<br>
+    docs/DREAMZERO_PORT_PLAN.md &middot; docs/LINGBOT_VA_PORT_PLAN.md &middot; docs/BENCH_2026_06_RUNPOD.md &middot;<br>
+    docs/METHODOLOGY.md &middot; docs/COSMOS_ON_{H100,MI300X}.md &middot; docs/WAN_ON_{H100,MI300X}.md &middot; docs/CUDA_ON_ADA.md
+  </p>
+</div>
+
+</body>
+</html>
