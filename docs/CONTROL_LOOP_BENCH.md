@@ -146,24 +146,28 @@ warmup window — a follow-up, not resolved here.
 
 ### DreamZero-DROID (16.5B autoregressive world-action model, Wan2.1 DiT + action/state registers) — policy regime
 
-H100 only so far (MI300X deferred — see §5), 2026-07-14, real DROID camera
-frames (extracted from the research clone's own bundled 419-frame debug
-episode via `scripts/extract_droid_debug_frames.py`, not random pixels —
-`docs/DREAMZERO_PORT_PLAN.md`'s standing synthetic-input caveat is now
-resolved). "Step"/chunk = one block (2 latent frames, 24 actions,
-`used_action_dim=8` wire width). All numbers below are **true full-16-step
-compute** (`num_dit_steps=16`, the config default) — see the levers doc
-(`docs/DREAMZERO_LEVERS_2026_07.md`) for why this is NOT what the reference's
-own "~3s/chunk H100" claim measures.
+Both GPUs, 2026-07-14/15, real DROID camera frames (extracted from the
+research clone's own bundled 419-frame debug episode via `scripts/
+extract_droid_debug_frames.py`, not random pixels — `docs/
+DREAMZERO_PORT_PLAN.md`'s standing synthetic-input caveat is now resolved).
+"Step"/chunk = one block (2 latent frames, 24 actions, `used_action_dim=8`
+wire width). All numbers below are **true full-16-step compute**
+(`num_dit_steps=16`, the config default) — see the levers doc (`docs/
+DREAMZERO_LEVERS_2026_07.md`) for why this is NOT what the reference's own
+"~3s/chunk H100" claim measures. MI300X row: AMD Developer Cloud (DigitalOcean-
+backed, `gpu-mi300x1-192gb-devcloud`, `atl1`), ROCm 7.2.4, torch 2.13.0+rocm7.2
+— no flash-attn stub needed (the guarded SDPA fallback works as the port plan
+predicted).
 
-| metric | H100 (Repercep seam) |
-|---|---|
-| chunk latency (warm, full 16-step) | **5890.6 ms** (0.2/s) |
-| planning-decisions/sec | **0.165** (6.06 s/plan) |
-| energy-evals/sec | n/a (policy regime) |
-| one-time weight load | 42.78 GiB |
-| session marginal HBM (full attention window) | **22.88 GiB** |
-| resident sessions/GPU | **1** — confirmed both by extrapolation (`(79.2−42.78)//22.88`) AND empirically: a live 2-session run OOM'd mid-forward-pass at true full compute (§ below) |
+| metric | H100 (Repercep seam) | MI300X (Repercep seam) |
+|---|---|---|
+| chunk latency (warm, full 16-step) | 5890.6 ms (0.2/s) | **5646.6 ms** (0.2/s) — *slightly faster*, not slower |
+| planning-decisions/sec | 0.165 (6.06 s/plan) | 0.173 (5.77 s/plan) |
+| energy-evals/sec | n/a (policy regime) | n/a |
+| one-time weight load | 42.78 GiB | 42.78 GiB |
+| session marginal HBM (full attention window) | 22.88 GiB | 23.05 GiB (nearly identical) |
+| hbm total | 79.2 GiB | 191.7 GiB |
+| **resident sessions/GPU** | **1** (confirmed empirically, not just extrapolated — see below) | **6** (measured: `(191.7−42.78)//23.05`) |
 
 Verbatim provenance (single-session baseline, `--warmup 12` to fill the
 ~10-block/21-frame attention window before measuring so
@@ -173,16 +177,34 @@ Verbatim provenance (single-session baseline, `--warmup 12` to fill the
 {"mode": "control_loop_bench_v0", "model": "dreamzero-droid", "device": "cuda:0", "dtype": "bfloat16", "load_seconds": 286.1, "reset_seconds": 5.882, "step_ms_warm": 5890.61, "steps_per_sec": 0.2, "plan_seconds": 6.057, "planning_decisions_per_sec": 0.1651, "plan_horizon": 4, "cem": null, "energy_evals_per_plan": null, "energy_evals_per_sec": null, "weights_gib": 42.78, "session_marginal_gib": 22.88, "hbm_total_gib": 79.2, "resident_sessions_per_gpu": 1, "step_iters": 20, "plan_calls": 1, "state_carryover": true, "concurrency": null}
 ```
 
-**The "H100 tops out at ~1 session" prediction (port plan §4/§5) is
-confirmed, not just arithmetic:** a `--sessions 2` run at this same full-16-
+```json
+{"mode": "control_loop_bench_v0", "model": "dreamzero-droid", "device": "rocm:0", "dtype": "bfloat16", "load_seconds": 188.7, "reset_seconds": 49.578, "step_ms_warm": 5646.55, "steps_per_sec": 0.2, "plan_seconds": 5.77, "planning_decisions_per_sec": 0.1733, "plan_horizon": 4, "cem": null, "energy_evals_per_plan": null, "energy_evals_per_sec": null, "weights_gib": 42.78, "session_marginal_gib": 23.05, "hbm_total_gib": 191.7, "resident_sessions_per_gpu": 6, "step_iters": 20, "plan_calls": 1, "state_carryover": true, "concurrency": null}
+```
+
+**"H100 tops out at ~1 session, MI300X holds more" is now measured on both
+GPUs, not arithmetic:** a `--sessions 2` run on H100 at this same full-16-
 step config OOM'd (`CUDA out of memory`, 79.14/79.18 GiB in use) partway
 through the round-robin phase — two live sessions' KV caches genuinely do not
 fit alongside the 42.78 GiB weights on an 80 GiB H100 once both approach the
 full attention window. This is the ~5× LingBot-VA per-session memory cost the
 port plan's back-of-envelope (~30 GB/session) flagged as a risk, landing
-close to the estimate (22.88 GiB measured, same order of magnitude). MI300X
-(192 GiB) is the natural next data point for whether this becomes a
-multi-session story there — deferred, see §5.
+close to the estimate (22.88/23.05 GiB measured on both GPUs, same order of
+magnitude, vendor-independent). **MI300X's resident-sessions/GPU: 6**
+(extrapolated from single-session marginal HBM, not yet a measured
+round-robin concurrency curve like LingBot-VA's — that's the natural next
+step, see §5) — a real, if more modest than the ~5× hoped-for, "runs what
+H100 can't" story (strategy T1.3).
+
+**The bigger surprise: DreamZero's MI300X chunk latency is not slower than
+H100's** — 5646.6 ms vs 5890.6 ms, the *opposite* of LingBot-VA's 1.59×-
+slower MI300X row. Not yet explained (single run each, no multi-seed/
+multi-run averaging on either GPU) — worth a rerun to confirm before treating
+the ordering as settled, same caution as V-JEPA's unreproduced warm-start
+energy ordering elsewhere in this doc. `reset_seconds` (first call) was
+49.6 s on MI300X vs H100's 5.9 s — an ~8.4× cold-compile tax, larger than
+the "~3× warm" rule of thumb elsewhere in this repo's ROCm numbers, plausibly
+compiling a large fraction of the 16.5B-param model's kernels on first call
+(MIOpen/rocBLAS autotuning), not corrected for.
 
 **`release()`/`close()` leak check: passed** (3 open/release cycles,
 `engine._sessions`/`pipeline._sessions` both empty after every release) —
@@ -266,12 +288,18 @@ project exists to fill — roughly a 10× window on this model.**
   2026-07-14** (row above; ladder in `docs/DREAMZERO_LEVERS_2026_07.md`).
   Real DROID camera frames (no longer synthetic). Confirmed empirically (not
   just extrapolated) that H100 tops out at 1 resident session at full
-  compute. **MI300X row: not yet attempted** — the natural next question is
-  whether DreamZero's much larger per-session HBM cost (22.88 GiB vs
-  LingBot-VA's 6.01 GiB) turns MI300X's extra headroom (192 vs 80 GiB) into
-  a multi-session story the way it wasn't quite for LingBot-VA (30 vs 11, a
-  capacity story either way) — check `runpodctl gpu list | grep -i instinct`
-  for current AMD availability first.
+  compute.
+- **DreamZero-DROID MI300X row — done 2026-07-15** (row above), via AMD
+  Developer Cloud (DigitalOcean-backed, not RunPod — RunPod's AMD catalog
+  was still empty when checked this session, same as 2026-07-13).
+  Resident-sessions/GPU: **6** (extrapolated from single-session marginal
+  HBM; a measured round-robin concurrency curve like LingBot-VA's 24-session
+  one is the natural next step, not yet done). Real surprise: chunk latency
+  came out *slightly faster* on MI300X than H100 (5646.6 vs 5890.6 ms) — the
+  opposite of LingBot-VA's 1.59×-slower MI300X row — from a single run each,
+  not yet confirmed by a rerun. `reset_seconds` (cold first call) was 49.6 s,
+  an ~8.4× tax vs H100's warm number, larger than this repo's usual "~3×
+  warm" ROCm cold-compile rule of thumb.
 - **DreamZero parity vs. the reference server — attempted, deferred.**
   The reference's own `GrootSimPolicy` wrapper reads the same checkpoint
   config our pipeline does and calls the same `WANPolicyHead.

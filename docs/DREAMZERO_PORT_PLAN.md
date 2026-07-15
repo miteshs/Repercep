@@ -400,9 +400,16 @@ is a Phase-0 design question, not a commitment.
   1780.2 ms (3.19×, beats every static preset). **The ~30 GB/session
   back-of-envelope below landed close (22.88 GiB measured) and the "H100 ~1
   session" prediction is now confirmed empirically, not just extrapolated** —
-  a live 2-session run OOM'd mid-forward-pass at full compute. **MI300X row:
-  not yet attempted** — check AMD availability first (deferred for LingBot-VA's
-  ladder too, per that doc). **Parity vs. the reference server: attempted,
+  a live 2-session run OOM'd mid-forward-pass at full compute.
+  **MI300X row: DONE 2026-07-15**, via AMD Developer Cloud (DigitalOcean-
+  backed — RunPod's AMD catalog was still empty when checked). 6 resident
+  sessions/GPU (192 GiB headroom vs H100's 80 GiB) — a real, measured "runs
+  what H100 can't" capacity story (strategy T1.3), if more modest than the
+  ~5× back-of-envelope hoped for. The bigger surprise: chunk latency came out
+  *slightly faster* on MI300X (5646.6 ms) than H100 (5890.6 ms) — the
+  opposite of LingBot-VA's MI300X row (1.59× slower) — from one run each, not
+  yet reproduced. Levers ladder on MI300X: not run this pass (control-loop
+  row only, given time/cost already spent this session). **Parity vs. the reference server: attempted,
   deferred** — `GrootSimPolicy` needs `ComposedModalityTransform`, the
   GR00T-N1.5 dataset-schema stack §5 below already flagged as
   deliberately-not-vendored; a construction probe hit a real dependency chain
@@ -417,19 +424,20 @@ is a Phase-0 design question, not a commitment.
   pass (see `dreamzero_pipeline.DreamZeroPipeline._apply_levers`).
   Back-of-envelope that's now measured: ~800 KB/token × 18.5k tokens × 2 (CFG)
   ≈ ~30 GB/session at full window, resident-sessions/GPU the headline: H100
-  holds 1 (confirmed), MI300X TBD.
+  holds 1, MI300X holds 6 (both confirmed).
 - **Phase 3 (serving):** wire into `/v2/world/session` next to LingBot-VA; the
   session-state object already generalized to "context + engine-held cache" in the
   LingBot port. N-session load test per the LingBot-VA levers methodology.
 
 ## 5. Risks
 
-- ~~Per-session KV memory (~30 GB est.) is 5× LingBot-VA's~~ **MEASURED
-  2026-07-14**: 22.88 GiB/session at full window (close to the estimate),
-  ~3.8× LingBot-VA's 6.01 GiB. H100 confirmed 1 session (empirically, not
-  just extrapolated — a 2-session run OOM'd). MI300X still open — that's the
-  real "many sessions/GPU or MI300X-only" question now, not resolved either
-  way yet.
+- ~~Per-session KV memory (~30 GB est.) is 5× LingBot-VA's~~ **MEASURED both
+  GPUs 2026-07-14/15**: 22.88 GiB (H100) / 23.05 GiB (MI300X) per session at
+  full window (close to the estimate, vendor-independent), ~3.8× LingBot-VA's
+  6.01 GiB. H100 confirmed 1 session (empirically — a 2-session run OOM'd);
+  MI300X confirmed 6 (extrapolated from marginal HBM, not yet a measured
+  round-robin curve) — real multi-session headroom, resolving this risk in
+  the "many sessions/GPU" direction, not "MI300X-only single-session."
 - **ip=1 is code-supported but likely under-tested upstream** (their launch docs are
   2-GPU only) — Phase-1 parity check is the gate, not an afterthought.
 - **Research code hygiene:** hardcoded inference constants (`num_inference_steps =
