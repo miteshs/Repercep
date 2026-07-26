@@ -16,7 +16,13 @@ import pytest
 
 from repercep.models.vla import VLAConfig, VLAEngine
 from repercep.runtime.interactive import InteractiveWorldModel
-from repercep.runtime.types import Action, ConditioningInput, RolloutParams, WorldState
+from repercep.runtime.types import (
+    Action,
+    ConditioningInput,
+    ResetRequest,
+    RolloutParams,
+    WorldState,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -265,3 +271,32 @@ def test_two_sessions_keep_distinct_contexts() -> None:
 
     assert state_a.session_id != state_b.session_id
     assert not torch.equal(state_a.context, state_b.context)
+
+
+# --- serving integration (Phase-3 proof: zero serving changes needed) ---
+
+
+def test_vla_engine_serves_over_world_session() -> None:
+    """A VLAEngine drives ``/v2/world/session`` unchanged — the seam is shared.
+
+    The port plan's Phase-3 claim is that serving a token VLA needs *no* serving
+    changes because the WebSocket is already ``interactive_engine``-agnostic.
+    This drives the real FastAPI surface end-to-end to prove it.
+    """
+    pytest.importorskip("torch")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from repercep.serving.app import create_app
+
+    engine = _toy_engine(_FakeVLAPipeline())
+    with (
+        TestClient(create_app(interactive_engine=engine)) as client,
+        client.websocket_connect("/v2/world/session") as ws,
+    ):
+        ws.send_text(ResetRequest().model_dump_json())
+        assert ws.receive_json()["step_index"] == 0  # reset acknowledged
+
+        for expected in (1, 2, 3):
+            ws.send_text(Action(values=[0.0] * 7).model_dump_json())
+            assert ws.receive_json()["step_index"] == expected

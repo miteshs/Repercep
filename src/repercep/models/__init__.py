@@ -1,9 +1,10 @@
 """World-model engines for Repercep.
 
 Generation camp: Cosmos-Predict-7B and Wan-2.2 (T2V-A14B). Control camp on the
-interactive seam: V-JEPA 2-AC (energy-MPC planning), LingBot-VA 2.0, and
-DreamZero (video-action policy, Phase 0 scaffold) — two planning regimes, one
-Protocol.
+interactive seam: V-JEPA 2-AC (energy-MPC planning), LingBot-VA 2.0, DreamZero
+(video-action policy), and a token-decoding VLA (OpenVLA / π0-FAST class,
+Phase-0 scaffold) — three planning regimes (search / generate / decode+score),
+one Protocol.
 """
 
 from __future__ import annotations
