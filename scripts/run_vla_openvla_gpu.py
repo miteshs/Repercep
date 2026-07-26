@@ -214,7 +214,7 @@ def main() -> int:
 
     from repercep.backend.registry import select_backend
 
-    backend = select_backend(prefer="cuda")
+    backend = select_backend(prefer=None)  # auto: cuda on NVIDIA, rocm on MI300X
     dev = backend.devices()[0].name
     cfg = VLAConfig(repo=args.repo, action_dim=7, plan_candidates=8)
     print(f"[vla] {dev}: building OpenVLA pipeline...", flush=True)

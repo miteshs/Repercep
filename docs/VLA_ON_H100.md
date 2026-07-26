@@ -73,8 +73,9 @@ revised strategy stakes out, and nothing (vLLM, NIM) optimizes it for VLAs.
 - **OpenVLA is stateless obs→action**, so `step` keeps the observation context;
   a real robot loop re-encodes each new frame (the seam's v0 doesn't thread new
   observations through `step` — noted in `VLA_PORT_PLAN.md`).
-- **CUDA only so far.** The MI300X/ROCm row (the vendor-neutral point) is the
-  next run; `attn="sdpa"` was chosen to keep that path open.
+- **Vendor-neutral: MI300X verified too** (`docs/VLA_ON_MI300X.md`, same day) —
+  identical parity 0.0 and the same 5–10× lever on AMD, no code changes.
+  `attn="sdpa"` kept that path open.
 - **Not committed as a default engine.** The verified pipeline lives in
   `scripts/run_vla_openvla_gpu.py` (injected, reproducible); promoting it to a
   typed `models/vla_openvla.py` wired into `build_pipeline` is a follow-up.

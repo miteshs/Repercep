@@ -91,16 +91,18 @@ Landed in `models/vla.py` (Phase 0):
   KV-cached `generate`, and the action detokenizer replicated exactly from the
   model's own `predict_action`). **Greedy parity 0.0** through the `reset -> step
   -> plan` seam. Verified pipeline + driver: `scripts/run_vla_openvla_gpu.py`.
-  Still open: MI300X/ROCm row; per-dataset `q01/q99` carried per-config; a
-  BridgeData/LIBERO real-frame sample (verify used a synthetic observation).
+  **MI300X/ROCm also verified** (parity 0.0, `docs/VLA_ON_MI300X.md`). Still
+  open: per-dataset `q01/q99` carried per-config; a BridgeData/LIBERO real-frame
+  sample (verify used a synthetic observation).
 - **Phase 2 (bench) — DONE on H100 (2026-07-26).** Candidate-batched vs
   per-candidate action-token decode measured **5.43x (N=8) / 7.43x (N=16) /
   8.83x (N=32)** — far above V-JEPA-AC's 1.6x because OpenVLA's per-candidate
   decode is short (7 tokens), so batch=1 underuses the GPU. Required lifting two
   *artificial* OpenVLA batch==1 guards (proven correct: **batch parity 0.0**).
-  Still open: MI300X row; wiring `scripts/bench_vla_levers.py` (the generic
-  skeleton) to the OpenVLA pipeline. The planning-decisions/sec row neither vLLM
-  nor NIM optimizes.
+  **MI300X row landed too: 5.26x / 7.52x / 9.85x** (`docs/VLA_ON_MI300X.md`) —
+  the lever is silicon-agnostic. Still open: wiring `scripts/bench_vla_levers.py`
+  (the generic skeleton) to the OpenVLA pipeline. The planning-decisions/sec row
+  neither vLLM nor NIM optimizes.
 - **Phase 3 (serving).** Wire into `/v2/world/session` — **zero serving changes
   needed**: the WebSocket is already engine-agnostic (`active_interactive`), so
   passing a `VLAEngine` as `interactive_engine` serves it. Multi-session
