@@ -33,6 +33,13 @@ from repercep.models.vjepa2_ac import (
     VJepa2ACConfig,
     VJepa2ACEngine,
 )
+from repercep.models.vla import (
+    DEFAULT_REPO as VLA_DEFAULT_REPO,
+)
+from repercep.models.vla import (
+    VLAConfig,
+    VLAEngine,
+)
 from repercep.models.wan import DEFAULT_REPO as WAN_DEFAULT_REPO
 from repercep.models.wan import NATIVE_FPS as WAN_NATIVE_FPS
 from repercep.models.wan import SMALL_REPO as WAN_SMALL_REPO
@@ -43,6 +50,7 @@ __all__ = [
     "DEFAULT_REPO",
     "DREAMZERO_DEFAULT_REPO",
     "LINGBOT_VA_DEFAULT_REPO",
+    "VLA_DEFAULT_REPO",
     "WAN_DEFAULT_REPO",
     "WAN_NATIVE_FPS",
     "WAN_SMALL_REPO",
@@ -55,6 +63,8 @@ __all__ = [
     "LingBotVAEngine",
     "VJepa2ACConfig",
     "VJepa2ACEngine",
+    "VLAConfig",
+    "VLAEngine",
     "WanConfig",
     "WanEngine",
 ]
