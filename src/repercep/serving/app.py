@@ -34,6 +34,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from repercep import __version__
+from repercep.config import RuntimeConfig
 from repercep.runtime.engine import EngineInfo
 from repercep.runtime.router import Router, RouterError
 from repercep.runtime.scheduler import Scheduler
@@ -50,6 +51,7 @@ from repercep.runtime.types import (
     ResetRequest,
 )
 from repercep.serving.driver import EngineDriver, _SchedulerAdapter
+from repercep.serving.llm_proxy import LlmProxy
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -76,6 +78,9 @@ _DEFAULT_MAX_INTERACTIVE_SESSIONS = 16
 
 # Close a /v2/world/session connection that sends nothing for this long.
 _DEFAULT_SESSION_IDLE_TIMEOUT_S = 300.0
+
+# Default per-request timeout when proxying to a co-located LLM upstream.
+_DEFAULT_LLM_TIMEOUT_S = 600.0
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +139,7 @@ def _build_v2_state(
     scheduler = Scheduler(capacity=scheduler_capacity)
     adapter = _SchedulerAdapter(scheduler)
     router = Router(adapter, per_request_queue_depth=frame_queue_depth)
-    driver = EngineDriver(
-        engine=engine, scheduler=scheduler, router=router, loop=loop
-    )
+    driver = EngineDriver(engine=engine, scheduler=scheduler, router=router, loop=loop)
     return _V2State(
         engine=engine,
         scheduler=scheduler,
@@ -160,6 +163,10 @@ def create_app(
     max_sessions: int = _DEFAULT_MAX_INTERACTIVE_SESSIONS,
     session_idle_timeout_s: float = _DEFAULT_SESSION_IDLE_TIMEOUT_S,
     api_token: str | None = None,
+    llm_proxy: LlmProxy | None = None,
+    llm_upstream_url: str | None = None,
+    llm_upstream_timeout_s: float = _DEFAULT_LLM_TIMEOUT_S,
+    llm_upstream_api_key: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI application.
 
@@ -186,10 +193,32 @@ def create_app(
             ``/v2/world/session`` WebSocket (header or ``?token=`` query
             param, checked before ``accept()``). ``None`` (default) disables
             auth entirely — existing callers are unaffected.
+        llm_proxy: a pre-built
+            :class:`~repercep.serving.llm_proxy.LlmProxy` (e.g. with an
+            injected client for tests). Takes precedence over
+            ``llm_upstream_url``.
+        llm_upstream_url: base URL of a co-located OpenAI-compatible LLM
+            server (vLLM/SGLang) to reverse-proxy. When set (and ``llm_proxy``
+            is None), the OpenAI ``/v1/chat/completions``, ``/v1/completions``,
+            ``/v1/models`` and a ``/v1/llm/health`` readiness route are mounted
+            behind the same bearer auth. Traffic bypasses the world-model
+            scheduler/driver by design (see ``docs/LLM_PROXY.md``). ``None``
+            (default) disables the proxy.
+        llm_upstream_timeout_s: per-request timeout when proxying upstream.
+        llm_upstream_api_key: bearer injected on upstream calls for a secured
+            upstream; the client's own Authorization is never forwarded.
     """
     active_engine: WorldModelEngine = engine if engine is not None else StubEngine()
     active_interactive = interactive_engine
     active_sessions = 0
+
+    active_llm_proxy = llm_proxy
+    if active_llm_proxy is None and llm_upstream_url is not None:
+        active_llm_proxy = LlmProxy(
+            upstream_url=llm_upstream_url,
+            timeout_s=llm_upstream_timeout_s,
+            api_key=llm_upstream_api_key,
+        )
 
     def _require_api_token(authorization: Annotated[str | None, Header()] = None) -> None:
         if api_token is None:
@@ -222,8 +251,18 @@ def create_app(
             state.driver.stop(timeout=5.0)
             with suppress(RouterError):
                 state.router.shutdown()
+            if active_llm_proxy is not None:
+                with suppress(Exception):
+                    await active_llm_proxy.aclose()
 
     app = FastAPI(title="Repercep Runtime", version=__version__, lifespan=lifespan)
+
+    if active_llm_proxy is not None:
+        # Mounted behind the same bearer dependency as /v1 and /v2. Traffic
+        # bypasses the world-model scheduler/driver by design — see
+        # docs/LLM_PROXY.md for why that is deliberate, not a TODO.
+        app.include_router(active_llm_proxy.router, dependencies=_auth)
+        app.state.llm_proxy = active_llm_proxy
 
     # -----------------------------------------------------------------------
     # v1 (untouched)
@@ -439,3 +478,19 @@ def create_app(
                         await run_in_threadpool(release, opened_state)
 
     return app
+
+
+def create_app_from_config(config: RuntimeConfig | None = None) -> FastAPI:
+    """Build the app from ``REPERCEP_*`` environment settings.
+
+    The deployment entry point — ``uvicorn --factory
+    repercep.serving.app:create_app_from_config`` — and what makes
+    ``REPERCEP_LLM_ENABLED`` (and the other ``REPERCEP_LLM_*`` knobs) take
+    effect. Tests construct :func:`create_app` directly with explicit args.
+    """
+    cfg = config if config is not None else RuntimeConfig()
+    return create_app(
+        llm_upstream_url=cfg.llm_upstream_url if cfg.llm_enabled else None,
+        llm_upstream_timeout_s=cfg.llm_upstream_timeout_s,
+        llm_upstream_api_key=cfg.llm_upstream_api_key,
+    )
