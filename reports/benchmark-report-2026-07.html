@@ -165,14 +165,14 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
   <p class="lede">Measured performance of the Repercep.AI runtime on H100 and MI300X across all three world-model regimes — energy-based control (V-JEPA 2-AC), policy-driven control (LingBot-VA, DreamZero), and generation (Cosmos, Wan) — with full methodology and disclosed caveats.</p>
 
   <div class="metabar">
-    <div><b>Date</b> July 15, 2026</div>
-    <div><b>Latest measurements</b> July 15, 2026 (AMD Developer Cloud) / July 14, 2026 (RunPod)</div>
+    <div><b>Date</b> July 26, 2026</div>
+    <div><b>Latest measurements</b> July 26, 2026 (OpenVLA, H100 + MI300X) / July 15, 2026 (AMD Developer Cloud)</div>
     <div><b>Hardware</b> H100 SXM 80GB &middot; MI300X 192GB &middot; RTX 2000 Ada &middot; Xeon SPR</div>
     <div><b>Provenance</b> raw JSON result lines archived in-repo</div>
   </div>
 
   <h3 class="sub" style="margin-top:0">Executive summary</h3>
-  <p>The Repercep.AI runtime is a vendor-neutral serving layer for world models. It now serves <b>all three</b> workload regimes through one backend seam: two flavors of the <b>control regime</b> — energy-based, action-conditioned planning (V-JEPA 2-AC class, output is plans reached by search) and policy-driven video-action serving (LingBot-VA, DreamZero class, output is plans generated directly by the model) — plus the <b>generation regime</b> (Cosmos, Wan video diffusion). Both control regimes are the strategic lead: closed-loop, state-carrying serving is a workload we believe nobody else publishes a leaderboard for, and this report now includes measured cross-vendor numbers for both control mechanisms, not just one.</p>
+  <p>The Repercep.AI runtime is a vendor-neutral serving layer for world models. It now serves <b>all three</b> workload regimes through one backend seam: two flavors of the <b>control regime</b> — energy-based, action-conditioned planning (V-JEPA 2-AC class, output is plans reached by search) and policy-driven serving, where the model generates its own actions directly — by diffusion (LingBot-VA, DreamZero) or by autoregressive token decode (OpenVLA-7B) — plus the <b>generation regime</b> (Cosmos, Wan video diffusion). Both control regimes are the strategic lead: closed-loop, state-carrying serving is a workload we believe nobody else publishes a leaderboard for, and this report now includes measured cross-vendor numbers spanning both control mechanisms and, within the policy-driven one, both diffusion and token-decode variants.</p>
 
   <p>Six results matter most:</p>
 
@@ -194,8 +194,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
       <div class="d">generation-regime speedup from our adaptive cache, reproduced on both vendors.</div>
     </div>
     <div class="tile">
-      <div class="n">1.6&ndash;2.1<sup>&times;</sup></div>
-      <div class="d">measured speedup from CEM-candidate batching (H100 / MI300X), at planning-quality parity.</div>
+      <div class="n">up to 9.9<sup>&times;</sup></div>
+      <div class="d">candidate-batching speedup &mdash; the control-regime serving lever &mdash; from 1.6&ndash;2.1&times; on energy-MPC (V-JEPA 2-AC) to 5&ndash;10&times; on token-VLA action decode (OpenVLA), both vendors, both at parity.</div>
     </div>
     <div class="tile">
       <div class="n">26&ndash;39<sup>%</sup></div>
@@ -209,13 +209,14 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 <!-- PAGE 2 -->
 <div class="page">
   <h2 class="sect"><span class="num">1</span>What was measured</h2>
-  <p>Three regimes, five models, two vendors, one runtime.</p>
+  <p>Three regimes, six models, two vendors, one runtime.</p>
 
   <table>
     <tr><th>Regime</th><th>Models</th><th>Vendors</th><th>Measured</th></tr>
     <tr><td>Energy-based control</td><td>V-JEPA 2-AC (300M predictor + ViT-g encoder)</td><td>H100, MI300X</td><td>June 2026</td></tr>
     <tr><td>Policy-driven control</td><td>LingBot-VA 2.0 (MoT DiT, Wan2.2 latents)</td><td>H100, MI300X</td><td>July 11&ndash;13, 2026</td></tr>
     <tr><td>Policy-driven control</td><td>DreamZero-DROID (16.5B, Wan2.1-based, GR00T ecosystem)</td><td>H100, MI300X</td><td>July 14&ndash;15, 2026</td></tr>
+    <tr><td>Policy-driven control</td><td>OpenVLA-7B (token-decode VLA, Llama-2 backbone)</td><td>H100, MI300X</td><td>July 26, 2026</td></tr>
     <tr><td>Generation</td><td>Cosmos-Predict-7B</td><td>H100, MI300X</td><td>June 2026</td></tr>
     <tr><td>Generation</td><td>Wan-2.2-T2V-A14B</td><td>H100, MI300X</td><td>May 2026</td></tr>
   </table>
@@ -256,8 +257,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 
 <!-- PAGE 3: NEW POLICY REGIME SECTION -->
 <div class="page">
-  <h2 class="sect"><span class="num">3</span>Policy-driven control: LingBot-VA and DreamZero (the second control regime)</h2>
-  <p>Energy-based control (&sect;2) searches for a plan by minimizing an energy function over sampled rollouts. The second control mechanism is structurally different: a policy-driven video-action model <i>generates</i> its own next action chunk directly &mdash; the denoise loop <b>is</b> the planner, with no external CEM/MPC search. Two models validate this regime end-to-end this cycle, on real camera input, not synthetic pixels: <b>LingBot-VA 2.0</b> (Ant Group/Robbyant, MoT DiT over Wan2.2 latents) and <b>DreamZero-DROID</b> (16.5B, Wan2.1-based, attached to NVIDIA's GR00T 2 ecosystem). Both regimes now run under the identical closed-loop harness &mdash; state carryover required, warm-vs-cold disclosed &mdash; so all numbers in &sect;2 and this section are directly comparable.</p>
+  <h2 class="sect"><span class="num">3</span>Policy-driven control: LingBot-VA, DreamZero, and OpenVLA (the second control regime)</h2>
+  <p>Energy-based control (&sect;2) searches for a plan by minimizing an energy function over sampled rollouts. The second control mechanism is structurally different: a policy-driven model <i>generates</i> its own next action directly, with no external CEM/MPC search. Three models validate this regime end-to-end this cycle. Two are diffusion-based &mdash; the denoise loop <b>is</b> the planner &mdash; on real camera input, not synthetic pixels: <b>LingBot-VA 2.0</b> (Ant Group/Robbyant, MoT DiT over Wan2.2 latents) and <b>DreamZero-DROID</b> (16.5B, Wan2.1-based, attached to NVIDIA's GR00T 2 ecosystem). The third, <b>OpenVLA-7B</b>, decodes actions as discrete tokens instead of denoising them (its own subsection below). All run under the identical closed-loop harness &mdash; state carryover required where the model is stateful, warm-vs-cold disclosed &mdash; so all numbers in &sect;2 and this section are directly comparable.</p>
 
   <h3 class="sub">LingBot-VA 2.0</h3>
   <p class="tablecap">Closed-loop chunk latency (4 latent frames, 32 actions/chunk)</p>
@@ -290,6 +291,33 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
     <span class="lbl">Caveats &mdash; stated here, not in a footnote</span>
     <p><b>The model's own published latency claim is not full compute.</b> DreamZero's reference implementation silently defaults to a static 8-of-16 DiT-step skip with no opt-in flag required &mdash; measured at 3068.8 ms/chunk on H100, 1.85&times; faster than the 5890.6 ms full-compute number in the table above. Both are real, measured numbers; they are not the same baseline, and this report states which is which rather than letting the faster one stand in for both. A dynamic cosine-similarity DiT-cache schedule we measured reaches 1780.2 ms &mdash; 3.19&times; the true baseline, faster than every static skip level.</p>
     <p><b>Parity vs. the reference server is not yet validated.</b> Our engine reimplements the reference model's input-construction and denormalization logic directly (verified line-by-line against the published source), but a literal side-by-side run against the reference's own serving stack on held-out evaluation data has not been completed &mdash; it requires a dataset-transform dependency chain (GR00T-N1.5's <code>ComposedModalityTransform</code>) we deliberately have not vendored. This report's DreamZero numbers are latency, memory, and session-density claims; they are not yet an independent correctness claim.</p>
+  </div>
+
+  <h3 class="sub">OpenVLA-7B &mdash; the token-decoding variant</h3>
+  <p>LingBot-VA and DreamZero generate actions by <i>denoising</i>. A third policy model this cycle generates them a different way again: <b>OpenVLA-7B</b> (Stanford, MIT-licensed, Llama-2 backbone) decodes robot actions as discrete <b>tokens</b>, autoregressively. Serving it is, mechanically, LLM inference &mdash; but control-camp: the output is a 7-DoF end-effector action, not text. It runs on the identical closed-loop seam, unmodified, on both vendors, and it contributes this report's <b>strongest correctness result and largest serving lever</b>.</p>
+
+  <p><b>Correctness is exact, not approximate.</b> Our engine reproduces OpenVLA's own <code>predict_action</code> to <b>0.0e+00</b> maximum error &mdash; bit-identical to floating-point precision &mdash; on <i>both</i> H100 and MI300X. Unlike the two diffusion models above (whose reference-parity remains open work, disclosed above), this is a closed correctness gate.</p>
+
+  <p class="tablecap">Candidate-batching lever &mdash; N action-token candidates decoded per planning call: sequential per-candidate loop vs. one batched decode sharing the prompt+vision prefix, sampled, at parity</p>
+  <table>
+    <tr><th>Candidates</th><th>GPU</th><th class="num">Per-candidate loop</th><th class="num">Batched</th><th class="num">Speedup</th></tr>
+    <tr><td>N = 8</td><td><span class="chip nv">NVIDIA</span> H100</td><td class="num">985 ms</td><td class="num">182 ms</td><td class="num">5.4&times;</td></tr>
+    <tr><td>N = 16</td><td><span class="chip nv">NVIDIA</span> H100</td><td class="num">1963 ms</td><td class="num">264 ms</td><td class="num">7.4&times;</td></tr>
+    <tr><td>N = 32</td><td><span class="chip nv">NVIDIA</span> H100</td><td class="num">3906 ms</td><td class="num">443 ms</td><td class="num">8.8&times;</td></tr>
+    <tr><td>N = 8</td><td><span class="chip amd">AMD</span> MI300X</td><td class="num">1042 ms</td><td class="num">198 ms</td><td class="num">5.3&times;</td></tr>
+    <tr><td>N = 16</td><td><span class="chip amd">AMD</span> MI300X</td><td class="num">2088 ms</td><td class="num">278 ms</td><td class="num">7.5&times;</td></tr>
+    <tr><td>N = 32</td><td><span class="chip amd">AMD</span> MI300X</td><td class="num">4204 ms</td><td class="num">427 ms</td><td class="num">9.9&times;</td></tr>
+  </table>
+
+  <div class="box finding">
+    <span class="lbl">Finding &mdash; the largest control-regime lever measured</span>
+    <p>Batching the planner's candidate decodes is a <b>5&ndash;10&times;</b> serving win &mdash; far above energy-MPC's 1.6&ndash;2.1&times; (&sect;2) &mdash; and it grows with candidate count. The reason is architectural and stated plainly: OpenVLA's per-candidate decode is only <b>7 action tokens</b>, so a batch-of-one badly underuses the GPU, and batching the shared prompt+vision prefix recovers most of that idle capacity. One candidate-batching primitive, two very different control architectures (latent-energy search in &sect;2, token decode here), two vendors &mdash; the lever is silicon- <i>and</i> mechanism-agnostic, and MI300X edges ahead at N=32 (9.9&times; vs 8.8&times;). Both parity gates &mdash; greedy, and batched-vs-batch-1 &mdash; measured exactly 0.0 on both machines.</p>
+  </div>
+
+  <div class="box caveat">
+    <span class="lbl">Caveats &mdash; stated here, not in a footnote</span>
+    <p><b>The lever is throughput, not a better policy.</b> The speedup is on <i>decoding</i> N candidates; the candidate <i>scorer</i> (a value head, a short rollout, or a reward model) is a modeling choice OpenVLA does not ship &mdash; our harness uses a consensus placeholder. The 5&ndash;10&times; is real and measured; a better-than-greedy policy from it is not claimed here.</p>
+    <p><b>Synthetic observation; stock code blocks batching.</b> Verification used a synthetic camera frame (the two diffusion models above used real DROID/robot input). Separately, OpenVLA's stock implementation refuses batch&gt;1 via two guards its authors label &ldquo;simplified for batch size = 1&rdquo;; we lifted them and proved the batched output <i>bit-identical</i> to batch-1 (parity 0.0), but a stock-server comparison would decode candidates one at a time.</p>
   </div>
 
   <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
@@ -355,8 +383,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
   <ul class="limits">
     <li><b>Single prompt/seed for most headline timings.</b> Run-to-run variance measured at &plusmn;0.5% across sessions for generation-regime numbers, but multi-prompt variance and an N=10 timing distribution remain open for the control regimes. DreamZero's MI300X-vs-H100 latency ordering (&sect;3) is a single run each and explicitly flagged as unconfirmed.</li>
     <li><b>Cache quality is quantified only at pixel level so far.</b> FVD over a &ge;50-clip held-out set is the defined gate before publishing the Cosmos speed-vs-quality claim externally; tooling is built, generation of the reference set is pending.</li>
-    <li><b>Policy-regime task-correctness is not independently validated.</b> LingBot-VA's CFG-reduction lever measurably shifts action-output distribution (&sect;3); DreamZero's numbers are not yet checked against the reference server on held-out evaluation data (&sect;3). Both are latency/memory/capacity claims, not correctness claims, until that work lands.</li>
-    <li><b>The May MI300X generation-regime numbers were taken on a virtualized (VF) slice</b>; a bare-metal confirmation run is planned. DreamZero's MI300X row (&sect;3) was also taken on a virtualized slice (AMD Developer Cloud).</li>
+    <li><b>Policy-regime task-correctness is not independently validated.</b> LingBot-VA's CFG-reduction lever measurably shifts action-output distribution (&sect;3); DreamZero's numbers are not yet checked against the reference server on held-out evaluation data (&sect;3). OpenVLA's action-<i>decode</i> parity is exact (&sect;3), but its candidate <i>scorer</i> is a placeholder, so its 5&ndash;10&times; lever is a throughput result, not a policy-quality claim. These are latency/memory/capacity/throughput claims, not policy-correctness claims, until that work lands.</li>
+    <li><b>The May MI300X generation-regime numbers were taken on a virtualized (VF) slice</b>; a bare-metal confirmation run is planned. DreamZero's MI300X row (&sect;3) was also taken on a virtualized slice (AMD Developer Cloud), as was OpenVLA's (a MI300X VF).</li>
     <li><b>"First publicly reported" claims</b> are claims about the state of public disclosure on the date made (we catalog exactly where we searched), not global novelty claims &mdash; and we commit to updating, not arguing, if prior art surfaces.</li>
   </ul>
 
@@ -366,7 +394,7 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 <!-- PAGE 7: Conclusion + sources (renumbered 8) -->
 <div class="page">
   <h2 class="sect"><span class="num">8</span>What the numbers say, in one paragraph</h2>
-  <p>World models split into two control mechanisms and one generation regime, and this report now has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime, new this cycle, adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, and task-correctness validation for the levers that trade latency for distributional shift. Measurement, not intuition, decides both next.</p>
+  <p>World models split into two control mechanisms and one generation regime, and this report now has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime, new this cycle, adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. OpenVLA-7B, a token-decoding VLA on the same seam, adds the regime's largest serving lever &mdash; 5&ndash;10&times; from candidate batching, on both vendors &mdash; and its only exact correctness gate (parity 0.0). The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, and task-correctness validation for the levers that trade latency for distributional shift. Measurement, not intuition, decides both next.</p>
 
   <p style="margin-top:32px">Repercep.AI &mdash; Benchmark Report, July 2026</p>
 
@@ -375,8 +403,9 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
   <h3 class="sub">Sources</h3>
   <p class="sources">
     docs/CONTROL_LOOP_BENCH.md &middot; docs/DREAMZERO_LEVERS_2026_07.md &middot; docs/LINGBOT_VA_LEVERS_2026_07.md &middot;<br>
-    docs/DREAMZERO_PORT_PLAN.md &middot; docs/LINGBOT_VA_PORT_PLAN.md &middot; docs/BENCH_2026_06_RUNPOD.md &middot;<br>
-    docs/METHODOLOGY.md &middot; docs/COSMOS_ON_{H100,MI300X}.md &middot; docs/WAN_ON_{H100,MI300X}.md &middot; docs/CUDA_ON_ADA.md
+    docs/DREAMZERO_PORT_PLAN.md &middot; docs/LINGBOT_VA_PORT_PLAN.md &middot; docs/VLA_PORT_PLAN.md &middot;<br>
+    docs/VLA_ON_{H100,MI300X}.md &middot; docs/BENCH_2026_06_RUNPOD.md &middot; docs/METHODOLOGY.md &middot;<br>
+    docs/COSMOS_ON_{H100,MI300X}.md &middot; docs/WAN_ON_{H100,MI300X}.md &middot; docs/CUDA_ON_ADA.md
   </p>
 </div>
 
