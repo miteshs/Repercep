@@ -141,11 +141,30 @@ Additional binding conditions, regardless of L:
 
 ## 6. Method and controls
 
-- **Correctness gate first, and it is a *separate, untimed* pass.** Under greedy
-  (`temperature=0`) every candidate is the argmax continuation, so R1's N single-sample
-  requests and R2's one `n=N` request must return the same candidate set. A mismatch
-  means the rungs are not doing equivalent work and every timing in the run is
-  meaningless. This is the LLM analogue of the VLA parity gate that measured exactly 0.0.
+- **Correctness gate — redesigned on the box, 2026-07-27.** The plan originally called
+  for the LLM analogue of the VLA parity gate: compare R1's and R2's greedy candidate
+  sets and require equality. **That gate is impossible, and the impossibility is a
+  property of the server, not a gap in the harness.** Two independent reasons, both
+  confirmed against vLLM 0.26.0:
+
+  1. vLLM **rejects greedy `n>1` outright** — `n must be 1 when using greedy sampling,
+     got 16` (HTTP 400). The comparison cannot be executed at all.
+  2. Under sampling, R2's `n` candidates come from **one shared RNG stream** while R1's N
+     requests each seed their own. The two sets are different draws from the same
+     distribution and will never be equal.
+
+  So the gate is what is actually checkable, and — importantly — what a *throughput*
+  claim actually needs:
+
+  - **Request-shape equivalence:** at `n=1, temperature=0` the two code paths must return
+    identical text, proving the harness builds equivalent requests rather than silently
+    asking for different work.
+  - **Equal decode work:** R1 and R2 must report the same completion-token total (±2%).
+    **This is the load-bearing check.** If the rungs did not decode the same number of
+    tokens, the wall-clock ratio is not a serving lever, it is an accounting error.
+
+  Text equality was the wrong gate for a throughput comparison in any case. Equal decode
+  work is the right one, and unlike the VLA parity gate it is achievable here.
 
 - **The timed sweep runs at `temperature > 0` (default 0.8), never greedy.** Caught while
   validating the harness locally, and worth stating because the first version got it
@@ -155,6 +174,14 @@ Additional binding conditions, regardless of L:
   `temperature=0`.
 - **One server, one process, both rungs.** Rungs are flipped against the same loaded
   model in the same run — never across restarts, never across boxes.
+
+- **The harness runs *on the serving box*, against `127.0.0.1`. This is not a
+  convenience, it is a correctness requirement.** R1 issues N HTTP requests where R2
+  issues one. Measured across a WAN — e.g. from a laptop through a cloud provider's HTTP
+  proxy — R1 pays N network round-trips and R2 pays one, and the ratio would look like a
+  large lever that is *entirely* per-request network overhead. That is precisely the
+  strawman this plan exists to avoid, arriving through the back door. Any result whose
+  client was not co-located with the server is void.
 - **APC toggled explicitly**, not assumed. R0 vs R1 is only meaningful if we control it,
   and vLLM's default has changed across versions. Record the vLLM version and the flag.
 - **Warm-up discarded**, median of repeats reported, ROCm first-run autotune excluded via
