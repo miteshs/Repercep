@@ -236,12 +236,17 @@ def test_bench_control_loop_dreamzero_chunk_shape_and_forces_real_plan_call() ->
 
     class _CountingPipeline(_FakePipeline):
         def __init__(self, num_frame_per_block: int = 2, action_dim: int = 8, dim: int = 4) -> None:
-            super().__init__(num_frame_per_block=num_frame_per_block, action_dim=action_dim, dim=dim)
+            super().__init__(
+                num_frame_per_block=num_frame_per_block, action_dim=action_dim, dim=dim
+            )
             self.infer_chunk_calls = 0
 
-        def infer_chunk(  # type: ignore[override]
-            self, session_id: str, current_start_frame: int, init_latent: object
-        ) -> tuple[object, object]:
+        def infer_chunk(
+            self,
+            session_id: str,
+            current_start_frame: int,
+            init_latent: torch.Tensor | None,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
             self.infer_chunk_calls += 1
             return super().infer_chunk(session_id, current_start_frame, init_latent)
 

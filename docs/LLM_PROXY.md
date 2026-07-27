@@ -68,6 +68,51 @@ REPERCEP_LLM_UPSTREAM_URL=http://127.0.0.1:8001 \
 SGLang is a drop-in alternative (`python -m sglang.launch_server --port 8001 …`);
 the proxy only speaks the OpenAI surface, so either works unchanged.
 
+## Candidate fusing — the one thing we *do* add (opt-in, off by default)
+
+`serving/llm_fusing.py` coalesces **concurrent, equivalent** `/v1/completions`
+requests into one upstream call with `n=N`, then hands each caller its own
+choice reshaped as a normal `n=1` response.
+
+**Why this is worth adding when everything else here is inherited.** The
+measurement in `docs/LLM_BESTOFN_RESULT.md` found the win does *not* come from
+prefill arithmetic — it comes from a cache-timing race. N prefix-sharing
+requests issued simultaneously **all miss the prefix cache together**, because
+none has finished prefilling to populate it. Automatic prefix caching is a
+*temporal* optimization and a simultaneous fan-out defeats it. One `n=N` request
+shares the prefill structurally and cannot lose that race.
+
+So this is not "we beat vLLM" — it is "we deliver vLLM's own best path to
+callers who emit N separate requests," which is the shape agent frameworks
+produce. **Measured 1.5× at a 2k shared prefix with 32-token decodes at moderate
+concurrency; 1.04–2.5× across the shape grid.** Read the result doc before
+quoting a number — it is strongly workload-dependent.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `REPERCEP_LLM_FUSING_ENABLED` | `false` | Turn fusing on |
+| `REPERCEP_LLM_FUSING_WINDOW_MS` | `8.0` | Coalescing window. Longer catches more peers and adds that latency to the first arrival |
+| `REPERCEP_LLM_FUSING_MAX_BATCH` | `32` | Cap per fused call; `1` disables fusing |
+
+**Safety rules, each of which exists for a reason:**
+
+- **Greedy is never fused.** vLLM rejects `n>1` under `temperature=0` outright,
+  so a fused greedy batch would 400 for callers whose individual requests were
+  perfectly valid. Learned from the measurement, not the docs.
+- Streaming, `n>1`, `best_of>1`, list prompts and **any unrecognised field** are
+  passed straight through. An enabled fuser can never make a request *fail* that
+  the passthrough would have served; the worst case is that it isn't coalesced.
+- A lone request in a window is sent as the plain `n=1` call it already is, so a
+  quiet gateway pays no fusion penalty.
+- If the upstream 4xx's *because* we fused, every caller is retried individually
+  — that failure is ours, not theirs.
+- Per-caller `usage` is reported as if unfused (what they'd have been billed
+  alone); the true shared cost is disclosed additively in `repercep_fusion`,
+  which never replaces a standard field.
+
+Chat completions are **not** fused: they carry message structure this has not
+been measured on.
+
 ## What you inherit for free (and deliberately did not rebuild)
 
 Continuous batching, paged attention, prefix/APC caching, AWQ/GPTQ/FP8-KV quant,

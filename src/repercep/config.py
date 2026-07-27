@@ -66,3 +66,23 @@ class RuntimeConfig(BaseSettings):
         description="Bearer token for a secured upstream (vLLM --api-key). Injected on "
         "upstream calls; the client's own Authorization header is never forwarded.",
     )
+    llm_fusing_enabled: bool = Field(
+        False,
+        description="Coalesce concurrent equivalent /v1/completions into one upstream "
+        "n=N call. Measured 1.5x at a 2k prefix with 32-token decodes (1.04-2.5x by "
+        "shape) -- see docs/LLM_BESTOFN_RESULT.md before assuming a number. Off by "
+        "default: fusing reshapes the upstream call.",
+    )
+    llm_fusing_window_ms: float = Field(
+        8.0,
+        ge=0,
+        description="Coalescing window. Requests arriving within this window under the "
+        "same sampling parameters share one upstream call. Longer catches more peers "
+        "and adds that latency to the first arrival.",
+    )
+    llm_fusing_max_batch: int = Field(
+        32,
+        ge=1,
+        description="Maximum requests coalesced into one upstream call. 1 disables "
+        "fusing even when llm_fusing_enabled is true.",
+    )

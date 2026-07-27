@@ -167,6 +167,9 @@ def create_app(
     llm_upstream_url: str | None = None,
     llm_upstream_timeout_s: float = _DEFAULT_LLM_TIMEOUT_S,
     llm_upstream_api_key: str | None = None,
+    llm_fusing_enabled: bool = False,
+    llm_fusing_window_ms: float = 8.0,
+    llm_fusing_max_batch: int = 32,
 ) -> FastAPI:
     """Build the FastAPI application.
 
@@ -207,6 +210,13 @@ def create_app(
         llm_upstream_timeout_s: per-request timeout when proxying upstream.
         llm_upstream_api_key: bearer injected on upstream calls for a secured
             upstream; the client's own Authorization is never forwarded.
+        llm_fusing_enabled: coalesce concurrent equivalent ``/v1/completions``
+            into one upstream ``n=N`` call (``serving/llm_fusing.py``). Off by
+            default. Measured 1.5x at a 2k prefix with 32-token decodes;
+            1.04-2.5x across the shape grid (``docs/LLM_BESTOFN_RESULT.md``).
+        llm_fusing_window_ms: coalescing window; longer catches more peers and
+            adds that latency to the first arrival.
+        llm_fusing_max_batch: cap on requests per fused call; 1 disables fusing.
     """
     active_engine: WorldModelEngine = engine if engine is not None else StubEngine()
     active_interactive = interactive_engine
@@ -218,6 +228,9 @@ def create_app(
             upstream_url=llm_upstream_url,
             timeout_s=llm_upstream_timeout_s,
             api_key=llm_upstream_api_key,
+            fusing_enabled=llm_fusing_enabled,
+            fusing_window_ms=llm_fusing_window_ms,
+            fusing_max_batch=llm_fusing_max_batch,
         )
 
     def _require_api_token(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -493,4 +506,7 @@ def create_app_from_config(config: RuntimeConfig | None = None) -> FastAPI:
         llm_upstream_url=cfg.llm_upstream_url if cfg.llm_enabled else None,
         llm_upstream_timeout_s=cfg.llm_upstream_timeout_s,
         llm_upstream_api_key=cfg.llm_upstream_api_key,
+        llm_fusing_enabled=cfg.llm_fusing_enabled,
+        llm_fusing_window_ms=cfg.llm_fusing_window_ms,
+        llm_fusing_max_batch=cfg.llm_fusing_max_batch,
     )

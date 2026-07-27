@@ -17,12 +17,15 @@ the gateway credential.
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
+
+from repercep.serving.llm_fusing import CandidateFuser, is_fusable
 
 _LOG = logging.getLogger(__name__)
 
@@ -47,6 +50,9 @@ class LlmProxy:
         timeout_s: float = 600.0,
         api_key: str | None = None,
         client: httpx.AsyncClient | None = None,
+        fusing_enabled: bool = False,
+        fusing_window_ms: float = 8.0,
+        fusing_max_batch: int = 32,
     ) -> None:
         self._upstream_url = upstream_url.rstrip("/")
         self._api_key = api_key
@@ -54,6 +60,18 @@ class LlmProxy:
         # base_url; otherwise build one pinned to the upstream. Constructing an
         # AsyncClient outside a running loop is fine — it lazily opens the pool.
         self._client = client or httpx.AsyncClient(base_url=self._upstream_url, timeout=timeout_s)
+        # Off by default. When enabled, only /v1/completions is eligible — chat
+        # completions carry message structure this has not been measured on.
+        self._fuser = (
+            CandidateFuser(
+                self._client,
+                window_ms=fusing_window_ms,
+                max_fuse=fusing_max_batch,
+                api_key=api_key,
+            )
+            if fusing_enabled
+            else None
+        )
         self.router = self._build_router()
 
     async def aclose(self) -> None:
@@ -114,6 +132,36 @@ class LlmProxy:
             media_type=upstream.headers.get("content-type", "application/json"),
         )
 
+    async def _maybe_fused_completion(self, request: Request) -> Response | None:
+        """Serve a completion through the fuser, or ``None`` to fall through.
+
+        Returning ``None`` for anything unrecognised means an enabled fuser can
+        never make a request *fail* that the plain passthrough would have
+        served — the worst case is that it does not get coalesced.
+        """
+        assert self._fuser is not None
+        raw = await request.body()
+        try:
+            body = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None  # let the upstream author the parse error
+        if not isinstance(body, dict) or not is_fusable(body):
+            return None
+        try:
+            payload = await self._fuser.complete(body)
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=_UPSTREAM_UNREACHABLE, detail=f"llm upstream unreachable: {exc}"
+            ) from exc
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int):
+                raise HTTPException(
+                    status_code=status, detail=getattr(exc, "detail", str(exc))
+                ) from exc
+            raise HTTPException(status_code=_UPSTREAM_UNREACHABLE, detail=str(exc)) from exc
+        return JSONResponse(payload)
+
     async def _readiness(self) -> Response:
         """Best-effort upstream reachability probe (readiness, not liveness).
 
@@ -140,6 +188,10 @@ class LlmProxy:
 
         @router.post("/v1/completions")
         async def completions(request: Request) -> Response:
+            if self._fuser is not None:
+                fused = await self._maybe_fused_completion(request)
+                if fused is not None:
+                    return fused
             return await self._proxy_post_stream("/v1/completions", request)
 
         @router.get("/v1/models")

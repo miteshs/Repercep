@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import os
 
-
 _CAMERA_FILES = {
     "exterior_image_1_left": "exterior_image_1_left.mp4",
     "exterior_image_2_left": "exterior_image_2_left.mp4",
@@ -32,7 +31,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dreamzero-src", required=True, help="research clone root (has debug_image/)")
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--frame-index", type=int, default=0, help="matches the reference client's step-0 frame")
+    ap.add_argument(
+        "--frame-index",
+        type=int,
+        default=0,
+        help="matches the reference client's step-0 frame",
+    )
     args = ap.parse_args()
 
     import cv2

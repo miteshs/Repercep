@@ -222,7 +222,9 @@ def _run_chunks(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--repo", default="GEAR-Dreams/DreamZero-DROID", help="HF id or local bundle dir")
+    ap.add_argument(
+        "--repo", default="GEAR-Dreams/DreamZero-DROID", help="HF id or local bundle dir"
+    )
     ap.add_argument("--obs-dir", required=True, help="dir with seed camera images")
     ap.add_argument("--prompt", default="pick up the mug")
     ap.add_argument("--backend", choices=["auto", "cuda", "rocm"], default="auto")
@@ -272,7 +274,9 @@ def main() -> int:
 
     torch.manual_seed(args.seed)
     state = _open_session(engine, args.obs_dir, args.prompt)
-    state, chunk_ms, actions = _run_chunks(engine, state, goal, warmup=args.warmup, measure=args.measure)
+    state, chunk_ms, actions = _run_chunks(
+        engine, state, goal, warmup=args.warmup, measure=args.measure
+    )
     _record("rung0_baseline_full16", chunk_ms, actions, extra={"num_dit_steps": "full (16)"})
     engine.release(state)  # each rung sharing `engine` must close its session before the
     # next one's _open_session -- otherwise pipeline._sessions accumulates one
