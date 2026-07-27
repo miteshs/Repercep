@@ -180,7 +180,12 @@ def test_max_fuse_caps_the_batch() -> None:
 
 
 def test_lone_request_is_sent_unfused() -> None:
-    """A quiet gateway must never pay a fusion penalty."""
+    """A lone request is never *reshaped* — but it does wait out the window.
+
+    This asserts the response contract only. The waiting is real added latency
+    on an idle gateway and is not covered here; see the module comment in
+    ``_fire`` and ``docs/LLM_BESTOFN_PLAN.md`` §10.
+    """
     fuser, seen = _fuser(_ok, window_ms=5)
     result = asyncio.run(fuser.complete(_body()))
     assert len(seen) == 1

@@ -102,8 +102,11 @@ quoting a number — it is strongly workload-dependent.
 - Streaming, `n>1`, `best_of>1`, list prompts and **any unrecognised field** are
   passed straight through. An enabled fuser can never make a request *fail* that
   the passthrough would have served; the worst case is that it isn't coalesced.
-- A lone request in a window is sent as the plain `n=1` call it already is, so a
-  quiet gateway pays no fusion penalty.
+- A lone request in a window is sent as the plain `n=1` call it already is — its
+  response is never reshaped. **It does, however, wait out the window first**,
+  which is real added latency on an idle gateway: the cost of the lever with
+  none of the benefit. `window_ms` is the dial, and this trade is not yet
+  measured end-to-end (`docs/LLM_BESTOFN_PLAN.md` §10).
 - If the upstream 4xx's *because* we fused, every caller is retried individually
   — that failure is ours, not theirs.
 - Per-caller `usage` is reported as if unfused (what they'd have been billed

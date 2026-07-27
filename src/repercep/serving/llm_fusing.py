@@ -209,8 +209,16 @@ class CandidateFuser:
 
         n = len(batch)
         if n == 1:
-            # Nobody joined; send it as the plain n=1 request it already is,
-            # so a quiet gateway never pays a fusion penalty.
+            # Nobody joined, so send the plain n=1 request it already is —
+            # the response is never reshaped.
+            #
+            # It has still WAITED the full window to learn that, and that wait
+            # is real added latency on an idle gateway. There is no way to know
+            # a peer is *about* to arrive, so the window is the price of the
+            # lever and `window_ms` is the dial. At the default 8 ms this is
+            # ~2-3% of a 300 ms completion, but it is not free and a
+            # low-traffic deployment gets the cost with none of the benefit.
+            # Unmeasured end-to-end — see docs/LLM_BESTOFN_PLAN.md §10.
             self.stats["passthrough"] += 1
             await self._resolve_with(batch, self._post(batch.bodies[0]), fused=False)
             return
