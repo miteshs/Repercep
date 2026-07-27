@@ -283,3 +283,53 @@ Identical to §6, plus:
   engine.
 - Absolute cross-engine timings are only comparable because both run on the same pod
   spec, same model and same harness — stated explicitly wherever they appear.
+
+---
+
+## 10. The R3 test — what the fuser owes, pre-registered 2026-07-27
+
+`serving/llm_fusing.py` is built and unit-tested against a mock upstream. **It has
+never been measured against a real server.** Unit tests prove the response contract;
+they say nothing about whether the gateway keeps the win. Three numbers are owed, and
+the second is the one the product claim actually rests on.
+
+### 10.1 R3 vs R2 — does our fusing cost more than it saves?
+
+R2 is the client calling `n=N` directly. R3 is the client fanning out N requests and our
+gateway coalescing them. R3 does strictly more work: parse each body, hash a fusion key,
+hold a coalescing window, redistribute N choices. **If that overhead exceeds the gap R2
+opened over R1, the feature is a net loss and should ship disabled.**
+
+- Pass: `R3 ≤ 1.15 × R2` — overhead under ~15% of the fused call.
+- Fail: R3 > R1. We would be slower than doing nothing.
+
+### 10.2 R3 vs R1 — the number a customer buys
+
+**This is the product claim**: *point your existing fan-out agent at us and it gets
+faster, with no code change.* It is R1-through-the-gateway against R1-direct, and it has
+never been run. Every other number in this document is a proxy for it.
+
+- Pass: R3 meaningfully below R1 at the gate point, in the same direction as the
+  measured 1.5× and not much below it.
+- Fail: `R3 ≥ R1` — the gateway eats the lever, and the honest advice becomes "call
+  `n=N` yourself," which needs no product from us.
+
+### 10.3 The idle-gateway cost — the one the unit tests hide
+
+A request with no peers **still waits the full window** before being sent unfused. That
+is pure added latency on a quiet gateway: the cost of the lever with none of the benefit.
+The unit tests assert only that its response is not reshaped, which is a different and
+much weaker claim — and the code comment that once implied otherwise has been corrected.
+
+Measure added p50/p99 latency for a lone request at `window_ms` ∈ {2, 8, 25} against
+fusion hit-rate at each. **A gateway that mostly serves lone requests should default to
+fusing off**, and this measurement is what would say so.
+
+### 10.4 Binding consequence
+
+If §10.2 fails, `INFERENCE_MOAT_TECHNIQUES.md` T1.1 and the deck's fusing claim describe
+a lever we measured but **cannot deliver**, and both must say so. A technique that works
+in the engine but not through our own gateway is a paper result, not a product.
+
+This runs on the same pod as the SGLang test (§9) — same model, same harness, one
+session — since both need a real server and neither needs a large one.
