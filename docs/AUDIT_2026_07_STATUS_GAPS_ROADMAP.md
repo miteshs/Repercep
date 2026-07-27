@@ -1,5 +1,11 @@
 # Repercep — Full Project Audit, Decart Gap Analysis, Market Paths (2026-07-12)
 
+> **⚠️ §3 (Market & revenue) SUPERSEDED 2026-07-26 by
+> `docs/PIVOT_2026_07_PLATFORM_STRATEGY.md` and `docs/BUSINESS_PLAN_2026.md`.**
+> §1 (status audit) and §2 (Decart deep-dive) are still current — and §1.2's solidity
+> gaps (no CI, failing lint/typecheck, no multi-tenant serving surface) are now **P0
+> blockers for the seed raise**, not just technical debt.
+
 - **Scope:** complete status audit of the runtime (code, measurements, process),
   a deep-dive on **Decart** (the closest new convergent competitor, and the
   source of the name collision that triggered today's Mirage→Repercep rename),

@@ -1,5 +1,12 @@
 # Repercep — Revised Strategy (2026-06-24)
 
+> **⚠️ SUPERSEDED 2026-07-26 by `docs/PIVOT_2026_07_PLATFORM_STRATEGY.md`.**
+> The company pivoted from "world-model runtime you license" to "full-service inference
+> cloud for every model class, competing on cost." The **analysis** in this doc still
+> holds and is reused by the pivot doc — the two-camp map, the moat honesty, the kill
+> criteria that forced the pivot. The **conclusion** (§3 thesis, §4 roadmap, §7 decision)
+> does not. Read the pivot doc first.
+
 - **Date:** 2026-06-24
 - **Supersedes the *roadmap* in:** `docs/STRATEGIC_ASSESSMENT.md` §5 and
   `docs/POSITIONING.md` §"Strategic options matrix". It does **not** supersede their

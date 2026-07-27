@@ -1,5 +1,12 @@
 # Repercep — positioning, moat analysis, and what we should (not) claim
 
+> **⚠️ PARTIALLY SUPERSEDED 2026-07-26.** Current positioning lives in
+> `docs/PIVOT_2026_07_PLATFORM_STRATEGY.md`; the cost-moat technique ledger lives in
+> `docs/INFERENCE_MOAT_TECHNIQUES.md`. This doc's *claim discipline* (what is and isn't
+> defensible, where the 3.81× actually comes from, the apples-to-apples accounting) is
+> still current and still binding. Its *strategic options matrix* and *next two weeks*
+> sections are historical.
+
 *This doc is the strategic-framing layer. It tells you which claims are
 defensible, which aren't, and where the wedge actually is.  Sibling docs
 handle adjacent layers:*
