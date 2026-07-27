@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Repercep — Seed Deck, July 2026</title>
+<style>
+@font-face{font-family:'Archivo';src:url('fonts/archivo-var.woff2') format('woff2');font-weight:100 900;font-display:swap}
+@font-face{font-family:'Plex Mono';src:url('fonts/plexmono-400.woff2') format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Plex Mono';src:url('fonts/plexmono-500.woff2') format('woff2');font-weight:500;font-display:swap}
+:root{
+  --ink:#171B23; --ink-2:#5A6274; --ink-3:#858C9C;
+  --line:#DFE2E9; --line-strong:#C6CAD4;
+  --teal:#0F6C5C; --teal-bg:#E7F3EF; --teal-line:#1F7A5C;
+  --amber:#A96A10; --amber-bg:#FBF1DF;
+  --red:#B03030; --red-bg:#FBECEC;
+  --nvidia:#2E9E44; --amd:#D23B3B;
+  --paper:#FCFCFD;
+  --sans:'Archivo',system-ui,-apple-system,sans-serif;
+  --mono:'Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --serif:Georgia,'Iowan Old Style',serif;
+}
+@page{size:1280px 720px;margin:0}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#8B909C}
+body{font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased}
+
+.slide{
+  width:1280px;height:720px;background:var(--paper);
+  padding:56px 72px 52px;position:relative;overflow:hidden;
+  page-break-after:always;break-after:page;
+  display:flex;flex-direction:column;
+  margin:0 auto 18px;
+}
+.slide:last-child{page-break-after:auto;break-after:auto;margin-bottom:0}
+
+/* chrome */
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--teal);font-weight:500;margin-bottom:14px}
+h1{font-size:52px;font-weight:800;line-height:1.04;letter-spacing:-.02em;margin:0 0 18px}
+h2{font-size:38px;font-weight:800;line-height:1.08;letter-spacing:-.015em;margin:0 0 10px}
+h2 .lo{color:var(--ink-3);font-weight:700}
+.sub{font-family:var(--serif);font-size:17px;line-height:1.45;color:var(--ink-2);max-width:900px;margin:0 0 26px}
+.foot{position:absolute;left:72px;right:72px;bottom:20px;display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  border-top:1px solid var(--line);padding-top:9px}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center}
+
+/* cover */
+.cover{background:var(--ink);color:#fff;justify-content:center}
+.cover h1{font-size:74px;color:#fff;letter-spacing:-.03em;max-width:1000px}
+.cover .mark{font-family:var(--sans);font-weight:800;font-size:15px;letter-spacing:.22em;color:#fff;text-transform:uppercase;margin-bottom:auto}
+.cover .mark span{color:#5FCFAE}
+.cover .sub{color:#B6BCC9;font-size:19px;max-width:840px;margin-bottom:34px}
+.cover .meta{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:#7E869A;text-transform:uppercase;
+  border-top:1px solid #2E343F;padding-top:16px;display:flex;gap:38px}
+.cover .meta b{color:#E4E7ED;font-family:var(--sans);font-weight:700;letter-spacing:.04em}
+
+/* statement slide */
+.stmt{justify-content:center;background:var(--ink);color:#fff}
+.stmt .q{font-size:46px;font-weight:800;line-height:1.16;letter-spacing:-.02em;max-width:1020px}
+.stmt .q em{font-style:normal;color:#5FCFAE}
+.stmt .attrib{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#7E869A;margin-top:30px}
+
+/* grids */
+.cols{display:grid;gap:22px}
+.c2{grid-template-columns:1fr 1fr}
+.c3{grid-template-columns:repeat(3,1fr)}
+.c4{grid-template-columns:repeat(4,1fr)}
+.c5{grid-template-columns:repeat(5,1fr)}
+
+.card{border:1px solid var(--line-strong);border-radius:3px;padding:20px 22px;background:#fff}
+.card .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);font-weight:500;margin-bottom:10px}
+.card h3{font-size:19px;font-weight:800;margin:0 0 8px;letter-spacing:-.01em;line-height:1.2}
+.card p{font-family:var(--serif);font-size:13.5px;line-height:1.48;color:var(--ink-2);margin:0}
+.card.dark{background:var(--ink);border-color:var(--ink)}
+.card.dark h3,.card.dark .n{color:#fff}
+.card.dark p{color:#B6BCC9}
+.card.dark .k{color:#5FCFAE}
+.card.teal{background:var(--teal-bg);border-color:var(--teal-line)}
+
+/* stat tiles */
+.stat .n{font-size:46px;font-weight:800;line-height:1;letter-spacing:-.03em;margin-bottom:8px}
+.stat .n sup{font-size:22px;font-weight:700;letter-spacing:0}
+.stat .d{font-family:var(--serif);font-size:13px;line-height:1.42;color:var(--ink-2)}
+.stat .src{font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-top:10px}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);
+  text-align:left;padding:0 12px 9px 0;border-bottom:1.5px solid var(--ink);font-weight:500;vertical-align:bottom}
+td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);vertical-align:top;font-family:var(--serif);line-height:1.35}
+td.n,th.n{font-family:var(--mono);text-align:right;font-size:12.5px}
+td b{font-family:var(--sans);font-weight:700}
+tr:last-child td{border-bottom:1.5px solid var(--line-strong)}
+tr.hl td{background:var(--teal-bg);font-weight:600}
+tr.hl td b{color:var(--teal)}
+table.tight td{padding:7px 12px 7px 0}
+table.tight th{padding-bottom:7px}
+
+.tag{display:inline-block;font-family:var(--mono);font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:2.5px 7px;border-radius:2px;font-weight:500;white-space:nowrap}
+.tag.m{background:var(--teal-bg);color:var(--teal);border:1px solid var(--teal-line)}
+.tag.a{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber)}
+.tag.v{background:#EEF1F6;color:var(--ink-2);border:1px solid var(--line-strong)}
+.tag.r{background:var(--red-bg);color:var(--red);border:1px solid var(--red)}
+
+.note{font-family:var(--mono);font-size:10px;line-height:1.5;color:var(--ink-3);letter-spacing:.02em;margin-top:14px}
+.note b{color:var(--ink-2);font-family:var(--sans);font-weight:700;letter-spacing:0}
+
+ul.pts{margin:0;padding:0;list-style:none}
+ul.pts li{font-family:var(--serif);font-size:14.5px;line-height:1.5;color:var(--ink-2);padding-left:20px;position:relative;margin-bottom:11px}
+ul.pts li:before{content:'';position:absolute;left:0;top:8px;width:7px;height:7px;background:var(--teal);border-radius:1px}
+ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
+
+.eq{font-family:var(--mono);font-size:19px;letter-spacing:-.01em;text-align:center;padding:26px 0 18px;color:var(--ink);font-weight:500}
+.eq .t1{color:var(--teal);font-weight:500;border-bottom:2.5px solid var(--teal);padding-bottom:2px}
+.eq .t2{color:var(--amd);font-weight:500;border-bottom:2.5px solid var(--amd);padding-bottom:2px}
+.eq .t3{color:var(--amber);font-weight:500;border-bottom:2.5px solid var(--amber);padding-bottom:2px}
+.eqlab{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:6px}
+.eqlab div{text-align:center;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+.eqlab .l1{color:var(--teal)} .eqlab .l2{color:var(--amd)} .eqlab .l3{color:var(--amber)}
+
+.bar{height:26px;background:var(--line);position:relative;border-radius:2px;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--teal);border-radius:2px}
+.bar.n i{background:var(--nvidia)} .bar.a i{background:var(--amd)} .bar.g i{background:var(--ink-3)}
+.barrow{display:grid;grid-template-columns:190px 1fr 82px;align-items:center;gap:14px;margin-bottom:11px}
+.barrow .lbl{font-family:var(--sans);font-size:13px;font-weight:600}
+.barrow .lbl small{display:block;font-family:var(--mono);font-size:9px;color:var(--ink-3);font-weight:400;letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
+.barrow .val{font-family:var(--mono);font-size:14px;font-weight:500;text-align:right}
+
+.flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:stretch;gap:0;margin-top:6px}
+.flow .node{border:1px solid var(--line-strong);border-radius:3px;padding:20px 22px;background:#fff}
+.flow .node.edge{border-color:var(--ink);border-width:1.5px}
+.flow .node.cloud{background:var(--teal-bg);border-color:var(--teal-line)}
+.flow .link{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 20px;min-width:150px}
+.flow .link .ln{width:100%;height:10px;position:relative}
+.flow .link .ln .rail{position:absolute;left:9px;right:9px;top:4px;height:2px;background:var(--teal)}
+.flow .link .ln .ar{position:absolute;top:0;width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.flow .link .ln .ar.l{left:0;border-right:9px solid var(--teal)}
+.flow .link .ln .ar.r{right:0;border-left:9px solid var(--teal)}
+.flow .link .cap{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);margin-bottom:9px;text-align:center;font-weight:500}
+
+.tl{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:10px}
+.tl .ph{border-top:3px solid var(--line-strong);padding:16px 20px 0 0}
+.tl .ph.on{border-top-color:var(--teal)}
+.tl .ph .w{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px}
+.tl .ph h4{font-size:17px;font-weight:800;margin:0 0 9px}
+.tl .ph.on h4{color:var(--teal)}
+.tl .ph p{font-family:var(--serif);font-size:12.5px;line-height:1.45;color:var(--ink-2);margin:0 0 11px}
+.tl .ph .goal{font-family:var(--mono);font-size:10.5px;color:var(--ink);font-weight:500;border-top:1px solid var(--line);padding-top:9px;line-height:1.4}
+
+.dots{font-family:var(--mono);font-size:15px;letter-spacing:.12em}
+.dots.f{color:var(--teal)} .dots.e{color:var(--line-strong)}
+</style>
+</head>
+<body>
+
+<!-- 1 COVER -->
+<section class="slide cover">
+  <div class="mark">REPERCEP<span>.AI</span></div>
+  <h1>The inference cloud for every model class.</h1>
+  <p class="sub">Run any model — LLM, VLM, vision, diffusion, VLA, world model — cheaper than anywhere else. Because we get more work out of each GPU-second, on GPU-seconds that cost less.</p>
+  <div class="meta">
+    <span><b>Seed</b> &nbsp;$8–10M</span>
+    <span><b>July 2026</b></span>
+    <span><b>Confidential</b></span>
+  </div>
+</section>
+
+<!-- 2 THE OBSERVATION -->
+<section class="slide">
+  <div class="eyebrow">The observation</div>
+  <h2>Every inference cloud is an LLM company<br>with a container service bolted on.</h2>
+  <p class="sub">The per-token meter, the model catalog, the autoscaler, the routing — all of it is shaped around a stateless autoregressive text decoder. Bring anything else and the answer is the same.</p>
+  <div class="body">
+    <div class="cols c2">
+      <div class="card">
+        <div class="k">What you get for an LLM</div>
+        <h3>A per-token API</h3>
+        <p>One line of code. Pay for exactly what you use. Scale to zero. Someone else's problem.</p>
+      </div>
+      <div class="card dark">
+        <div class="k">What you get for everything else</div>
+        <h3>"Here's a GPU-hour and a Dockerfile."</h3>
+        <p>No per-call economics. No workload-shaped scheduling. No benchmarks. You rent a whole GPU to run a 40 ms model, and you pay for every idle second.</p>
+      </div>
+    </div>
+    <div class="note" style="margin-top:22px"><b>That tail is not small.</b> Every production vision system, industrial inspection line, AV perception stack, robotics fleet, media pipeline, and multi-modal agent lives in it — and it is growing faster than text-only inference, because it is where physical AI lives.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>02</span></div>
+</section>
+
+<!-- 3 WHAT WE DO -->
+<section class="slide">
+  <div class="eyebrow">What we do</div>
+  <h2>A full-service inference cloud<br>that starts from the hard tail.</h2>
+  <p class="sub">Serverless and dedicated inference on partner GPU capacity — for every model class, not just the head of the distribution.</p>
+  <div class="body">
+    <div class="cols c3">
+      <div class="card">
+        <div class="k">Product 1 · Shipping</div>
+        <h3>Repercep Cloud</h3>
+        <p>Managed inference. Serverless per token or per call; dedicated per GPU-minute with scale-to-zero. Every model class on one platform.</p>
+      </div>
+      <div class="card">
+        <div class="k">Product 2 · Proven</div>
+        <h3>Repercep Runtime</h3>
+        <p>The same engine, licensed for self-host and BYOC. Serves regulated, sovereign, on-prem and defense fleets that hosted-only platforms structurally cannot.</p>
+      </div>
+      <div class="card">
+        <div class="k">Product 3 · 2027</div>
+        <h3>Repercep Link</h3>
+        <p>Hybrid edge↔cloud for physical AI. The robot's processor runs the tight loop; our cloud runs the heavy reasoning. Sold through robotics partners.</p>
+      </div>
+    </div>
+    <div class="cols c2" style="margin-top:20px">
+      <div class="card teal">
+        <div class="k">Revenue today</div>
+        <h3>LLMs and general model serving</h3>
+        <p>Demand that already exists. This is the run-rate.</p>
+      </div>
+      <div class="card teal">
+        <div class="k">The option we already own</div>
+        <h3>World models and physical AI</h3>
+        <p>Where we have a year of proof nobody else has. This is the upside.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>03</span></div>
+</section>
+
+<!-- 4 WHY NOW -->
+<section class="slide">
+  <div class="eyebrow">Why now</div>
+  <h2>The category question is already answered.</h2>
+  <p class="sub">Three direct comparables crossed roughly $1B annualized inside eighteen months. We are not funding market creation — we are funding entry, at the moment a second wave of model classes arrives.</p>
+  <div class="body">
+    <div class="cols c4">
+      <div class="card stat"><div class="n">$1B<sup>+</sup></div><div class="d">Fireworks AI annualized revenue, at ~17.5× implied multiple</div><div class="src">Jul 2026 · reported</div></div>
+      <div class="card stat"><div class="n">$13B</div><div class="d">Baseten valuation — from ~$200M to ~$600M annualized in one quarter</div><div class="src">Jun 2026 · reported</div></div>
+      <div class="card stat"><div class="n">$8.3B</div><div class="d">Together AI post-money, ~$1B annualized, $800M Series C</div><div class="src">Jul 2026 · reported</div></div>
+      <div class="card stat dark"><div class="n">$430B</div><div class="d">Physical AI market projected by 2030, across nine verticals</div><div class="src">2026 forecast</div></div>
+    </div>
+    <div class="cols c2" style="margin-top:22px">
+      <div class="card">
+        <div class="k">The wave that just landed</div>
+        <h3>Edge compute for physical AI shipped at volume</h3>
+        <p>NVIDIA's Jetson Thor T3000/T2000 reached mainstream robotics in July 2026 — 1X, Boston Dynamics, FANUC, Amazon Robotics, Hitachi building on it. The edge half of a hybrid product now exists, which makes the cloud half purchasable.</p>
+      </div>
+      <div class="card">
+        <div class="k">The gap nobody is filling</div>
+        <h3>None of them price AMD. At all.</h3>
+        <p>Modal's rate card has no AMD line. Fireworks, Baseten and Together are NVIDIA shops. The one competitor with a real multi-silicon runtime supports NVIDIA, Trainium and TPU — and skips ROCm.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>04</span></div>
+</section>
+
+<!-- 5 THE MOAT / IDENTITY -->
+<section class="slide">
+  <div class="eyebrow">The moat</div>
+  <h2>We are not <span class="lo">choosing</span> to be cheap.<br>We are <span style="color:var(--teal)">able</span> to be.</h2>
+  <p class="sub">Cost leadership is only a moat if it comes out of the cost base rather than the margin. Ours comes from two independent levers on the same identity.</p>
+  <div class="body">
+    <div class="eq">
+      cost per unit of work &nbsp;=&nbsp; <span class="t1">GPU-seconds / unit</span> &nbsp;×&nbsp; <span class="t2">$ / GPU-second</span> &nbsp;÷&nbsp; <span class="t3">utilization</span>
+    </div>
+    <div class="eqlab">
+      <div class="l1">Lever A — software efficiency</div>
+      <div class="l2">Lever B — silicon arbitrage</div>
+      <div class="l3">operations</div>
+    </div>
+    <div class="cols c3" style="margin-top:26px">
+      <div class="card">
+        <div class="k">Lever A</div>
+        <h3>2–10× measured</h3>
+        <p>Batching, caching and scheduling techniques we built for world models and measured on both vendors. Our competitors publish none.</p>
+      </div>
+      <div class="card">
+        <div class="k">Lever B</div>
+        <h3>26–39% cheaper</h3>
+        <p>Cost per unit of work on AMD vs NVIDIA at current rental prices — our own measurement, already net of the performance gap.</p>
+      </div>
+      <div class="card dark">
+        <div class="k">Why they compound</div>
+        <h3>Neither depends on the other</h3>
+        <p>Lever A works on both vendors. Lever B works under any stack. That independence is what makes the cost position robust rather than a single bet.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>05</span></div>
+</section>
+
+<!-- 6 LEVER A -->
+<section class="slide">
+  <div class="eyebrow">Lever A · fewer GPU-seconds per unit of work</div>
+  <h2>Six techniques. All measured on both vendors.</h2>
+  <p class="sub">Every number here is wall-clock, from a scripted harness, with the raw result line archived in-repo and its caveat stated in the report.</p>
+  <div class="body">
+    <table class="tight">
+      <thead><tr><th>Technique</th><th>Workload</th><th class="n">Measured win</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>Parallel sampling · token-VLA decode</td><td class="n"><b>5.3 – 9.9×</b></td><td><span class="tag m">Measured · both vendors · exact parity</span></td></tr>
+        <tr><td><b>Topology-gated adaptive caching</b></td><td>Video / image diffusion</td><td class="n"><b>3.2 – 3.8×</b></td><td><span class="tag m">Measured · reproduced across months</span></td></tr>
+        <tr><td><b>Similarity-scheduled denoise caching</b></td><td>Policy diffusion</td><td class="n"><b>3.19×</b></td><td><span class="tag m">Measured · beats every static schedule</span></td></tr>
+        <tr><td><b>State-resident session packing</b></td><td>Long-lived stateful sessions</td><td class="n"><b>6× density</b></td><td><span class="tag m">Measured · H100 OOM confirmed empirically</span></td></tr>
+        <tr><td><b>Portable config-level levers</b></td><td>Policy models</td><td class="n"><b>2.0×</b></td><td><span class="tag m">Measured · zero CUDA-locked tooling</span></td></tr>
+        <tr><td><b>Growing-window latent / KV reuse</b></td><td>Closed-loop rollouts</td><td class="n">exact to 3.8e-4</td><td><span class="tag m">GPU-verified · both vendors</span></td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>What we do not claim.</b> PagedAttention, continuous batching, speculative decoding, prefix caching and FP8 are table stakes — we ride vLLM/SGLang for them, like everyone. We volunteer that rather than let diligence discover it.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>06</span></div>
+</section>
+
+<!-- 7 THE TRANSFER INSIGHT -->
+<section class="slide stmt">
+  <div class="q">We optimized the 2026 agentic workload<br>a year early — because <em>robotics forced us to.</em></div>
+  <div class="attrib">Slide 08 shows why the primitives are the same</div>
+</section>
+
+<!-- 8 TRANSFER DETAIL -->
+<section class="slide">
+  <div class="eyebrow">Why the world-model year was not a detour</div>
+  <h2>The same three primitives, two different markets.</h2>
+  <p class="sub">This is the load-bearing argument of the whole company: our robotics serving work is not a story we tell, it is where the efficiency levers came from.</p>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:26%">Primitive</th><th style="width:29%">What we built it for</th><th style="width:29%">Why it transfers</th><th style="width:16%">Evidence</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>A robot planner decoding N candidate action sequences that share a vision+prompt prefix and diverge over 7 tokens</td><td>That <b>is</b> best-of-N, self-consistency, and agentic tree search: long shared prefix, short divergent tails, N of them, under a deadline</td><td><span class="tag m">5.3–9.9× measured on VLA</span> <span class="tag a">LLM transfer: gated</span></td></tr>
+        <tr><td><b>State-resident sessions</b></td><td>Robot world-state carried across control steps; density is the capacity unit</td><td>A long-context agent session with a large KV cache is the same resource problem — and per-token pricing structurally hides it</td><td><span class="tag m">6× density measured</span></td></tr>
+        <tr><td><b>Deadline-aware scheduling</b></td><td>A control answer is worth nothing after the deadline passes</td><td>Interactive agents, voice and real-time multi-modal have exactly this property; the industry expresses it as a crude p99 target</td><td><span class="tag v">Built · least proven on LLM</span></td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>The honest half.</b> On vanilla single-turn chat completions we have no efficiency advantage — our LLM path today is a proxy in front of vLLM/SGLang, and there our only lever is silicon. We do not fight Fireworks at the head of the distribution. We win the shapes where these primitives bite.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>08</span></div>
+</section>
+
+<!-- 9 LEVER B -->
+<section class="slide">
+  <div class="eyebrow">Lever B · cheaper GPU-seconds</div>
+  <h2>We can run production inference on silicon<br>nobody else in this market supports.</h2>
+  <div class="body">
+    <div class="cols c2" style="grid-template-columns:1.15fr 1fr">
+      <div>
+        <table class="tight">
+          <thead><tr><th>H100 · $ per GPU-hour</th><th class="n">Rate</th><th class="n">× cost floor</th></tr></thead>
+          <tbody>
+            <tr><td>Cost to serve @ 70% utilization</td><td class="n">$1.45</td><td class="n">1.0×</td></tr>
+            <tr><td>Budget neocloud on-demand</td><td class="n">$1.35–2.45</td><td class="n">~1.7×</td></tr>
+            <tr><td>Modal (serverless)</td><td class="n">$3.95</td><td class="n">2.7×</td></tr>
+            <tr><td>Fireworks (dedicated)</td><td class="n">$6.00</td><td class="n">4.1×</td></tr>
+            <tr><td>Baseten (dedicated)</td><td class="n">$6.50</td><td class="n">4.5×</td></tr>
+            <tr><td>Hyperscaler on-demand</td><td class="n">$6.88–12.29</td><td class="n">4.7–8.5×</td></tr>
+            <tr class="hl"><td><b>AMD MI300X — 192 GB</b></td><td class="n"><b>$1.99–3.00</b></td><td class="n"><b>1.4–2.1×</b></td></tr>
+          </tbody>
+        </table>
+        <div class="note">Public rate cards, July 2026. <b>Read this as a business plan:</b> the platform layer charges 1.6–2.7× the capacity underneath it, and none of them price AMD.</div>
+      </div>
+      <div>
+        <div class="card teal" style="margin-bottom:16px">
+          <div class="k">The technique that makes arbitrage sellable</div>
+          <h3>Cross-vendor parity gating</h3>
+          <p>OpenVLA-7B reproduces its own reference implementation to <b>0.0e+00 maximum error — bit-identical — on both H100 and MI300X.</b> "AMD is 30% cheaper" is a procurement argument. "AMD is 30% cheaper and here is the parity gate on your model" is a product.</p>
+        </div>
+        <div class="card">
+          <div class="k">Why it isn't trivially copied</div>
+          <p>A year of production ROCm work across six models and three serving regimes — first published Cosmos benchmark on any AMD GPU — plus a ledger of the traps that cost us months. <b>Durability estimate: 12–24 months.</b> The plan is to be entrenched before it closes.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>09</span></div>
+</section>
+
+<!-- 10 UNIT ECONOMICS -->
+<section class="slide">
+  <div class="eyebrow">Unit economics</div>
+  <h2>What the two levers are actually worth.</h2>
+  <p class="sub">Nobody publishes a cost stack, so we reverse-derive the incumbent's from public prices. Assumptions are tagged, and the one that carries the plan is gated.</p>
+  <div class="body">
+    <div class="cols c2">
+      <div>
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin-bottom:10px">Vanilla LLM tokens — Lever B only</div>
+        <table class="tight">
+          <thead><tr><th></th><th class="n">Incumbent</th><th class="n">Repercep</th></tr></thead>
+          <tbody>
+            <tr><td>Capacity cost/hr @ 70%</td><td class="n">$3.50</td><td class="n">$3.14</td></tr>
+            <tr><td>Price per MTok</td><td class="n">$0.90</td><td class="n">$0.675</td></tr>
+            <tr><td>Revenue/hr</td><td class="n">$6.48</td><td class="n">$4.86</td></tr>
+            <tr class="hl"><td><b>Gross margin</b></td><td class="n"><b>46%</b></td><td class="n"><b>35%</b></td></tr>
+          </tbody>
+        </table>
+        <div class="note">25% under, at a margin 11 points thinner. <b>Real but modest</b> — it wins switches, it does not win a war. Which is exactly why we cap the vanilla-LLM discount there and don't rest the plan on it.</div>
+      </div>
+      <div>
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:10px">Agentic / parallel sampling — Levers A + B</div>
+        <table class="tight">
+          <thead><tr><th></th><th class="n">Incumbent</th><th class="n">Repercep</th></tr></thead>
+          <tbody>
+            <tr><td>Capacity cost/hr @ 70%</td><td class="n">$3.50</td><td class="n">$3.14</td></tr>
+            <tr><td>Effective work throughput</td><td class="n">1×</td><td class="n">3×</td></tr>
+            <tr><td>Revenue/hr</td><td class="n">$6.48</td><td class="n">$9.72</td></tr>
+            <tr class="hl"><td><b>Gross margin</b></td><td class="n"><b>46%</b></td><td class="n"><b>68%</b></td></tr>
+          </tbody>
+        </table>
+        <div class="note"><b>Half the price, at 22 points better margin.</b> The 3× is deliberately conservative against the 5.3–9.9× we measured on VLA — <span class="tag a">gated</span> because it is transferred from a VLA measurement, not yet measured on LLM decode. If it returns &lt;1.5×, this table is deleted and we compete on breadth and silicon alone.</div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>10</span></div>
+</section>
+
+<!-- 11 PROOF -->
+<section class="slide">
+  <div class="eyebrow">Proof · what already exists</div>
+  <h2>A working runtime, not a plan for one.</h2>
+  <p class="sub">Six models, three serving regimes, four silicon targets — all on one unmodified engine, with a published methodology and disclosed negative results.</p>
+  <div class="body">
+    <div class="cols c4" style="margin-bottom:20px">
+      <div class="card stat"><div class="n">6</div><div class="d">models ported and benchmarked: Cosmos, Wan, V-JEPA 2-AC, LingBot-VA, DreamZero, OpenVLA</div></div>
+      <div class="card stat"><div class="n">3</div><div class="d">serving regimes: energy-based control, policy-driven control, generation</div></div>
+      <div class="card stat"><div class="n">4</div><div class="d">silicon targets verified: MI300X, H100, Ada, Xeon CPU/AMX</div></div>
+      <div class="card stat teal"><div class="n">1</div><div class="d">unmodified engine across every row above — the precondition for arbitrage</div></div>
+    </div>
+    <div class="cols c2">
+      <div class="card">
+        <div class="k">The rarest asset in this category</div>
+        <h3>We publish what doesn't work</h3>
+        <p>Two GPU-verified negative findings in one ADR. A disclosed distribution-shift caveat on our own best latency lever. A public note that a model's own published latency number wasn't full compute. In a market where everyone benchmarks and nobody discloses, this converts directly into design-partner trust.</p>
+      </div>
+      <div class="card">
+        <div class="k">Benchmark leadership, already banked</div>
+        <h3>Numbers nobody else has</h3>
+        <p>First publicly reported Cosmos benchmark on any AMD GPU. The only cross-vendor closed-loop serving leaderboard we can find — planning-decisions/sec, step latency under state carryover, resident sessions/GPU. This is our marketing channel and it costs us nothing.</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>11</span></div>
+</section>
+
+<!-- 12 HYBRID / LINK -->
+<section class="slide">
+  <div class="eyebrow">Repercep Link · 2027</div>
+  <h2>Physical AI is a hybrid workload.<br>Nobody sells the seam.</h2>
+  <p class="sub">A robot cannot put its reflexes on the network, and it cannot fit long-horizon reasoning on its own processor. We sell the split — and we do not build edge silicon.</p>
+  <div class="body">
+    <div class="flow">
+      <div class="node edge">
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin-bottom:10px">Partner's edge processor</div>
+        <h3 style="font-size:19px;font-weight:800;margin:0 0 8px">The tight loop</h3>
+        <p style="font-family:var(--serif);font-size:13.5px;line-height:1.48;color:var(--ink-2);margin:0">Reflexes, low-level control, the policy chunk that must never depend on a network. Jetson Thor, Ryzen AI, Dragonwing — the partner's choice, not ours.</p>
+      </div>
+      <div class="link">
+        <div class="cap">Repercep Link</div>
+        <div class="ln"><span class="ar l"></span><span class="rail"></span><span class="ar r"></span></div>
+        <div style="font-family:var(--serif);font-size:11.5px;color:var(--ink-2);text-align:center;margin-top:11px;line-height:1.4">what runs where,<br>under what deadline,<br>with what fallback</div>
+      </div>
+      <div class="node cloud">
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:10px">Repercep Cloud</div>
+        <h3 style="font-size:19px;font-weight:800;margin:0 0 8px">The heavy half</h3>
+        <p style="font-family:var(--serif);font-size:13.5px;line-height:1.48;color:var(--ink-2);margin:0">Long-horizon world-model rollouts, multi-candidate planning, large VLM reasoning, fleet-wide learning and replay. Latency-tolerant, compute-hungry, and ours.</p>
+      </div>
+    </div>
+    <div class="cols c3" style="margin-top:24px">
+      <div class="card"><div class="k">Requirement, not feature</div><p>Graceful degradation to edge-only when the link degrades. A robot that stops when the network hiccups is not a product.</p></div>
+      <div class="card"><div class="k">Go to market</div><p>Through robotics and automation companies — they own the edge silicon choice and the end customer. We are the cloud half of their stack.</p></div>
+      <div class="card"><div class="k">Honest status</div><p><span class="tag a">Design, not code</span> This is a 2027 product on a partner-gated timeline. It is the option the rest of the plan pays for.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>12</span></div>
+</section>
+
+<!-- 13 MARKET SEGMENTS -->
+<section class="slide">
+  <div class="eyebrow">Who buys</div>
+  <h2>Five segments. One is volume, one is the wedge.</h2>
+  <div class="body">
+    <table class="tight">
+      <thead><tr><th style="width:19%">Segment</th><th style="width:25%">What they buy</th><th style="width:33%">Why us</th><th class="n">Cycle</th><th class="n">Yr-1 deal</th></tr></thead>
+      <tbody>
+        <tr><td><b>AI-native startups</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">VOLUME</span></td><td>Serverless tokens, then dedicated</td><td>Price, at parity developer experience. Self-serve, no procurement</td><td class="n">days</td><td class="n">$1–20k/mo</td></tr>
+        <tr class="hl"><td><b>Production CV / industrial / media</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--teal)">THE WEDGE</span></td><td>Per-call serving of detectors, encoders, diffusion, VLM pipelines</td><td><b>Nobody prices this per call.</b> They rent GPU-hours and pay for idle</td><td class="n">4–10 wks</td><td class="n">$5–50k/mo</td></tr>
+        <tr><td><b>Robotics / AV / embodied</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">THE FUTURE</span></td><td>VLA and world-model serving; later Link</td><td>Only published cross-vendor closed-loop numbers, on silicon they can get</td><td class="n">2–5 mo</td><td class="n">$25–100k</td></tr>
+        <tr><td><b>Regulated / sovereign / defense</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">MARGIN</span></td><td>Runtime license, BYOC, on-prem</td><td>Hosted-only incumbents structurally cannot serve them</td><td class="n">3–9 mo</td><td class="n">$50–250k/yr</td></tr>
+        <tr><td><b>GPU neoclouds</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">CHANNEL</span></td><td>Co-sell; we pull workloads onto idle capacity</td><td>We make their AMD inventory sellable for inference</td><td class="n">1–3 mo</td><td class="n">rev-share</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>The asymmetry that matters.</b> Neoclouds with AMD fleets have a demand problem, not a supply problem — and we are one of very few teams who can move production inference onto idle MI300X. The channel and the cost moat are the same relationship.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>13</span></div>
+</section>
+
+<!-- 14 COMPETITION -->
+<section class="slide">
+  <div class="eyebrow">Competition</div>
+  <h2>We lose one row decisively.<br>The plan is to never compete there.</h2>
+  <div class="body">
+    <table class="tight">
+      <thead><tr><th style="width:27%"></th><th class="n">Fireworks</th><th class="n">Baseten</th><th class="n">Together</th><th class="n">Modal</th><th class="n" style="color:var(--teal)">Repercep</th></tr></thead>
+      <tbody>
+        <tr><td>LLM serving</td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●</span><span class="dots e">●</span></td><td class="n"><span class="dots f">●●</span><span class="dots e">●</span></td></tr>
+        <tr class="hl"><td><b>Non-LLM model classes</b></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●</span><span class="dots e">●●</span></td><td class="n"><span class="dots f">●</span><span class="dots e">●●</span></td><td class="n"><span class="dots f">●</span><span class="dots e">●●</span></td><td class="n"><span class="dots f">●●●</span></td></tr>
+        <tr class="hl"><td><b>World models / VLA</b></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●●●</span></td></tr>
+        <tr class="hl"><td><b>AMD / alt-silicon</b></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●●●</span></td></tr>
+        <tr><td>Self-host / BYOC</td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●</span><span class="dots e">●●</span></td><td class="n"><span class="dots f">●</span><span class="dots e">●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●●●</span></td></tr>
+        <tr><td>Edge↔cloud hybrid</td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots e">●●●</span></td><td class="n"><span class="dots f">●●</span><span class="dots e">●</span></td></tr>
+        <tr><td><b>Scale, brand, capital</b></td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●●</span></td><td class="n"><span class="dots f">●●</span><span class="dots e">●</span></td><td class="n"><span class="dots e">●●●</span></td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>No brand-spend war, no fight for plain chat tokens.</b> The incumbents raised $800M–$1.5B rounds; we will not out-market them. We compete on published, reproducible numbers — the one asset money cannot instantly buy, and the one we already have.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>14</span></div>
+</section>
+
+<!-- 15 GTM -->
+<section class="slide">
+  <div class="eyebrow">Go to market</div>
+  <h2>Benchmark-led, developer-adopted, channel-amplified.</h2>
+  <div class="body">
+    <div class="cols c3">
+      <div class="card"><div class="k">Motion 1 · Funnel</div><h3>Self-serve</h3><p>Public rate card, free credits, OpenAI-compatible API, model catalog. No sales touch. Nobody adopts an inference platform by reading about its compiler — they adopt because the model they want is one call away.</p></div>
+      <div class="card teal"><div class="k">Motion 2 · Our unfair advantage</div><h3>Benchmark-led content</h3><p>Publish what nobody else does: cost per unit of work across model classes and vendors, with methodology and disclosed negatives. Every report is lead-gen, and it is already how we work.</p></div>
+      <div class="card"><div class="k">Motion 3 · Leverage</div><h3>AMD ecosystem</h3><p>We hold the only published world-model serving numbers on Instinct. AMD's physical-AI push has a training story and no serving story. ROCm blog, Dev Cloud, ISV program.</p></div>
+    </div>
+    <div class="cols c3" style="margin-top:20px">
+      <div class="card"><div class="k">Motion 4 · Capacity + demand</div><h3>Neocloud co-sell</h3><p>Preinstalled image plus a co-published benchmark. They get demand for idle AMD inventory; we get capacity economics. Both sides are motivated.</p></div>
+      <div class="card"><div class="k">Motion 5 · Depth</div><h3>Design partners</h3><p>Two to three paid pilots, $25–100k, 4–8 weeks: we port and serve your model on your silicon under published metrics; you keep the numbers and the runtime.</p></div>
+      <div class="card"><div class="k">Motion 6 · 2027</div><h3>Robotics partnerships</h3><p>Through the edge ecosystem, not direct to end users. They own the silicon choice and the customer; we are the cloud half.</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>15</span></div>
+</section>
+
+<!-- 16 ROADMAP -->
+<section class="slide">
+  <div class="eyebrow">Plan of record</div>
+  <h2>Eighteen months, four phases, hard exit criteria.</h2>
+  <div class="body">
+    <div class="tl">
+      <div class="ph on">
+        <div class="w">Now → Oct 2026</div>
+        <h4>P0 · Foundation</h4>
+        <p>CI, metering, auth, quotas, billing, model catalog, OpenAI-compatible API. Harden the LLM gateway to multi-tenant. Run the Lever-A gate experiment. Contract MI300X capacity.</p>
+        <div class="goal">EXIT → private beta on real traffic; capacity contracted; gate answered</div>
+      </div>
+      <div class="ph on">
+        <div class="w">Oct 2026 → Jan 2027</div>
+        <h4>P1 · Run-rate</h4>
+        <p>Public serverless and dedicated. 20–40 open models. Self-serve billing. First benchmark report under the new positioning.</p>
+        <div class="goal">EXIT → 10 paying customers · $25–50k MRR</div>
+      </div>
+      <div class="ph">
+        <div class="w">Jan → Jun 2027</div>
+        <h4>P2 · The tail</h4>
+        <p>The non-LLM catalog priced per call: vision, embeddings, diffusion, VLM pipelines. Two design-partner pilots. First Runtime license.</p>
+        <div class="goal">EXIT → $150–250k MRR · ≥5 paying tail customers</div>
+      </div>
+      <div class="ph">
+        <div class="w">Jun → Dec 2027</div>
+        <h4>P3 · Physical AI</h4>
+        <p>Repercep Link with two to three robotics partners. World-model serving productized on the same cloud.</p>
+        <div class="goal">EXIT → $400k+ MRR · Series A</div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:20px"><b>Revenue targets are deliberately modest</b> against the comparables' curves — they are what a seed-stage team should be held to, not what makes a deck look good.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>16</span></div>
+</section>
+
+<!-- 17 RISKS -->
+<section class="slide">
+  <div class="eyebrow">Risks · stated plainly</div>
+  <h2>What would make this fail.</h2>
+  <p class="sub">Every risk below has a named kill signal. We would rather be held to these than have them found.</p>
+  <div class="body">
+    <table class="tight">
+      <thead><tr><th style="width:27%">Risk</th><th class="n" style="width:9%">Severity</th><th style="width:32%">Mitigation</th><th style="width:32%">Kill signal</th></tr></thead>
+      <tbody>
+        <tr><td><b>AMD capacity sourcing fails</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">it is half the moat</span></td><td class="n"><span class="tag r">High</span></td><td>Multi-provider from day one; committed contracts, not spot</td><td>Can't secure MI300X &lt;$2.20/hr by Nov 2026 → replan on NVIDIA, Lever A only</td></tr>
+        <tr><td><b>Lever A doesn't transfer to LLMs</b></td><td class="n"><span class="tag r">High</span></td><td>Run the experiment before the deck ships, not after</td><td>&lt;1.5× over stock vLLM on best-of-N → drop the LLM efficiency claim entirely</td></tr>
+        <tr><td><b>A major platform ships ROCm</b></td><td class="n"><span class="tag a">Med-high</span></td><td>Speed; be entrenched first; go deeper into MI355X</td><td>Watch competitor job posts and release notes</td></tr>
+        <tr><td><b>The tail won't pay per call</b></td><td class="n"><span class="tag a">Medium</span></td><td>P2 is explicitly the test of this</td><td>&lt;5 paying tail customers by Jun 2027 → we are an AMD-native LLM cloud, a smaller but real business</td></tr>
+        <tr><td><b>Utilization stays low</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">the quiet one</span></td><td class="n"><span class="tag a">Medium</span></td><td>Batch tier as trough-filler; dedicated as a floor; uncorrelated demand curves across model classes</td><td>&lt;50% sustained → every margin ~20 points thinner</td></tr>
+        <tr><td><b>Operating immaturity</b></td><td class="n"><span class="tag a">Medium</span></td><td>P0 gates GA — no paying multi-tenant traffic before CI, quotas and auth exist</td><td>Any billing or data incident</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>Company-level kill criterion:</b> no paying customers by March 2027 and the hosted thesis is wrong. The fallback — Runtime licensing plus benchmark reports — is a real, capital-light business the same assets support. That is why the downside is bounded.</div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>17</span></div>
+</section>
+
+<!-- 18 TEAM -->
+<section class="slide">
+  <div class="eyebrow">Team</div>
+  <h2>Why this team gets to make this claim.</h2>
+  <div class="body">
+    <div class="cols c2" style="margin-bottom:20px">
+      <div class="card">
+        <div class="k">What exists</div>
+        <h3>A shipped runtime on the hardest workloads in the market</h3>
+        <p>Six models, three serving regimes, four silicon targets, one unmodified engine — built and benchmarked before raising anything. The efficiency levers in this deck are outputs of that work, not projections.</p>
+      </div>
+      <div class="card">
+        <div class="k">What can't be shortcut</div>
+        <h3>A year of production ROCm</h3>
+        <p>Not "we support AMD" — six models running, cross-vendor parity gates, and a written ledger of every trap: autotune cost, version pinning, attention-backend dispatch. A funded competitor needs quarters to reach where we start.</p>
+      </div>
+    </div>
+    <div class="cols c2">
+      <div class="card teal">
+        <div class="k">The cultural asset</div>
+        <h3>We publish what doesn't work</h3>
+        <p>Two GPU-verified negative findings in a single ADR. A disclosed distribution shift in our own best latency lever. In a category where everyone benchmarks and nobody discloses, this is the fastest path to design-partner trust — and it is already how we operate.</p>
+      </div>
+      <div class="card">
+        <div class="k">Hiring with this round</div>
+        <p><b>6–8 engineers</b> — serving/platform, ROCm and kernels, one SRE early.<br><b>2 GTM</b> — DevRel first, because this is a benchmark-led, developer-adopted business.</p>
+        <div class="note" style="margin-top:12px">[Founder bios and named hires to be completed before circulation.]</div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>18</span></div>
+</section>
+
+<!-- 19 ASK -->
+<section class="slide">
+  <div class="eyebrow">The ask</div>
+  <h2>$8–10M seed · 28–30 months of runway.</h2>
+  <p class="sub">What it buys, in one sentence: it converts a runtime already proven on the hardest workloads in the market into a metered cloud with paying customers — while the AMD window is open.</p>
+  <div class="body">
+    <div class="cols c2" style="grid-template-columns:1.05fr 1fr">
+      <table class="tight">
+        <thead><tr><th>Use of funds</th><th class="n">Monthly</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>Engineering (6–8)</td><td class="n">~$165k</td><td>Serving/platform, ROCm, SRE</td></tr>
+          <tr><td>GTM (2)</td><td class="n">~$45k</td><td>DevRel-first</td></tr>
+          <tr><td>Compute &amp; capacity</td><td class="n">$50–80k</td><td>Also the commitments Lever B needs</td></tr>
+          <tr><td>G&amp;A, legal, tooling</td><td class="n">~$30k</td><td></td></tr>
+          <tr class="hl"><td><b>Total burn</b></td><td class="n"><b>~$300–320k</b></td><td><b>$9M ⇒ 28–30 months</b></td></tr>
+        </tbody>
+      </table>
+      <div>
+        <div class="card dark" style="margin-bottom:14px">
+          <div class="k">Why a seed and not bootstrapping</div>
+          <p>Capacity commitments and multi-tenant operations both need capital ahead of revenue. Neither is optional, and the AMD window is time-boxed at 12–24 months.</p>
+        </div>
+        <div class="card">
+          <div class="k">Milestones this round funds</div>
+          <ul class="pts" style="margin-top:4px">
+            <li><b>Private beta</b> on real traffic, Oct 2026</li>
+            <li><b>10 paying customers</b>, Jan 2027</li>
+            <li><b>$150–250k MRR</b> and the tail wedge proven, Jun 2027</li>
+            <li><b>Series A</b> at $400k+ MRR, Dec 2027</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>19</span></div>
+</section>
+
+<!-- 20 CLOSE -->
+<section class="slide stmt">
+  <div class="q">More customer-work out of each GPU-second.<br>On GPU-seconds that cost less.<br><em>And we can prove the outputs didn't change.</em></div>
+  <div class="attrib">hello@repercep.ai &nbsp;·&nbsp; repercep.ai &nbsp;·&nbsp; confidential</div>
+</section>
+
+</body>
+</html>
