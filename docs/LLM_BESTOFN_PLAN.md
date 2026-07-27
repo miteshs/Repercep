@@ -215,7 +215,71 @@ Additional binding conditions, regardless of L:
   here — this plan tests the simpler claim first.
 - **Deadline-aware admission**, the third primitive in `PIVOT` §3.3. Untested and stays
   labelled as such.
-- **SGLang**, whose RadixAttention may close R1 → R2 more aggressively than vLLM's APC.
-  If the lever survives on vLLM, SGLang is the next adversarial test, not a footnote.
+- ~~**SGLang**~~ — **now in scope, pre-registered in §9 below.** It became the single most
+  important open test once the vLLM result showed the lever comes from a *cache-timing
+  race* that RadixAttention is specifically designed to win.
 - **Any claim about model quality.** This is a serving-throughput experiment. The
   candidate *scorer* remains, as in the VLA case, a modeling choice we do not ship.
+
+---
+
+## 9. The SGLang test — pre-registered 2026-07-27, before measuring
+
+Written before any SGLang number exists, same discipline as §5. **This test can kill the
+commercial claim outright, and the rule below says so in advance.**
+
+### 9.1 Why this is the test that matters
+
+The vLLM result (`docs/LLM_BESTOFN_RESULT.md` §4) found that the lever does **not** come
+from prefill arithmetic. It comes from a **cache-timing race**: N prefix-sharing requests
+issued simultaneously all miss the prefix cache together, because none has finished
+prefilling to populate it. `n=N` sidesteps the race by sharing the prefill structurally
+inside one request.
+
+**RadixAttention is designed to win exactly that race.** SGLang maintains a radix tree of
+cached prefixes and can detect and share a common prefix *across requests in the same
+batch*, rather than relying on one request finishing before another can hit the cache. If
+that works as designed, SGLang's R1 should approach its R2 and our lever largely
+disappears against that engine.
+
+So this is not a footnote. It is the adversarial case.
+
+### 9.2 The comparison that decides it
+
+Same harness, same model, same shapes, same gate point. Two numbers matter, and the
+second one matters more:
+
+1. **`L_sglang = R1/R2` measured on SGLang.** Does fusing still buy anything on an engine
+   built to handle fan-out?
+2. **`SGLang R1` vs `vLLM R2` in absolute wall-clock.** *This is the real commercial
+   question.* If a customer's plain fan-out on SGLang is already as fast as our fused
+   `n=N` on vLLM, then **the honest advice is "switch engines," not "buy our fusing"** —
+   and we must say so rather than sell a lever that a free config change matches.
+
+### 9.3 Binding decision rule
+
+| Outcome | Consequence |
+|---|---|
+| **`L_sglang ≥ 1.5`** | The gap is a property of simultaneous fan-out, not of vLLM. **Claim strengthens** — it survives an engine purpose-built to close it. Report both engines |
+| **`1.2 ≤ L_sglang < 1.5`** | Real but engine-dependent. Keep the claim, scope it per engine, and quote the *weaker* of the two in any economics table |
+| **`L_sglang < 1.2`** | **RadixAttention closes it.** The lever is a vLLM artifact. Drop "candidate fusing" as a differentiator, rebuild `BUSINESS_PLAN` §6.3 on **silicon alone**, and say plainly that on SGLang the right answer is to use SGLang |
+| **`SGLang R1` ≤ `vLLM R2`** (regardless of `L_sglang`) | Same as above, and stronger: our fused path on vLLM is not better than a stock alternative that already exists. **This overrides a favourable `L_sglang`** |
+
+That last row is the one that must not be quietly skipped. A large `L_sglang` measured
+against a slow SGLang baseline would be a ratio that flatters us while the absolute
+answer for the customer is "use the other engine."
+
+### 9.4 Controls
+
+Identical to §6, plus:
+
+- **Same GPU model, same weights, same prefix/decode/concurrency grid**, harness
+  unchanged and co-located.
+- **RadixAttention explicitly enabled** and its state recorded, the same way
+  `--enable-prefix-caching` was for vLLM. If SGLang's default changed, that is disclosed,
+  not assumed.
+- **Engine versions recorded.** A cross-engine comparison is only as good as its
+  disclosure, and this one will be read adversarially by anyone who prefers the other
+  engine.
+- Absolute cross-engine timings are only comparable because both run on the same pod
+  spec, same model and same harness — stated explicitly wherever they appear.
