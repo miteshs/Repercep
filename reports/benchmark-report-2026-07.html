@@ -161,8 +161,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
     <span class="confidential">Confidential — Prepared for Investor Diligence</span>
   </div>
 
-  <h1>Benchmark Report: World-Model<br>Serving Across NVIDIA and AMD Silicon</h1>
-  <p class="lede">Measured performance of the Repercep.AI runtime on H100 and MI300X across all three world-model regimes — energy-based control (V-JEPA 2-AC), policy-driven control (LingBot-VA, DreamZero), and generation (Cosmos, Wan) — with full methodology and disclosed caveats.</p>
+  <h1>Benchmark Report: Cost per Unit of Work<br>Across NVIDIA and AMD Silicon</h1>
+  <p class="lede">Measured performance and cost of the Repercep.AI runtime on H100 and MI300X across six models and three serving regimes — energy-based control (V-JEPA 2-AC), policy-driven control (LingBot-VA, DreamZero, OpenVLA), and generation (Cosmos, Wan) — with full methodology and disclosed caveats. The question this report answers is not which GPU is faster. It is <em>what a unit of useful work costs, and on which silicon</em>.</p>
 
   <div class="metabar">
     <div><b>Date</b> July 26, 2026</div>
@@ -172,7 +172,9 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
   </div>
 
   <h3 class="sub" style="margin-top:0">Executive summary</h3>
-  <p>The Repercep.AI runtime is a vendor-neutral serving layer for world models. It now serves <b>all three</b> workload regimes through one backend seam: two flavors of the <b>control regime</b> — energy-based, action-conditioned planning (V-JEPA 2-AC class, output is plans reached by search) and policy-driven serving, where the model generates its own actions directly — by diffusion (LingBot-VA, DreamZero) or by autoregressive token decode (OpenVLA-7B) — plus the <b>generation regime</b> (Cosmos, Wan video diffusion). Both control regimes are the strategic lead: closed-loop, state-carrying serving is a workload we believe nobody else publishes a leaderboard for, and this report now includes measured cross-vendor numbers spanning both control mechanisms and, within the policy-driven one, both diffusion and token-decode variants.</p>
+  <p>The Repercep.AI runtime is a vendor-neutral serving layer that runs every model class on one backend seam. This report covers the hardest of them — the workloads that decide whether a serving stack is real. It serves <b>all three</b> regimes through that seam: two flavors of the <b>control regime</b> — energy-based, action-conditioned planning (V-JEPA 2-AC class, output is plans reached by search) and policy-driven serving, where the model generates its own actions directly — by diffusion (LingBot-VA, DreamZero) or by autoregressive token decode (OpenVLA-7B) — plus the <b>generation regime</b> (Cosmos, Wan video diffusion). Closed-loop, state-carrying serving is a workload we believe nobody else publishes a leaderboard for, and this report includes measured cross-vendor numbers spanning both control mechanisms and, within the policy-driven one, both diffusion and token-decode variants.</p>
+
+  <p>The commercial reading of these results is a single identity: <b>cost per unit of work = GPU-seconds per unit &times; $ per GPU-second &divide; utilization</b>. Every measurement below moves one of those three terms, and §7 assembles them into what a unit of work actually costs on each vendor. The serving levers we measure here are not world-model-specific — §8 sets out which of them are structural properties of a workload <em>shape</em> rather than a model family, and are therefore expected to hold well beyond the models in this report.</p>
 
   <p>Six results matter most:</p>
 
@@ -374,9 +376,80 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
   <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
 </div>
 
-<!-- PAGE 6: Methodology (renumbered 7) -->
+<!-- PAGE: Cost economics -->
 <div class="page">
-  <h2 class="sect"><span class="num">7</span>Methodology and known limitations</h2>
+  <h2 class="sect"><span class="num">7</span>What a unit of work costs</h2>
+  <p>Latency tables answer "which is faster." A buyer needs "which is cheaper for the work I do." On large-memory silicon those questions frequently have different answers. The identity we price against:</p>
+  <p style="font-family:var(--mono);font-size:9.6pt;text-align:center;padding:11px 0 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:12px 0 16px">cost per unit of work &nbsp;=&nbsp; GPU-seconds per unit &nbsp;&times;&nbsp; $ per GPU-second &nbsp;&divide;&nbsp; utilization</p>
+
+  <p class="tablecap">Each measured lever in this report moves exactly one term</p>
+  <table>
+    <tr><th>Cost term</th><th>Levers measured in this report</th><th class="num">Measured effect</th></tr>
+    <tr><td>GPU-seconds per unit</td><td>Candidate batching on token-VLA decode (&sect;3) &middot; adaptive cache on video diffusion (&sect;4) &middot; dynamic DiT-cache schedule on policy diffusion (&sect;3) &middot; portable config levers on LingBot-VA (&sect;3)</td><td class="num">9.9&times; &middot; 3.8&times;<br>3.19&times; &middot; 2.0&times;</td></tr>
+    <tr><td>$ per GPU-second</td><td>MI300X vs H100 at current rental prices</td><td class="num">see below</td></tr>
+    <tr><td>Utilization</td><td>Resident sessions per GPU, DreamZero 16.5B (&sect;3)</td><td class="num">1 &rarr; 6</td></tr>
+  </table>
+
+  <p class="tablecap">Cost per unit of work at current cloud rental prices (external price inputs, July 2026) &mdash; 26&ndash;39% AMD advantage blended across all three regimes</p>
+  <table>
+    <tr><th>Workload</th><th class="num"><span class="chip nv">H100</span></th><th class="num"><span class="chip amd">MI300X</span></th><th class="num">AMD advantage</th></tr>
+    <tr><td>Cosmos reference video, adaptive-cache path</td><td class="num">$0.127</td><td class="num">$0.094</td><td class="num">26%</td></tr>
+    <tr><td>DreamZero, resident sessions per part</td><td class="num">1 / 80 GiB</td><td class="num">6 / 192 GiB</td><td class="num">structural</td></tr>
+  </table>
+
+  <div class="box finding">
+    <span class="lbl">Finding &mdash; the cost result does not track the latency result</span>
+    <p>MI300X is <i>slower</i> than H100 on several rows here and <i>cheaper per unit of work</i> anyway, via two independent mechanisms: the rental price is lower per hour, and the 192 GiB part holds more concurrent work, dividing the fixed cost per part across more units. <b>The second is invisible to any benchmark that measures one request at a time</b> &mdash; which is most of them, and is why resident sessions is a first-class metric here.</p>
+  </div>
+
+  <div class="box caveat">
+    <span class="lbl">Caveats &mdash; stated here, not in a footnote</span>
+    <p><b>The dollar figures are a snapshot; the ratio is the durable part.</b> Rental prices are external inputs computed from published on-demand rates at this report's date, not contracted capacity &mdash; recompute rather than quote them later. And these are costs per unit of work <i>performed</i>: converting to a served price needs a utilization assumption this report does not make (at 40% utilization the per-unit cost roughly doubles). The performance inputs underneath are ours, and are stable.</p>
+  </div>
+
+  <div class="pagefoot" style="margin-top:14px">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE: Workload-shape transfer -->
+<div class="page">
+  <h2 class="sect"><span class="num">8</span>Which of these levers are about a workload <i>shape</i>, not a model family</h2>
+  <p>Every model in this report is a world model or a robot policy. The obvious reading is that the results are specific to that family. For two of the three levers, that reading is wrong &mdash; the mechanism behind them is a property of the workload's <i>shape</i>, and the same shape appears in workloads that have nothing to do with robotics. This section states which is which, and how confident we are.</p>
+
+  <p class="tablecap">Mechanism, and where else the same shape occurs</p>
+  <table>
+    <tr><th>Lever</th><th>Why it works (mechanism, not model)</th><th>Where the same shape occurs</th><th>Confidence</th></tr>
+    <tr>
+      <td><b>Candidate batching</b><br>5.3&ndash;9.9&times;</td>
+      <td>Each candidate decode is only 7 tokens, so batch-of-one badly underuses the GPU; batching over the shared prompt+vision prefix recovers the idle capacity. The win grows with N.</td>
+      <td>Any long-shared-prefix / short-divergent-tail / N-candidates workload: best-of-N sampling, self-consistency, reranked tool-call proposals, agentic tree search.</td>
+      <td><b>Mechanism measured;<br>transfer untested</b></td>
+    </tr>
+    <tr>
+      <td><b>Resident session density</b><br>1 &rarr; 6</td>
+      <td>Per-session resident state is the binding constraint on concurrency, and concurrency is the denominator of per-session cost. Large-memory parts change the arithmetic, not the code.</td>
+      <td>Any long-lived stateful session with large resident state &mdash; including a long-context conversation holding a large KV cache.</td>
+      <td><b>Mechanism measured;<br>transfer untested</b></td>
+    </tr>
+    <tr>
+      <td><b>Adaptive / scheduled caching</b><br>3.2&ndash;3.8&times;</td>
+      <td>Exploits step-to-step redundancy in an iterative denoise loop, gated on the specific transformer's block topology.</td>
+      <td>Diffusion and flow-matching models generally. <i>Not</i> a general property &mdash; there is no denoise loop in an autoregressive decoder.</td>
+      <td><b>Family-specific<br>by construction</b></td>
+    </tr>
+  </table>
+
+  <div class="box caveat">
+    <span class="lbl">The honest limit of this section</span>
+    <p>Rows one and two describe a <i>mechanism</i> we measured and a <i>shape</i> we can identify elsewhere. They are not a measurement of the other workload. Specifically: production LLM engines already share some prefix work across parallel samples, so the delta against a well-configured stock engine will be smaller than the 5.3&ndash;9.9&times; measured here against a per-candidate loop. <b>Until that head-to-head is run and published, nothing in this section should be read as a claim about LLM serving performance.</b> It is stated as an expectation with a named mechanism, which is the most this data supports.</p>
+    <p>Row three is included precisely because it does <i>not</i> transfer. A section that found every result to be general would deserve less trust than one that finds two out of three.</p>
+  </div>
+
+  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+</div>
+
+<!-- PAGE 6: Methodology (renumbered 9) -->
+<div class="page">
+  <h2 class="sect"><span class="num">9</span>Methodology and known limitations</h2>
   <p>The full protocol is in <code>docs/METHODOLOGY.md</code> and <code>docs/CONTROL_LOOP_BENCH.md</code>, written deliberately for a skeptical reader. The short version: every headline is a wall-clock measurement from a scripted harness emitting a JSON result line (archived verbatim in the repo); model-load time is excluded from steady-state numbers, mirroring NVIDIA's disclosure convention; ROCm's first-run kernel-autotuning cost (~3&times; on a cold forward for generation-regime models, up to ~8&times; observed on DreamZero's first call) is measured, disclosed, and excluded via warm-up separation. State carryover is required for every closed-loop number: one session stays alive across all timed steps, matching how these models are actually served, not a fresh-session-per-call number that would structurally favor request/response framing.</p>
 
   <p>Limitations we track openly:</p>
@@ -386,6 +459,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
     <li><b>Policy-regime task-correctness is not independently validated.</b> LingBot-VA's CFG-reduction lever measurably shifts action-output distribution (&sect;3); DreamZero's numbers are not yet checked against the reference server on held-out evaluation data (&sect;3). OpenVLA's action-<i>decode</i> parity is exact (&sect;3), but its candidate <i>scorer</i> is a placeholder, so its 5&ndash;10&times; lever is a throughput result, not a policy-quality claim. These are latency/memory/capacity/throughput claims, not policy-correctness claims, until that work lands.</li>
     <li><b>The May MI300X generation-regime numbers were taken on a virtualized (VF) slice</b>; a bare-metal confirmation run is planned. DreamZero's MI300X row (&sect;3) was also taken on a virtualized slice (AMD Developer Cloud), as was OpenVLA's (a MI300X VF).</li>
     <li><b>"First publicly reported" claims</b> are claims about the state of public disclosure on the date made (we catalog exactly where we searched), not global novelty claims &mdash; and we commit to updating, not arguing, if prior art surfaces.</li>
+    <li><b>Cost figures depend on external rental prices</b> (&sect;7), which move independently of anything we measure, and assume a utilization we do not measure. The performance inputs are ours and are stable; the dollar outputs are a snapshot.</li>
+    <li><b>No LLM or general-model serving numbers appear in this report.</b> The transfer argument in &sect;8 is a mechanism-level expectation, not a measurement, and is labelled as such wherever it appears.</li>
   </ul>
 
   <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
@@ -393,8 +468,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 
 <!-- PAGE 7: Conclusion + sources (renumbered 8) -->
 <div class="page">
-  <h2 class="sect"><span class="num">8</span>What the numbers say, in one paragraph</h2>
-  <p>World models split into two control mechanisms and one generation regime, and this report now has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime, new this cycle, adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. OpenVLA-7B, a token-decoding VLA on the same seam, adds the regime's largest serving lever &mdash; 5&ndash;10&times; from candidate batching, on both vendors &mdash; and its only exact correctness gate (parity 0.0). The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, and task-correctness validation for the levers that trade latency for distributional shift. Measurement, not intuition, decides both next.</p>
+  <h2 class="sect"><span class="num">10</span>What the numbers say, in one paragraph</h2>
+  <p>World models split into two control mechanisms and one generation regime, and this report has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. OpenVLA-7B, a token-decoding VLA on the same seam, adds the largest serving lever in the report &mdash; 5&ndash;10&times; from candidate batching, on both vendors &mdash; and its only exact correctness gate (parity 0.0). The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. Assembled through the cost identity (&sect;7), those levers put MI300X 26&ndash;39% cheaper per unit of work despite losing several latency rows, because capacity per part is a cost term that single-request benchmarks cannot see. Two of the three levers rest on a workload <i>shape</i> rather than a model family (&sect;8), which is why we expect them to hold beyond the models measured here &mdash; an expectation with a named mechanism, not a measurement, and labelled that way throughout. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, task-correctness validation for the levers that trade latency for distributional shift, and the head-to-head that would convert &sect;8 from expectation into result. Measurement, not intuition, decides all three next.</p>
 
   <p style="margin-top:32px">Repercep.AI &mdash; Benchmark Report, July 2026</p>
 
