@@ -166,10 +166,21 @@ proposals, speculative fan-out. Long shared prefix, short divergent decodes, N o
 under a latency deadline. The 2026 agentic workload shape **is** the VLA candidate-decode
 shape. We optimized it first because robotics forced us to.
 
-**Status: measured on VLA, hypothesis on LLM.** The experiment that settles it is in
-`docs/INFERENCE_MOAT_TECHNIQUES.md` §T1 — benchmark best-of-N against stock vLLM
-`n>1` and against Fireworks/Together's published per-token rates. Until that runs we
-claim the VLA number and describe the LLM case as expected, not proven.
+**Status: measured on both — and the magnitudes differ sharply.** The experiment ran
+2026-07-27 (`docs/LLM_BESTOFN_RESULT.md`): against stock vLLM 0.26.0 with prefix caching
+on, the LLM lever is **1.5×** at the pre-registered operating point, ranging 1.04–2.5×
+with workload shape and rising to 2.07× at higher concurrency. **The direction of the
+transfer argument held; the VLA magnitude did not carry.** Anywhere this document or the
+deck previously implied the 5.3–9.9× VLA figure describes LLM serving, it was wrong, and
+the corrected number is 1.5×.
+
+What the measurement added that the argument did not anticipate: **prefix caching
+contributes almost nothing here.** Denying it changed results by <3%, because a
+simultaneous fan-out of N prefix-sharing requests all miss the cache together — none has
+prefilled yet to populate it. `n=N` shares the prefill *structurally inside one request*
+and cannot lose that race. The gap is therefore real, mechanistically explained, and
+**not closed by the caching every competitor already ships** — which is a better
+foundation for the claim than the transferred number ever was.
 
 ### 3.2 Primitive 2 — state-resident sessions
 
@@ -417,7 +428,7 @@ Stated plainly, because a deck that omits it fails diligence:
 | Risk | Severity | Mitigation / kill signal |
 |---|---|---|
 | **AMD capacity sourcing fails.** Not enough MI300X/MI355X at the prices Lever B assumes. | **High** — it is half the moat | Multi-provider from day one (Baseten's 18-provider posture). Kill signal: cannot secure committed MI300X at <$2.20/hr by 2026-11 → re-plan on NVIDIA and lean entirely on Lever A. |
-| **Lever A doesn't transfer to LLMs.** Best-of-N batching gives us nothing vLLM `n>1` doesn't. | **High** | Run the experiment *before* the deck goes out (§3.1). Kill signal: <1.5× over stock vLLM on best-of-N → drop the LLM efficiency claim, compete on breadth + silicon only. |
+| ~~**Lever A doesn't transfer to LLMs.**~~ **Resolved 2026-07-27: it transfers at 1.5×, not 3×.** | Was High | Measured (`LLM_BESTOFN_RESULT.md`). Residual risk is now (a) *shape* — short-prefix/long-decode traffic gets ~1.04× and the lever is worth nothing there, and (b) **SGLang**, whose RadixAttention may close the fan-out gap vLLM leaves open. That benchmark is the next test. |
 | **A major platform ships ROCm.** Lever B compresses to raw price delta. | Medium-high | Speed. Be the entrenched AMD-native platform first; deepen into MI355X. Watch competitor job posts. |
 | **The tail doesn't pay.** Non-LLM serving stays a Docker-and-a-GPU-hour business because customers don't want a per-call meter. | Medium | P2 is explicitly the test. Kill signal: <5 paying tail customers by 2027-06 → the company is an AMD-native LLM cloud, which is a smaller but real business. |
 | **Physical-AI demand stays 2028.** | Medium | This pivot is precisely the hedge — the run-rate does not depend on it. |

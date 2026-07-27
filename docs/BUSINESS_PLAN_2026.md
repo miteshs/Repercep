@@ -153,7 +153,7 @@ cost-to-serve floor around **$1.45/GPU-hr at 70% utilization** **[V]**.
 | Workload | Posture | Why |
 |---|---|---|
 | Vanilla LLM tokens (S1) | **10–25% under Fireworks/Baseten** | Silicon arbitrage only. Enough to win a switch, not enough to start a price war we'd lose |
-| Agentic / best-of-N / long-session LLM | **40–60% under**, at *better* margin | Lever A applies here — **gated on the §6.3 experiment** |
+| Agentic / best-of-N / long-session LLM | **25–35% under**, at *better* margin | Lever A applies here — **measured 1.5× at the gate point, revised down from the 40–60% the pre-measurement 3× assumption implied** (§6.3) |
 | Non-LLM tail (S2) | **Per-call pricing where the alternative is a rented GPU-hour** | Customers today pay for idle. Per-call at 60–70% margin still reads as a large saving to them |
 | Dedicated | **$3.50–4.50/hr H100-class, $2.75–3.50/hr MI300X-class** | Under Modal, well under Fireworks/Baseten |
 | Batch | 50% of serverless | Fills troughs |
@@ -193,28 +193,37 @@ gross margin 11 points thinner than the incumbent's.** That is a real but modest
 position — it wins switches, it does not win a war. It is why §5.2 caps the vanilla-LLM
 discount at 25% and why the plan does not rest on it.
 
-### 6.3 The same math where Lever A applies
+### 6.3 The same math where Lever A applies — **measured 2026-07-27**
 
-Take an agentic best-of-N workload and apply a **conservative 3×** efficiency multiplier
-— well below the 5.3–9.9× measured on token-VLA candidate decode **[M]**, because that
-number is measured on VLA, not LLM:
+The gate ran. **The 3× assumption did not survive; the claim did.** Measured on H100
+against stock vLLM 0.26.0 with prefix caching on, the best-of-N lever at the
+pre-registered operating point (16 candidates, 2k shared prefix, 32-token decodes,
+moderate concurrency) is **1.5× [M]**, not 3×. Full result and method:
+`docs/LLM_BESTOFN_RESULT.md`.
 
 | | Incumbent | Repercep |
 |---|---|---|
 | Capacity cost/hr @70% | $3.50 | $3.14 |
-| Effective work throughput | 1× | **3× [A, gated]** |
-| Price vs incumbent | — | **50% under** |
-| Revenue/hr | $6.48 | $9.72 |
-| **Gross margin** | 46% | **68%** |
+| Effective work throughput | 1× | **1.5× [M]** |
+| Price vs incumbent | — | **30% under** |
+| Revenue/hr | $6.48 | $6.80 |
+| **Gross margin** | 46% | **54%** |
 
-**Half the price at 22 points better margin.** This is the whole thesis in one table, and
-it lives or dies on one experiment.
+**30% under the incumbent at 8 points better margin.** That is a real and defensible
+position — it is simply not the "half price at 68% margin" the assumption implied.
 
-> **GATE.** The 3× multiplier is an assumption transferred from a VLA measurement. It is
-> the single most load-bearing unmeasured number in this plan. **Benchmark best-of-N /
-> parallel-sampling against stock vLLM `n>1` before this table is shown to any investor
-> or customer.** If it comes back <1.5×, delete this table, drop the LLM efficiency
-> claim, and compete on breadth + silicon only (`PIVOT` §9 kill signal).
+**The scope sentence must travel with the number.** The lever is strongly
+workload-shaped **[M]**: **1.04×** with short prefixes and long decodes, **1.5×** at the
+gate point, **2.5×** with long prefixes and short decodes, and it *grows* with
+concurrency (2.07× at 16 concurrent decisions). Quoting 2.5× without its shape is the
+same offence as quoting a strawman baseline.
+
+**What the measurement bought us beyond the number.** Prefix caching turned out to
+contribute almost nothing on this workload — denying it changed results by <3% — because
+a simultaneous fan-out of N prefix-sharing requests all miss the cache together, none
+having prefilled yet. `n=N` shares the prefill *structurally inside one request* and
+cannot lose that race. So the gap we sell into is real and mechanistically explained, and
+it is **not** closed by the caching every competitor already has.
 
 ### 6.4 Sensitivity — what breaks the plan
 
@@ -222,7 +231,7 @@ it lives or dies on one experiment.
 |---|---|---|---|
 | MI300X committed rate | $2.20/hr **[A]** | >$2.80/hr | Lever B gone; §6.2 margin → ~19% |
 | MI300X vs H100 token throughput | parity **[A]** | <0.75× | Lever B gone even at $2.20 |
-| Lever A on LLM | 3× **[A, gated]** | <1.5× | §6.3 deleted; company is an AMD-native LLM cloud |
+| Lever A on LLM | **1.5× [M], measured** | — | Resolved 2026-07-27. Residual risk is now *shape* risk: customers whose traffic is short-prefix/long-decode get ~1.04× and the lever is worth nothing to them |
 | Utilization | 70% **[A]** | <50% | All margins ~20 points thinner. **Most likely early failure mode** |
 | Tail willingness to pay per call | assumed **[A]** | customers insist on GPU-hours | S2 wedge collapses to commodity hosting |
 
@@ -340,8 +349,11 @@ business that the same assets support. That fallback is why the downside is boun
 
 ## 11. Open items before this plan is investor-ready
 
-1. **Run the §6.3 gate experiment.** Highest priority. It decides whether the best table
-   in the deck exists.
+1. ~~**Run the §6.3 gate experiment.**~~ **Done 2026-07-27** — measured 1.5×, table
+   rebuilt, price posture revised down (`docs/LLM_BESTOFN_RESULT.md`). The follow-on that
+   now matters most: **benchmark against SGLang**, whose RadixAttention may close the
+   simultaneous-fan-out gap vLLM's APC leaves open. If it does, the lever shrinks against
+   that engine and §6.3 moves again.
 2. **Confirm the partner list** in §7.2 — replace `[CONFIRM]` with real status.
 3. **Measure MI300X LLM throughput vs H100** — §6.2 assumes parity and has never been
    measured on our side. It is the second load-bearing assumption.

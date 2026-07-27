@@ -300,7 +300,7 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
     <table class="tight">
       <thead><tr><th>Technique</th><th>Workload</th><th class="n">Measured win</th><th>Status</th></tr></thead>
       <tbody>
-        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>Parallel sampling · token-VLA decode</td><td class="n"><b>5.3 – 9.9×</b></td><td><span class="tag m">Measured · both vendors · exact parity</span></td></tr>
+        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>Token-VLA decode<br>LLM parallel sampling</td><td class="n"><b>5.3 – 9.9×</b><br><b>1.5×</b></td><td><span class="tag m">Measured · both vendors · exact parity</span><br><span class="tag m">Measured vs stock vLLM · 1.04–2.5× by shape</span></td></tr>
         <tr><td><b>Topology-gated adaptive caching</b></td><td>Video / image diffusion</td><td class="n"><b>3.2 – 3.8×</b></td><td><span class="tag m">Measured · reproduced across months</span></td></tr>
         <tr><td><b>Similarity-scheduled denoise caching</b></td><td>Policy diffusion</td><td class="n"><b>3.19×</b></td><td><span class="tag m">Measured · beats every static schedule</span></td></tr>
         <tr><td><b>State-resident session packing</b></td><td>Long-lived stateful sessions</td><td class="n"><b>6× density</b></td><td><span class="tag m">Measured · H100 OOM confirmed empirically</span></td></tr>
@@ -328,12 +328,12 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
     <table>
       <thead><tr><th style="width:26%">Primitive</th><th style="width:29%">What we built it for</th><th style="width:29%">Why it transfers</th><th style="width:16%">Evidence</th></tr></thead>
       <tbody>
-        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>A robot planner decoding N candidate action sequences that share a vision+prompt prefix and diverge over 7 tokens</td><td>That <b>is</b> best-of-N, self-consistency, and agentic tree search: long shared prefix, short divergent tails, N of them, under a deadline</td><td><span class="tag m">5.3–9.9× measured on VLA</span> <span class="tag a">LLM transfer: gated</span></td></tr>
+        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>A robot planner decoding N candidate action sequences that share a vision+prompt prefix and diverge over 7 tokens</td><td>That <b>is</b> best-of-N, self-consistency, and agentic tree search: long shared prefix, short divergent tails, N of them, under a deadline</td><td><span class="tag m">5.3–9.9× measured on VLA</span> <span class="tag m">1.5× measured on LLM</span></td></tr>
         <tr><td><b>State-resident sessions</b></td><td>Robot world-state carried across control steps; density is the capacity unit</td><td>A long-context agent session with a large KV cache is the same resource problem — and per-token pricing structurally hides it</td><td><span class="tag m">6× density measured</span></td></tr>
         <tr><td><b>Deadline-aware scheduling</b></td><td>A control answer is worth nothing after the deadline passes</td><td>Interactive agents, voice and real-time multi-modal have exactly this property; the industry expresses it as a crude p99 target</td><td><span class="tag v">Built · least proven on LLM</span></td></tr>
       </tbody>
     </table>
-    <div class="note"><b>The honest half.</b> On vanilla single-turn chat completions we have no efficiency advantage — our LLM path today is a proxy in front of vLLM/SGLang, and there our only lever is silicon. We do not fight Fireworks at the head of the distribution. We win the shapes where these primitives bite.</div>
+    <div class="note"><b>The honest half.</b> We ran this rather than asserted it. The transfer holds in direction but <b>not in magnitude</b> — the LLM lever measures 1.5×, not the VLA figure. On vanilla single-turn chat we have no efficiency advantage at all; there our only lever is silicon. We do not fight Fireworks at the head of the distribution.</div>
   </div>
   <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>08</span></div>
 </section>
@@ -379,7 +379,7 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
 <section class="slide">
   <div class="eyebrow">Unit economics</div>
   <h2>What the two levers are actually worth.</h2>
-  <p class="sub">Nobody publishes a cost stack, so we reverse-derive the incumbent's from public prices. Assumptions are tagged, and the one that carries the plan is gated.</p>
+  <p class="sub">Nobody publishes a cost stack, so we reverse-derive the incumbent's from public prices. The one assumption that carried the plan is no longer an assumption — we measured it, and it came back lower than we'd assumed.</p>
   <div class="body">
     <div class="cols c2">
       <div>
@@ -396,17 +396,17 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
         <div class="note">25% under, at a margin 11 points thinner. <b>Real but modest</b> — it wins switches, it does not win a war. Which is exactly why we cap the vanilla-LLM discount there and don't rest the plan on it.</div>
       </div>
       <div>
-        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:10px">Agentic / parallel sampling — Levers A + B</div>
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:10px">Agentic / parallel sampling — Levers A + B <span class="tag m">measured 27 Jul</span></div>
         <table class="tight">
           <thead><tr><th></th><th class="n">Incumbent</th><th class="n">Repercep</th></tr></thead>
           <tbody>
             <tr><td>Capacity cost/hr @ 70%</td><td class="n">$3.50</td><td class="n">$3.14</td></tr>
-            <tr><td>Effective work throughput</td><td class="n">1×</td><td class="n">3×</td></tr>
-            <tr><td>Revenue/hr</td><td class="n">$6.48</td><td class="n">$9.72</td></tr>
-            <tr class="hl"><td><b>Gross margin</b></td><td class="n"><b>46%</b></td><td class="n"><b>68%</b></td></tr>
+            <tr><td>Effective work throughput</td><td class="n">1×</td><td class="n">1.5×</td></tr>
+            <tr><td>Revenue/hr</td><td class="n">$6.48</td><td class="n">$6.80</td></tr>
+            <tr class="hl"><td><b>Gross margin</b></td><td class="n"><b>46%</b></td><td class="n"><b>54%</b></td></tr>
           </tbody>
         </table>
-        <div class="note"><b>Half the price, at 22 points better margin.</b> The 3× is deliberately conservative against the 5.3–9.9× we measured on VLA — <span class="tag a">gated</span> because it is transferred from a VLA measurement, not yet measured on LLM decode. If it returns &lt;1.5×, this table is deleted and we compete on breadth and silicon alone.</div>
+        <div class="note"><b>30% under the incumbent at 8 points better margin.</b> We ran the experiment before circulating this deck. The 3× we had assumed did not survive — measured against stock vLLM with prefix caching on, the lever is <b>1.5×</b> at the operating point (1.04× short-prefix/long-decode, 2.5× long-prefix/short-decode, 2.07× at higher concurrency). The claim survived; the number changed.</div>
       </div>
     </div>
   </div>
@@ -580,7 +580,7 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
       <thead><tr><th style="width:27%">Risk</th><th class="n" style="width:9%">Severity</th><th style="width:32%">Mitigation</th><th style="width:32%">Kill signal</th></tr></thead>
       <tbody>
         <tr><td><b>AMD capacity sourcing fails</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">it is half the moat</span></td><td class="n"><span class="tag r">High</span></td><td>Multi-provider from day one; committed contracts, not spot</td><td>Can't secure MI300X &lt;$2.20/hr by Nov 2026 → replan on NVIDIA, Lever A only</td></tr>
-        <tr><td><b>Lever A doesn't transfer to LLMs</b></td><td class="n"><span class="tag r">High</span></td><td>Run the experiment before the deck ships, not after</td><td>&lt;1.5× over stock vLLM on best-of-N → drop the LLM efficiency claim entirely</td></tr>
+        <tr><td><b>Lever A doesn't transfer to LLMs</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--teal)">RESOLVED — MEASURED 1.5×</span></td><td class="n"><span class="tag m">Closed</span></td><td>Ran it before circulating this deck; rebuilt the economics at the real number</td><td>Residual: short-prefix/long-decode traffic gets ~1.04×. Next test is SGLang, which may close the gap vLLM leaves</td></tr>
         <tr><td><b>A major platform ships ROCm</b></td><td class="n"><span class="tag a">Med-high</span></td><td>Speed; be entrenched first; go deeper into MI355X</td><td>Watch competitor job posts and release notes</td></tr>
         <tr><td><b>The tail won't pay per call</b></td><td class="n"><span class="tag a">Medium</span></td><td>P2 is explicitly the test of this</td><td>&lt;5 paying tail customers by Jun 2027 → we are an AMD-native LLM cloud, a smaller but real business</td></tr>
         <tr><td><b>Utilization stays low</b><br><span style="font-family:var(--mono);font-size:9.5px;color:var(--ink-3)">the quiet one</span></td><td class="n"><span class="tag a">Medium</span></td><td>Batch tier as trough-filler; dedicated as a floor; uncorrelated demand curves across model classes</td><td>&lt;50% sustained → every margin ~20 points thinner</td></tr>

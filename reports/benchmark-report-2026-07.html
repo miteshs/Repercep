@@ -412,8 +412,8 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 
 <!-- PAGE: Workload-shape transfer -->
 <div class="page">
-  <h2 class="sect"><span class="num">8</span>Which of these levers are about a workload <i>shape</i>, not a model family</h2>
-  <p>Every model in this report is a world model or a robot policy. The obvious reading is that the results are specific to that family. For two of the three levers, that reading is wrong &mdash; the mechanism behind them is a property of the workload's <i>shape</i>, and the same shape appears in workloads that have nothing to do with robotics. This section states which is which, and how confident we are.</p>
+  <h2 class="sect"><span class="num">8</span><span>Which of these levers are about a workload <i>shape</i>, not a model family</span></h2>
+  <p>Every model in this report is a world model or a robot policy, so the obvious reading is that the results are family-specific. For two of the three levers that reading is wrong: the mechanism is a property of the workload's <i>shape</i>, which appears in workloads with nothing to do with robotics. This section states which is which.</p>
 
   <p class="tablecap">Mechanism, and where else the same shape occurs</p>
   <table>
@@ -422,29 +422,30 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
       <td><b>Candidate batching</b><br>5.3&ndash;9.9&times;</td>
       <td>Each candidate decode is only 7 tokens, so batch-of-one badly underuses the GPU; batching over the shared prompt+vision prefix recovers the idle capacity. The win grows with N.</td>
       <td>Any long-shared-prefix / short-divergent-tail / N-candidates workload: best-of-N sampling, self-consistency, reranked tool-call proposals, agentic tree search.</td>
-      <td><b>Mechanism measured;<br>transfer untested</b></td>
+      <td><b>Transfer measured<br>2026-07-27: 1.5&times;</b><br>(1.04&ndash;2.5&times; by shape)</td>
     </tr>
     <tr>
       <td><b>Resident session density</b><br>1 &rarr; 6</td>
-      <td>Per-session resident state is the binding constraint on concurrency, and concurrency is the denominator of per-session cost. Large-memory parts change the arithmetic, not the code.</td>
+      <td>Per-session resident state is the binding constraint on concurrency, and concurrency is the denominator of per-session cost.</td>
       <td>Any long-lived stateful session with large resident state &mdash; including a long-context conversation holding a large KV cache.</td>
       <td><b>Mechanism measured;<br>transfer untested</b></td>
     </tr>
     <tr>
       <td><b>Adaptive / scheduled caching</b><br>3.2&ndash;3.8&times;</td>
-      <td>Exploits step-to-step redundancy in an iterative denoise loop, gated on the specific transformer's block topology.</td>
-      <td>Diffusion and flow-matching models generally. <i>Not</i> a general property &mdash; there is no denoise loop in an autoregressive decoder.</td>
+      <td>Exploits step-to-step redundancy in an iterative denoise loop, gated on the transformer's block topology.</td>
+      <td>Diffusion and flow-matching models. <i>Not</i> general &mdash; there is no denoise loop in an autoregressive decoder.</td>
       <td><b>Family-specific<br>by construction</b></td>
     </tr>
   </table>
 
-  <div class="box caveat">
-    <span class="lbl">The honest limit of this section</span>
-    <p>Rows one and two describe a <i>mechanism</i> we measured and a <i>shape</i> we can identify elsewhere. They are not a measurement of the other workload. Specifically: production LLM engines already share some prefix work across parallel samples, so the delta against a well-configured stock engine will be smaller than the 5.3&ndash;9.9&times; measured here against a per-candidate loop. <b>Until that head-to-head is run and published, nothing in this section should be read as a claim about LLM serving performance.</b> It is stated as an expectation with a named mechanism, which is the most this data supports.</p>
-    <p>Row three is included precisely because it does <i>not</i> transfer. A section that found every result to be general would deserve less trust than one that finds two out of three.</p>
+  <div class="box finding">
+    <span class="lbl">Row 1 update &mdash; the transfer was measured, and it is much smaller</span>
+    <p>The head-to-head this section previously deferred has been run (H100, vLLM 0.26.0 with prefix caching on, Qwen2.5-7B-Instruct, client co-located). <b>The LLM lever is 1.5&times;</b> at a 2,048-token prefix with 32-token decodes at moderate concurrency &mdash; from <b>1.04&times;</b> (short prefix, long decode) to <b>2.5&times;</b> (long prefix, short decode), rising to 2.07&times; at 16 concurrent decisions. <b>The direction of the transfer argument held; the 5.3&ndash;9.9&times; magnitude did not carry, and any earlier reading implying it did was wrong.</b></p>
+    <p>An unanticipated result came with it: <b>prefix caching contributed almost nothing</b> &mdash; denying it moved results &lt;3% at every point. A simultaneous fan-out of prefix-sharing requests all miss the cache together, none having prefilled yet to populate it; <code>n=N</code> shares the prefill structurally inside one request and cannot lose that race. The gap is real and is <i>not</i> closed by the caching every production engine already ships.</p>
+    <p><b>Limits.</b> Row two remains a mechanism-level expectation, not a measurement; row three is included precisely because it does <i>not</i> transfer. The row-one number is against <b>vLLM only</b> &mdash; SGLang's RadixAttention may close the simultaneous-fan-out gap vLLM leaves open, which is open work that would move it.</p>
   </div>
 
-  <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
+  <div class="pagefoot" style="margin-top:14px">Repercep.AI &mdash; Benchmark Report, July 2026</div>
 </div>
 
 <!-- PAGE 6: Methodology (renumbered 9) -->
@@ -460,7 +461,7 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
     <li><b>The May MI300X generation-regime numbers were taken on a virtualized (VF) slice</b>; a bare-metal confirmation run is planned. DreamZero's MI300X row (&sect;3) was also taken on a virtualized slice (AMD Developer Cloud), as was OpenVLA's (a MI300X VF).</li>
     <li><b>"First publicly reported" claims</b> are claims about the state of public disclosure on the date made (we catalog exactly where we searched), not global novelty claims &mdash; and we commit to updating, not arguing, if prior art surfaces.</li>
     <li><b>Cost figures depend on external rental prices</b> (&sect;7), which move independently of anything we measure, and assume a utilization we do not measure. The performance inputs are ours and are stable; the dollar outputs are a snapshot.</li>
-    <li><b>No LLM or general-model serving numbers appear in this report.</b> The transfer argument in &sect;8 is a mechanism-level expectation, not a measurement, and is labelled as such wherever it appears.</li>
+    <li><b>The one LLM number in this report (&sect;8, 1.5&times;) was measured on a different box, model and engine</b> (H100 + vLLM 0.26.0 + Qwen2.5-7B-Instruct, 2026-07-27) and is not part of the cross-vendor matrix above. It is against vLLM only; SGLang is untested and may be harder. Full method: <code>docs/LLM_BESTOFN_RESULT.md</code>.</li>
   </ul>
 
   <div class="pagefoot">Repercep.AI &mdash; Benchmark Report, July 2026</div>
@@ -469,7 +470,7 @@ h2.sect,h3.sub{break-after:avoid;page-break-after:avoid}
 <!-- PAGE 7: Conclusion + sources (renumbered 8) -->
 <div class="page">
   <h2 class="sect"><span class="num">10</span>What the numbers say, in one paragraph</h2>
-  <p>World models split into two control mechanisms and one generation regime, and this report has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. OpenVLA-7B, a token-decoding VLA on the same seam, adds the largest serving lever in the report &mdash; 5&ndash;10&times; from candidate batching, on both vendors &mdash; and its only exact correctness gate (parity 0.0). The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. Assembled through the cost identity (&sect;7), those levers put MI300X 26&ndash;39% cheaper per unit of work despite losing several latency rows, because capacity per part is a cost term that single-request benchmarks cannot see. Two of the three levers rest on a workload <i>shape</i> rather than a model family (&sect;8), which is why we expect them to hold beyond the models measured here &mdash; an expectation with a named mechanism, not a measurement, and labelled that way throughout. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, task-correctness validation for the levers that trade latency for distributional shift, and the head-to-head that would convert &sect;8 from expectation into result. Measurement, not intuition, decides all three next.</p>
+  <p>World models split into two control mechanisms and one generation regime, and this report has measured, cross-vendor numbers for all three on the same unmodified engine code. The energy-MPC control regime is vendor-agnostic (7% silicon gap) and structurally under-served (a 55-second plan against a 100 ms budget) &mdash; the product roadmap, not a risk disclosure. The policy-driven control regime adds a second proof point that closed-loop serving is real and portable: LingBot-VA reaches a 2.0&times; latency win from config-only levers, and DreamZero shows the clearest capacity story measured yet &mdash; six resident sessions on MI300X against one on H100, on a 16.5B model neither vendor's stock serving path currently optimizes. OpenVLA-7B, a token-decoding VLA on the same seam, adds the largest serving lever in the report &mdash; 5&ndash;10&times; from candidate batching, on both vendors &mdash; and its only exact correctness gate (parity 0.0). The generation-regime results &mdash; 3.2&ndash;3.8&times; reproduced on both vendors &mdash; remain the proof that the runtime and its methodology are real. Assembled through the cost identity (&sect;7), those levers put MI300X 26&ndash;39% cheaper per unit of work despite losing several latency rows, because capacity per part is a cost term that single-request benchmarks cannot see. Two of the three levers rest on a workload <i>shape</i> rather than a model family (&sect;8), and the first of those has since been measured off the world-model stack entirely: the candidate-batching lever is worth <b>1.5&times;</b> on LLM parallel sampling against stock vLLM &mdash; far below its 5&ndash;10&times; on token-VLA decode, and stated here at its real size rather than its most flattering one. What is not yet done is stated as plainly as what is: DreamZero's parity against its own reference server, task-correctness validation for the levers that trade latency for distributional shift, and the head-to-head that would convert &sect;8 from expectation into result. Measurement, not intuition, decides all three next.</p>
 
   <p style="margin-top:32px">Repercep.AI &mdash; Benchmark Report, July 2026</p>
 

@@ -85,9 +85,25 @@ reranked tool-call proposals. Long shared prefix, short divergent tails, N of th
 a deadline. **The 2026 agentic workload has the same shape as the VLA workload we already
 optimized.**
 
-**Not measured [A]:** the transfer to LLM decode. Stock vLLM `n>1` already shares some
-prefix work, so the delta there will be smaller than 5–10×. **This is the gate in
-`BUSINESS_PLAN_2026.md` §6.3 and the single most important experiment we owe ourselves.**
+**Measured on LLM decode [M], 2026-07-27** — H100, vLLM 0.26.0, prefix caching on,
+Qwen2.5-7B-Instruct, client co-located (`docs/LLM_BESTOFN_RESULT.md`). The prediction that
+the LLM delta would be "smaller than 5–10×" was right, and by more than expected:
+
+| shared prefix ↓ / decode → | 8 tok | 32 tok | 200 tok |
+|---|---|---|---|
+| 256 | 1.35× | 1.24× | **1.04×** |
+| 2,048 | 1.74× | **1.49×** (gate point) | 1.12× |
+| 8,192 | **2.48×** | 2.30× | 1.33× |
+
+**Headline: 1.5× at the pre-registered operating point**, rising to 2.07× at 16
+concurrent decisions. Never quote the top of the range without its shape.
+
+**The more valuable finding:** prefix caching contributes **almost nothing** here —
+denying it moved results <3% at every point. A simultaneous fan-out of N prefix-sharing
+requests all miss the cache together, because none has prefilled yet to populate it. APC
+is a *temporal* optimization and simultaneous fan-out defeats it; `n=N` shares the
+prefill *structurally inside one request* and cannot lose that race. **So the gap we
+serve is not closed by the caching every competitor already ships.**
 
 **Also not claimed:** the candidate *scorer* is a modeling choice, not ours. SPCB is a
 throughput result, not a better policy.
@@ -216,7 +232,7 @@ measurable gate.
 
 | # | Technique | Cost term | Why now | Gate |
 |---|---|---|---|---|
-| **T2.1** | **SPCB on LLM decode** — best-of-N / agentic sampling vs stock vLLM `n>1` | GPU-s/unit | Decides whether `BUSINESS_PLAN` §6.3 exists | ≥1.5× over stock vLLM or the LLM efficiency claim is dropped |
+| ~~**T2.1**~~ | ~~SPCB on LLM decode~~ — **DONE 2026-07-27, 1.5× at the gate point** | — | — | Passed. Superseded by **T2.1b: benchmark against SGLang**, whose RadixAttention may close the simultaneous-fan-out gap vLLM's APC leaves open — now the highest-value open experiment |
 | **T2.2** | **Heterogeneous prefill/decode disaggregation** — compute-bound prefill on high-end parts, memory-bound decode on cheaper large-memory parts | $/GPU-s **and** GPU-s/unit | Published results show this wins for most practical workloads even over 25 GbE **[V]**; it is *the* technique that turns a mixed NVIDIA+AMD fleet from a compromise into an advantage — **prefill on H100, decode on MI300X** | Beat single-silicon cost-per-token on a real model |
 | **T2.3** | **KV cache quantization to 3–4 bit** | utilization (density) | 2026 results show ~6× KV memory reduction at negligible accuracy loss **[V]**. Compounds directly with T1.5 | Density gain at a stated quality bound |
 | **T2.4** | **Cost-aware multi-cloud routing** | $/GPU-s + utilization | Baseten runs 87 clusters across 18 providers **[V]** — routing to cheapest capable capacity is a first-class competitive weapon, not plumbing | Live price-aware placement across ≥3 providers |
@@ -268,8 +284,9 @@ vendor benchmarks and none disclose.
 
 Stated so it is never discovered instead of disclosed:
 
-- **No measured LLM performance advantage.** Today's LLM path is a proxy in front of
-  vLLM/SGLang. T2.1 is the experiment that would change this.
+- **The LLM advantage is 1.5×, not a multiple.** Measured 2026-07-27 (T1.1). On vanilla
+  single-turn chat we still have **no** efficiency advantage at all — only silicon. And
+  the 1.5× is against vLLM; SGLang is untested and may be harder.
 - **No CI.** `.github/workflows/` does not exist; `make lint` and `make typecheck`
   currently fail on `main` (`AUDIT` §1.2). This is a P0 blocker for any diligence.
 - **No multi-tenant production surface.** No auth, quotas, metering, or billing.
@@ -285,7 +302,7 @@ Stated so it is never discovered instead of disclosed:
 
 | Lever | Technique | Measured | Where it applies |
 |---|---|---|---|
-| **Fewer GPU-seconds** | Shared-prefix candidate batching | **5.3–9.9×** | Agentic/parallel sampling, VLA |
+| **Fewer GPU-seconds** | Shared-prefix candidate batching | **5.3–9.9×** (token-VLA) · **1.5×** (LLM, 1.04–2.5× by shape) | VLA planning; agentic/parallel LLM sampling |
 | | Topology-gated adaptive caching | **3.2–3.8×** | Video/image diffusion |
 | | Similarity-scheduled denoise caching | **3.19×** | Policy diffusion |
 | | Portable config levers | **2.0×** | Policy models |
