@@ -153,7 +153,7 @@ cost-to-serve floor around **$1.45/GPU-hr at 70% utilization** **[V]**.
 | Workload | Posture | Why |
 |---|---|---|
 | Vanilla LLM tokens (S1) | **10–25% under Fireworks/Baseten** | Silicon arbitrage only. Enough to win a switch, not enough to start a price war we'd lose |
-| Agentic / best-of-N / long-session LLM | **25–35% under**, at *better* margin | Lever A applies here — **measured 1.5× at the gate point, revised down from the 40–60% the pre-measurement 3× assumption implied** (§6.3) |
+| ~~Agentic / best-of-N LLM~~ | **row deleted 2026-07-27** | There is no separate agentic price posture. The 1.5× lever is real but not ours to capture or to differentiate on (§6.3) — agentic traffic prices like any other LLM traffic, off silicon |
 | Non-LLM tail (S2) | **Per-call pricing where the alternative is a rented GPU-hour** | Customers today pay for idle. Per-call at 60–70% margin still reads as a large saving to them |
 | Dedicated | **$3.50–4.50/hr H100-class, $2.75–3.50/hr MI300X-class** | Under Modal, well under Fireworks/Baseten |
 | Batch | 50% of serverless | Fills troughs |
@@ -193,37 +193,38 @@ gross margin 11 points thinner than the incumbent's.** That is a real but modest
 position — it wins switches, it does not win a war. It is why §5.2 caps the vanilla-LLM
 discount at 25% and why the plan does not rest on it.
 
-### 6.3 The same math where Lever A applies — **measured 2026-07-27**
+### 6.3 ~~The same math where Lever A applies~~ — **WITHDRAWN 2026-07-27**
 
-The gate ran. **The 3× assumption did not survive; the claim did.** Measured on H100
-against stock vLLM 0.26.0 with prefix caching on, the best-of-N lever at the
-pre-registered operating point (16 candidates, 2k shared prefix, 32-token decodes,
-moderate concurrency) is **1.5× [M]**, not 3×. Full result and method:
-`docs/LLM_BESTOFN_RESULT.md`.
+**This table claimed an advantage that is not ours. It is withdrawn, not restated at a
+smaller number.** Full evidence: `docs/LLM_BESTOFN_RESULT.md` (three parts).
 
-| | Incumbent | Repercep |
-|---|---|---|
-| Capacity cost/hr @70% | $3.50 | $3.14 |
-| Effective work throughput | 1× | **1.5× [M]** |
-| Price vs incumbent | — | **30% under** |
-| Revenue/hr | $6.48 | $6.80 |
-| **Gross margin** | 46% | **54%** |
+The 1.5× is real. It reproduced twice on independent pods and measured *larger* on
+SGLang (1.67×). But two later measurements removed it from the plan:
 
-**30% under the incumbent at 8 points better margin.** That is a real and defensible
-position — it is simply not the "half price at 68% margin" the assumption implied.
+1. **We cannot capture it for the customer.** Fusing concurrent requests into one `n=N`
+   call at our gateway was measured end-to-end and came out **slower than doing
+   nothing** — 1.02× of plain fan-out at concurrency 1, 1.23× slower at 16. A 30×
+   longer coalescing window never got the mean batch past 4.45 out of 16, because
+   requests a client issues simultaneously do not *arrive* simultaneously.
+2. **Even if we could, it would not differentiate us.** `n=N` is a stock feature of
+   every serving engine. A customer who sends `n=N` gets the same efficiency from
+   Fireworks, Baseten or Together as from us. The advantage was never in having the
+   lever — it was in capturing it for callers who *don't* send `n=N`, and that is the
+   part that failed.
 
-**The scope sentence must travel with the number.** The lever is strongly
-workload-shaped **[M]**: **1.04×** with short prefixes and long decodes, **1.5×** at the
-gate point, **2.5×** with long prefixes and short decodes, and it *grows* with
-concurrency (2.07× at 16 concurrent decisions). Quoting 2.5× without its shape is the
-same offence as quoting a strawman baseline.
+**Consequence for pricing.** There is no separate agentic-workload margin story. §6.2
+— silicon arbitrage, ~25% under at ~35% gross margin — is now the *whole* LLM economic
+case, and §5.2's agentic row is deleted rather than reduced.
 
-**What the measurement bought us beyond the number.** Prefix caching turned out to
-contribute almost nothing on this workload — denying it changed results by <3% — because
-a simultaneous fan-out of N prefix-sharing requests all miss the cache together, none
-having prefilled yet. `n=N` shares the prefill *structurally inside one request* and
-cannot lose that race. So the gap we sell into is real and mechanistically explained, and
-it is **not** closed by the caching every competitor already has.
+**What survived, and it is small but ours.** SGLang served this workload shape 9–17%
+faster than vLLM at identical settings. Engine selection *is* a lever we control as the
+operator — the customer never sees which engine runs under the API. That is a real
+9–17%, not a 1.5×, and it belongs in the deployment playbook rather than the pitch.
+
+> **The honest one-line version for any investor conversation:** *we measured a 1.5×
+> serving lever on agentic LLM traffic, then measured that we cannot deliver it, and
+> removed it from the plan. Our LLM cost position is silicon, plus a 9–17% engine-choice
+> effect.*
 
 ### 6.4 Sensitivity — what breaks the plan
 
@@ -231,7 +232,7 @@ it is **not** closed by the caching every competitor already has.
 |---|---|---|---|
 | MI300X committed rate | $2.20/hr **[A]** | >$2.80/hr | Lever B gone; §6.2 margin → ~19% |
 | MI300X vs H100 token throughput | parity **[A]** | <0.75× | Lever B gone even at $2.20 |
-| Lever A on LLM | **1.5× [M], measured** | — | Resolved 2026-07-27. Residual risk is now *shape* risk: customers whose traffic is short-prefix/long-decode get ~1.04× and the lever is worth nothing to them |
+| ~~Lever A on LLM~~ | **withdrawn 2026-07-27** | — | **Not a differentiator.** The 1.5× is real but available to every provider running the same engine; we could not capture it for customers who don't already send `n=N`. §6.3 rewritten below |
 | Utilization | 70% **[A]** | <50% | All margins ~20 points thinner. **Most likely early failure mode** |
 | Tail willingness to pay per call | assumed **[A]** | customers insist on GPU-hours | S2 wedge collapses to commodity hosting |
 
@@ -297,7 +298,7 @@ correlated.
 
 | Phase | Window | Milestones | Exit criteria |
 |---|---|---|---|
-| **P0 Foundation** | now → Oct 2026 | CI (does not exist today — `AUDIT` §1.2). Metering, auth, quotas, billing, model catalog, OpenAI-compatible API. Harden `feat/llm-proxy` to multi-tenant. **Run the §6.3 gate experiment.** Secure committed MI300X capacity. | Private beta serving real traffic; capacity contracted; gate answered |
+| **P0 Foundation** | now → Oct 2026 | Metering, auth, quotas, billing, model catalog, OpenAI-compatible API. Harden `feat/llm-proxy` to multi-tenant. ~~Run the §6.3 gate experiment~~ — **done 2026-07-27, claim withdrawn**. Secure committed MI300X capacity. **Default the LLM path to SGLang** (§6.3, 9–17% faster on this shape). | Private beta serving real traffic; capacity contracted |
 | **P1 Run-rate** | Oct 2026 → Jan 2027 | Public serverless + dedicated. 20–40 open models. Self-serve billing. First benchmark report under the new positioning. | **10 paying customers; $25–50k MRR** |
 | **P2 The tail** | Jan → Jun 2027 | Non-LLM catalog priced per call: vision, embeddings, diffusion, VLM. 2 design-partner pilots. 1 Runtime license. | **$150–250k MRR; ≥5 paying S2 customers** |
 | **P3 Physical AI** | Jun → Dec 2027 | Repercep Link with 2–3 robotics partners. World-model serving productized on Cloud. | **$400k+ MRR; Series A** |

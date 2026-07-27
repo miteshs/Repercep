@@ -105,6 +105,24 @@ is a *temporal* optimization and simultaneous fan-out defeats it; `n=N` shares t
 prefill *structurally inside one request* and cannot lose that race. **So the gap we
 serve is not closed by the caching every competitor already ships.**
 
+> ### ⚠️ We cannot currently deliver this lever. Measured 2026-07-27.
+>
+> The 1.5× is real and reproduced twice. **Our gateway cannot capture it for the
+> customer.** Fusing N concurrent requests into one `n=N` call was measured end-to-end
+> and *failed*: 1.02× of plain fan-out at concurrency 1 and **1.23× slower** at
+> concurrency 16 (`docs/LLM_BESTOFN_RESULT.md` Part 2).
+>
+> Not a tuning problem. A 30× longer coalescing window (2→60 ms) bought only 1.8× more
+> batching and never exceeded a mean batch of **4.45 out of 16**, while making the other
+> concurrencies monotonically worse. Requests a client issues simultaneously do not
+> *arrive* simultaneously, so there is no window that wins.
+>
+> **What this costs us:** the "no client rewrite" framing — the entire product story for
+> this technique — is dead. A customer can still have the 1.5× by calling `n=N`
+> themselves, which is a one-line change and needs nothing from us. **Until a mechanism
+> other than time-window coalescing exists, this is a benchmark result, not a
+> differentiator**, and it must not be sold as one.
+
 **Also not claimed:** the candidate *scorer* is a modeling choice, not ours. SPCB is a
 throughput result, not a better policy.
 
@@ -284,9 +302,10 @@ vendor benchmarks and none disclose.
 
 Stated so it is never discovered instead of disclosed:
 
-- **The LLM advantage is 1.5×, not a multiple.** Measured 2026-07-27 (T1.1). On vanilla
-  single-turn chat we still have **no** efficiency advantage at all — only silicon. And
-  the 1.5× is against vLLM; SGLang is untested and may be harder.
+- **The LLM advantage is 1.5×, not a multiple — and we cannot currently deliver it.**
+  Measured 2026-07-27 (T1.1). Gateway-side fusing failed end-to-end; the customer can
+  only get the 1.5× by calling `n=N` themselves. On vanilla single-turn chat we have
+  **no** efficiency advantage at all — only silicon.
 - **No CI.** `.github/workflows/` does not exist; `make lint` and `make typecheck`
   currently fail on `main` (`AUDIT` §1.2). This is a P0 blocker for any diligence.
 - **No multi-tenant production surface.** No auth, quotas, metering, or billing.
@@ -302,7 +321,7 @@ Stated so it is never discovered instead of disclosed:
 
 | Lever | Technique | Measured | Where it applies |
 |---|---|---|---|
-| **Fewer GPU-seconds** | Shared-prefix candidate batching | **5.3–9.9×** (token-VLA) · **1.5×** (LLM, 1.04–2.5× by shape) | VLA planning; agentic/parallel LLM sampling |
+| **Fewer GPU-seconds** | Shared-prefix candidate batching | **5.3–9.9×** (token-VLA) · **1.5×** (LLM) — but **not deliverable through our gateway**, see T1.1 | VLA planning; LLM only if the caller sends `n=N` itself |
 | | Topology-gated adaptive caching | **3.2–3.8×** | Video/image diffusion |
 | | Similarity-scheduled denoise caching | **3.19×** | Policy diffusion |
 | | Portable config levers | **2.0×** | Policy models |

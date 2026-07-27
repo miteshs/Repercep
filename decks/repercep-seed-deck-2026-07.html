@@ -328,12 +328,12 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
     <table>
       <thead><tr><th style="width:26%">Primitive</th><th style="width:29%">What we built it for</th><th style="width:29%">Why it transfers</th><th style="width:16%">Evidence</th></tr></thead>
       <tbody>
-        <tr class="hl"><td><b>Shared-prefix candidate batching</b></td><td>A robot planner decoding N candidate action sequences that share a vision+prompt prefix and diverge over 7 tokens</td><td>That <b>is</b> best-of-N, self-consistency, and agentic tree search: long shared prefix, short divergent tails, N of them, under a deadline</td><td><span class="tag m">5.3–9.9× measured on VLA</span> <span class="tag m">1.5× measured on LLM</span></td></tr>
+        <tr><td><b>Shared-prefix candidate batching</b></td><td>A robot planner decoding N candidate action sequences that share a vision+prompt prefix and diverge over 7 tokens</td><td>That <b>is</b> best-of-N, self-consistency, and agentic tree search — but the customer must call <span style="font-family:var(--mono);font-size:11px">n=N</span> themselves; our gateway could not capture it for them</td><td><span class="tag m">5.3–9.9× on VLA</span> <span class="tag m">1.5× on LLM</span> <span class="tag r">not deliverable by us</span></td></tr>
         <tr><td><b>State-resident sessions</b></td><td>Robot world-state carried across control steps; density is the capacity unit</td><td>A long-context agent session with a large KV cache is the same resource problem — and per-token pricing structurally hides it</td><td><span class="tag m">6× density measured</span></td></tr>
         <tr><td><b>Deadline-aware scheduling</b></td><td>A control answer is worth nothing after the deadline passes</td><td>Interactive agents, voice and real-time multi-modal have exactly this property; the industry expresses it as a crude p99 target</td><td><span class="tag v">Built · least proven on LLM</span></td></tr>
       </tbody>
     </table>
-    <div class="note"><b>The honest half.</b> We ran this rather than asserted it. The transfer holds in direction but <b>not in magnitude</b> — the LLM lever measures 1.5×, not the VLA figure. On vanilla single-turn chat we have no efficiency advantage at all; there our only lever is silicon. We do not fight Fireworks at the head of the distribution.</div>
+    <div class="note"><b>The honest half, and it cost us the claim.</b> We ran this rather than asserted it. The transfer holds in direction but <b>not in magnitude</b> — the LLM lever measures 1.5×, not the VLA figure. Worse: we then measured whether our <i>gateway</i> could capture that 1.5× for a customer without them changing code, and <b>it cannot</b> — fusing came out slower than plain fan-out at 1 and 16 concurrent decisions. The 1.5× is real; a customer gets it by calling <span style="font-family:var(--mono);font-size:12px">n=N</span> themselves, which needs nothing from us. <b>We are not selling this as a differentiator.</b></div>
   </div>
   <div class="foot"><span>Repercep.AI</span><span>Seed · July 2026</span><span>08</span></div>
 </section>
@@ -396,17 +396,14 @@ ul.pts li b{font-family:var(--sans);font-weight:700;color:var(--ink)}
         <div class="note">25% under, at a margin 11 points thinner. <b>Real but modest</b> — it wins switches, it does not win a war. Which is exactly why we cap the vanilla-LLM discount there and don't rest the plan on it.</div>
       </div>
       <div>
-        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:10px">Agentic / parallel sampling — Levers A + B <span class="tag m">measured 27 Jul</span></div>
-        <table class="tight">
-          <thead><tr><th></th><th class="n">Incumbent</th><th class="n">Repercep</th></tr></thead>
-          <tbody>
-            <tr><td>Capacity cost/hr @ 70%</td><td class="n">$3.50</td><td class="n">$3.14</td></tr>
-            <tr><td>Effective work throughput</td><td class="n">1×</td><td class="n">1.5×</td></tr>
-            <tr><td>Revenue/hr</td><td class="n">$6.48</td><td class="n">$6.80</td></tr>
-            <tr class="hl"><td><b>Gross margin</b></td><td class="n"><b>46%</b></td><td class="n"><b>54%</b></td></tr>
-          </tbody>
-        </table>
-        <div class="note"><b>30% under the incumbent at 8 points better margin.</b> We ran the experiment before circulating this deck. The 3× we had assumed did not survive — measured against stock vLLM with prefix caching on, the lever is <b>1.5×</b> at the operating point (1.04× short-prefix/long-decode, 2.5× long-prefix/short-decode, 2.07× at higher concurrency). The claim survived; the number changed.</div>
+        <div class="k" style="font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--red);margin-bottom:10px">Agentic / parallel sampling <span class="tag r">withdrawn 27 Jul</span></div>
+        <p style="font-family:var(--serif);font-size:13.5px;line-height:1.5;color:var(--ink-2);margin:0 0 12px">A second table used to sit here, claiming half price at 68% margin on agentic traffic. <b>We measured it and removed it.</b></p>
+        <ul class="pts" style="margin-bottom:10px">
+          <li>The <b>1.5× lever is real</b> — reproduced twice, and larger still on SGLang (1.67×).</li>
+          <li>But <b>our gateway can't capture it</b>. Fusing measured <i>slower</i> than doing nothing at 1 and 16 concurrent decisions.</li>
+          <li>And <b>it wouldn't differentiate us anyway</b> — <span style="font-family:var(--mono);font-size:12px">n=N</span> is stock in every engine. A customer sending it gets the same from Fireworks.</li>
+        </ul>
+        <div class="note"><b>So the left-hand table is the whole LLM economic case.</b> What did survive is smaller and ours: SGLang serves this shape <b>9–17% faster</b> than vLLM, and engine choice is a lever we control as the operator. We would rather show you this slide than have you find it in diligence.</div>
       </div>
     </div>
   </div>

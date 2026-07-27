@@ -133,3 +133,185 @@ that range without its shape is the same offence as quoting R0 as a baseline.
   prefill/decode balance and therefore the lever.
 - **No claim about output quality.** This is throughput only; the candidate
   *scorer* remains a modeling choice we do not ship.
+
+---
+
+# Part 2 — the gateway test (plan §10), measured 2026-07-27
+
+Same H100, same vLLM 0.26.0, same model, same harness, client co-located. The
+gateway under test is the **real** `LlmProxy` + `CandidateFuser`, hosted in a
+bare FastAPI app; nothing on the completions path is stubbed, and `LlmProxy`
+bypasses the world-model scheduler by design anyway.
+
+## 7. The vLLM baseline reproduced
+
+Before testing the gateway, the Part-1 numbers were re-measured on this fresh
+pod, fresh model load, three days later:
+
+| concurrency | Part 1 | Part 2 | |
+|---|---|---|---|
+| 1 | 1.28× | **1.22×** | |
+| 4 (gate point) | 1.52× | **1.49×** | |
+| 16 | 2.07× | **2.05×** | |
+
+**The R1→R2 lever is real and reproducible.** So is the mechanism finding: R0 ≈ R1
+again at c=1 and c=4 (357/354, 626/631), i.e. prefix caching still contributes
+essentially nothing to a simultaneous fan-out. Nothing below undermines Part 1.
+
+## 8. R3 — the product claim — **FAILS**
+
+> Plan §10.2: *Fail if `R3 ≥ R1` — the gateway eats the lever, and the honest
+> advice becomes "call `n=N` yourself," which needs no product from us.*
+
+| concurrency | R1 direct | **R3 gateway** | R3/R1 | verdict |
+|---|---|---|---|---|
+| 1 | 354 ms | **360 ms** | **1.02×** | **FAIL** — slower than doing nothing |
+| 4 | 631 ms | 622 ms | 0.99× | break-even (and see §10) |
+| 16 | 1701 ms | **2087 ms** | **1.23×** | **FAIL** — 23% slower |
+
+One point out of three at parity is not a product. **The gateway does not deliver
+the lever.**
+
+## 9. Why — and why it is *broken*, not mistuned
+
+The fuser's own telemetry gives the diagnosis: at the 8 ms default it achieved a
+**mean batch size of 2.75** against a target of 16, fusing only **29%** of
+requests. Long enough to make everyone wait; too short to actually coalesce them.
+
+Plan §10.3's window sweep was pre-registered precisely to separate "bad default"
+from "bad idea". It says bad idea:
+
+| window | mean batch | % fused | c=1 R3/R1 | c=4 R3/R1 | c=16 R3/R1 |
+|---|---|---|---|---|---|
+| 2 ms | 2.41 | 14% | 1.06× | 1.03× | 1.13× |
+| 8 ms | 2.75 | 29% | 1.02× | 0.99× | 1.23× |
+| 25 ms | 3.25 | 43% | 1.08× | 0.97× | 1.25× |
+| 60 ms | 4.45 | 46% | **1.19×** | 0.90× | **1.31×** |
+
+**A 30× longer window bought only 1.8× more batching, and never got past a mean
+of 4.45 out of 16.** Meanwhile c=1 and c=16 degrade *monotonically* as the window
+grows — everyone pays the wait, few get coalesced. There is no window that wins:
+short windows don't fuse, long windows cost more than they save.
+
+**Root cause.** Requests a client issues simultaneously do not *arrive*
+simultaneously. Connection establishment, the accept/read loop and the event
+loop spread them out by more than a coalescing window can absorb. The very
+property that makes fusing valuable inside the engine — that a simultaneous
+fan-out defeats temporal caching — also means our gateway never sees a
+simultaneous fan-out to fuse.
+
+## 10. The one favourable column is an artifact, and was flagged before the run
+
+c=4 is the only concurrency where R3 beats R1, and it improves as the window
+grows. It should not be believed, for a reason recorded **before** the data was
+read:
+
+> The harness's concurrency dimension issues C decisions that all use the *same*
+> prefix. At C>1 every request in the run shares one fusion key, so the gateway
+> fuses **across decisions** — 64 requests into 2 calls of n=32, against R2's four
+> separate n=16 calls. A real agent's concurrent decisions carry *different*
+> prompts and would not merge.
+
+So c=4's win partly measures the harness handing the gateway a coalescing
+opportunity that production traffic would not. **c=1 is the only clean
+apples-to-apples row, and c=1 fails.**
+
+## 11. Consequence — applying plan §10.4
+
+> *If §10.2 fails, `INFERENCE_MOAT_TECHNIQUES.md` T1.1 and the deck's fusing claim
+> describe a lever we measured but cannot deliver, and both must say so. A
+> technique that works in the engine but not through our own gateway is a paper
+> result, not a product.*
+
+Applied. Specifically:
+
+- **The 1.5× lever is still real** — measured twice, reproducibly. What fails is
+  our mechanism for capturing it *on the customer's behalf*.
+- **A customer can still have it** by calling `n=N` themselves. That is a
+  one-line client change and needs no product from us.
+- **"No client rewrite" — the entire product framing of this technique — is dead**
+  until some mechanism other than time-window coalescing is found.
+- `llm_fusing.py` **stays off by default** and its documentation now records this
+  result rather than its aspiration. It is not deleted: the code is correct, the
+  tests are green, and it remains the right shape if request arrival is ever
+  made simultaneous (e.g. an explicit batch endpoint where the caller hands us N
+  candidates in one request — which, note, is just `n=N` with extra steps).
+
+**What would have to change for this to work.** Not a longer window. Either a
+client-side SDK that batches before sending — at which point the client could
+simply send `n=N` — or an explicit multi-candidate endpoint. Both move the work
+to the caller, which is exactly the thing the claim promised to avoid.
+
+---
+
+# Part 3 — the SGLang adversarial test (plan §9), measured 2026-07-27
+
+Same pod, same model, same harness, client co-located. SGLang **0.5.16**, with
+`disable_radix_cache: false` read back from `/get_server_info` rather than
+assumed (plan §9.4). vLLM was stopped first and its numbers banked, so the
+cross-engine comparison is same-box, same-weights, same-grid.
+
+## 12. RadixAttention does not close the gap — it widens it
+
+§9.1 predicted this was the test most likely to kill the claim, because
+RadixAttention is *designed* to share a prefix across requests in one batch
+rather than depending on one request finishing first. **That prediction was
+wrong.**
+
+| concurrency | L on vLLM | **L on SGLang** |
+|---|---|---|
+| 1 | 1.22× | **1.33×** |
+| 4 — gate point | 1.49× | **1.67×** |
+| 16 | 2.05× | **3.70×** |
+
+Plan §9.3: `L_sglang ≥ 1.5` at the gate point ⇒ *"the gap is a property of
+simultaneous fan-out, not of vLLM. Claim strengthens — it survives an engine
+purpose-built to close it."* **1.67 ≥ 1.5.** The underlying lever is engine-
+independent and larger on the better engine.
+
+## 13. The override did not fire
+
+§9.3's override — the row that must not be skipped — asks whether a customer's
+plain fan-out on SGLang already matches our fused `n=N` on vLLM, in which case
+"switch engines" beats anything we sell.
+
+| concurrency | SGLang R1 | vLLM R2 | | |
+|---|---|---|---|---|
+| 1 | 352 ms | 290 ms | 1.21× | no |
+| 4 | 614 ms | 424 ms | 1.45× | no |
+| 16 | 2561 ms | 831 ms | 3.08× | no |
+
+Fan-out on a better engine is **not** a substitute for `n=N`. Changing engines
+does not rescue a caller who fans out.
+
+## 14. The finding that is actually worth money
+
+SGLang is faster than vLLM on the `n=N` path at every concurrency:
+
+| concurrency | vLLM R2 | SGLang R2 | SGLang advantage |
+|---|---|---|---|
+| 1 | 290 ms | 264 ms | **9%** |
+| 4 | 367 ms | 424 ms → 367 ms | **13%** |
+| 16 | 831 ms | 692 ms | **17%** |
+
+**Engine selection is a lever we actually control**, unlike fusing. As the
+operator we choose what runs under the API; the customer never sees it. A
+9–17% cost reduction on this workload shape is smaller than the 1.5× we lost,
+but it is *ours to capture* — which the 1.5× turned out not to be.
+
+That is the one durable result of this session, and it is a deployment
+decision, not a claim: **serve this workload shape on SGLang, not vLLM.**
+
+## 15. Where the LLM story stands after all three parts
+
+| Claim | Status |
+|---|---|
+| Candidate batching helps LLM parallel sampling | **True** — 1.5× at the gate point, reproduced twice, and 1.67× on SGLang |
+| The mechanism is a cache-timing race, not prefill arithmetic | **True** — APC contributes <3%, and RadixAttention doesn't close it either |
+| *We* can capture it for the customer | **False** — gateway fusing measured slower than plain fan-out (Part 2) |
+| It is a Repercep differentiator | **False** — any provider on the same engine serves `n=N` equally well |
+| Choosing the faster engine is a differentiator | **Modestly true** — 9–17%, and it is ours to control |
+
+**Net:** the technique is real and we understand it better than the people
+shipping it. It is not something we can sell. Demoted from the moat to the
+deployment playbook.
