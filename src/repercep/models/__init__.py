@@ -2,9 +2,9 @@
 
 Generation camp: Cosmos-Predict-7B and Wan-2.2 (T2V-A14B). Control camp on the
 interactive seam: V-JEPA 2-AC (energy-MPC planning), LingBot-VA 2.0, DreamZero
-(video-action policy), and a token-decoding VLA (OpenVLA / π0-FAST class,
-Phase-0 scaffold) — three planning regimes (search / generate / decode+score),
-one Protocol.
+(video-action policy), Cosmos 3 Nano (omnimodal policy, Phase-0 scaffold), and
+a token-decoding VLA (OpenVLA / π0-FAST class, Phase-0 scaffold) — three
+planning regimes (search / generate / decode+score), one Protocol.
 """
 
 from __future__ import annotations
@@ -14,6 +14,13 @@ from repercep.models.cosmos import (
     CosmosConfig,
     CosmosEngine,
     GuardrailError,
+)
+from repercep.models.cosmos3 import (
+    DEFAULT_REPO as COSMOS3_DEFAULT_REPO,
+)
+from repercep.models.cosmos3 import (
+    Cosmos3Config,
+    Cosmos3Engine,
 )
 from repercep.models.dreamzero import (
     DEFAULT_REPO as DREAMZERO_DEFAULT_REPO,
@@ -47,6 +54,7 @@ from repercep.models.wan import SMALL_REPO as WAN_SMALL_REPO
 from repercep.models.wan import WanConfig, WanEngine
 
 __all__ = [
+    "COSMOS3_DEFAULT_REPO",
     "DEFAULT_ENCODER_REPO",
     "DEFAULT_REPO",
     "DREAMZERO_DEFAULT_REPO",
@@ -55,6 +63,8 @@ __all__ = [
     "WAN_DEFAULT_REPO",
     "WAN_NATIVE_FPS",
     "WAN_SMALL_REPO",
+    "Cosmos3Config",
+    "Cosmos3Engine",
     "CosmosConfig",
     "CosmosEngine",
     "DreamZeroConfig",
