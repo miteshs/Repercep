@@ -112,16 +112,83 @@ the first token of useful work. Any autoscaling story on AMD has to ship a
 pre-warmed MIOpen cache in the image, or it does not work. That belongs in the
 deployment playbook.
 
-### 4.2 Real-time framing — it does not make it, and by how much
+### 4.2 Real-time framing — misses at defaults, **makes it on the ladder**
 
-A 16-action chunk at 15 FPS covers **1.067 s** of robot time and takes 3.61 s to
-produce: **3.4× slower than real time**, 4.43 actions/s produced against 15
-required. At these settings the model is a simulation/eval engine, not a
-closed-loop controller. Levers not yet tried (denoise steps below 30, the 256p
-tier, `torch.compile`) are the Phase-2 ladder and are where that gap gets
-attacked.
+A 16-action chunk at 15 FPS covers **1.067 s** of robot time. At the reference
+defaults it takes 3.61 s to produce: **3.4× slower than real time**, 4.43
+actions/s against 15 required. At *those* settings the model is a
+simulation/eval engine, not a closed-loop controller.
 
-### 4.3 Against the other DROID model on this GPU
+The ladder in §4.4 changes that conclusion: at **256p / 5 steps the chunk takes
+479.5 ms — 2.2× faster than real time.** Whether the resulting trajectories are
+good enough to close a loop with is a separate, unanswered question (§4.5).
+
+### 4.3 The cold-start tax is per-*shape*, not just per-process
+
+The first 256p run measured 49.8 s and looked like evidence that the smaller
+tier was catastrophically slower. It was not — it was autotune for a shape
+MIOpen had never seen. Repeated three times:
+
+| tier / steps | call 1 | call 2 | call 3 |
+|---|---:|---:|---:|
+| 256p / 30 | **13,820.7** | 1,831.5 | 1,834.8 |
+| 256p / 5 | 480.1 | 479.5 | 476.4 |
+| 480p / 30 | 3,645.1 | 3,610.2 | 3,611.8 |
+| 480p / 5 | 1,164.8 | 1,161.6 | 1,156.5 |
+
+**7.5× on the first call at a new resolution**, then flat. The 480p rows are
+flat from call 1 because that shape had already been warmed. Changing
+`num_inference_steps` costs nothing extra — it changes iteration count, not
+tensor shapes — which is why the denoise ladder shows no such penalty.
+
+This sharpens §4.1 into something more operationally demanding: **a serving
+fleet must pre-warm every (resolution, batch) shape it intends to serve**, not
+merely load weights once. Pre-warming the weights and one shape still leaves a
+7.5× cliff on the first request at any other resolution.
+
+### 4.4 Levers ladder (warm, MI300X)
+
+All rows vs the 480p/30-step reference at 3611.8 ms. Real-time budget is
+1067 ms.
+
+| tier | steps | ms | speedup | vs real time | action drift (max abs / mean rel) |
+|---|---:|---:|---:|---:|---|
+| 480 | 30 | 3611.8 | 1.00× | 3.39× slower | — (reference) |
+| 480 | 20 | 2628.6 | 1.37× | 2.46× slower | 0.055 / 1.9% |
+| 480 | 15 | 2134.5 | 1.69× | 2.00× slower | 0.078 / 3.3% |
+| 480 | 10 | 1648.8 | 2.19× | 1.55× slower | 0.109 / 5.1% |
+| 480 | 5 | 1161.6 | 3.11× | 1.09× slower | 0.188 / 9.1% |
+| 256 | 30 | 1834.8 | **1.97×** | 1.72× slower | 0.098 / 6.6% |
+| 256 | 5 | **479.5** | **7.53×** | **2.23× faster** | not measured |
+
+Drift is the predicted action chunk's deviation from the 30-step/480p baseline,
+in the model's normalized `[-1, 1]` space — `max abs` over all 160 values and
+`mean abs` relative to the baseline's mean magnitude. It is a **cheap proxy for
+"how much does cutting compute change the decision,"** not a quality metric: it
+says nothing about which trajectory is *better*, only how far they diverge.
+
+The denoise-step rows are single samples (the repeated runs in §4.3 cover only
+the 30- and 5-step ends, where run-to-run spread was ≤0.7%). The two ends are
+solid; the middle is indicative.
+
+**Resolution is the better lever than denoise steps.** 256p/30 buys 1.97× at
+6.6% drift, while 480p/10 buys a comparable 2.19× at 5.1% — but combining them
+is where it gets interesting, and 256p/5 at 479.5 ms is a 7.5× total that lands
+comfortably inside the real-time budget.
+
+### 4.5 What the ladder does not establish
+
+**Whether any of these settings are usable.** Drift of 9% in normalized action
+space could be irrelevant or disqualifying depending on the task, and this run
+cannot tell which, for two compounding reasons: the conditioning was a flat grey
+canvas (§6), so the baseline trajectory is itself meaningless; and there is no
+success-rate harness attached. NVIDIA ships one — `RoboLab` — and running the
+`BananaInBowlTask` suite against each rung is what would turn this ladder from
+a latency table into a claim. That is the natural next piece of GPU work, and
+until it exists **no rung below 30 steps should be quoted as a serving
+configuration.**
+
+### 4.6 Against the other DROID model on this GPU
 
 | | Cosmos3-Nano-Policy-DROID | DreamZero-DROID |
 |---|---|---|
@@ -178,6 +245,25 @@ preparation, and **whether it then yields a win is still completely unmeasured**
 candidates) as the number to beat. Nothing about batching goes in any external
 artifact until that is done.
 
+## 5b. `forward_dynamics` works on the Policy-DROID checkpoint — the seam is safe
+
+The port plan flagged this as a Phase-1 gate: the fd path is demonstrated on the
+base `Cosmos3-Nano` while policy is demonstrated on `Cosmos3-Nano-Policy-DROID`,
+and if the post-trained checkpoint had lost fd then `models/cosmos3.py`'s
+`step()` would have had to fall back to policy mode and **stop being
+action-conditioned at all**.
+
+It works. Feeding a policy call's own predicted `(16, 10)` chunk back as
+`raw_actions` in `forward_dynamics` mode: **3565.1 ms**, 17 frames, and
+`result.action is None`.
+
+Three things settled at once: `step()` can be genuinely action-conditioned, so
+`Cosmos3Config.step_mode` keeps its `forward_dynamics` default; fd costs
+essentially the same as policy (3565 vs 3612 ms), so the seam's two verbs are
+symmetric in price; and the `_Cosmos3Pipeline` Protocol's documented contract —
+*"`actions_norm` … is `None` in forward-dynamics mode"* — is confirmed against
+the real pipeline rather than inferred from the notebooks.
+
 ## 6. Caveats on these numbers
 
 - **Synthetic conditioning.** A flat 640×540 grey canvas, not the real
@@ -192,19 +278,23 @@ artifact until that is done.
   gate the port depended on.
 - **Guardrail disabled.** Fine for latency; a deployment claim would need it on
   and re-measured, since it adds a text check before and a video check after.
-- **`step_mode` still unverified.** Whether the post-trained Policy-DROID
-  checkpoint also serves `forward_dynamics` was not tested this run — it is what
-  makes the seam's `step()` action-conditioned at all (module docstring).
+- **Drift ≠ quality** (§4.5). No success-rate harness was run; `RoboLab` is the
+  missing piece before any reduced-compute rung can be called a serving config.
 
 ## 7. What this run settles, and what it does not
 
 **Settles:** Cosmos 3 Nano's policy path runs clean on MI300X/ROCm with no
-patches. 3.61 s/chunk steady state, 226 ms/action, 29.7 GiB resident, stateless
-sessions. A 70× cold-start tax that any AMD autoscaling design has to plan
-around. The AMD claim in the port plan is **earned** — as of this run nobody
+patches. 3.61 s/chunk at reference defaults, 226 ms/action, 29.7 GiB resident,
+stateless sessions. `forward_dynamics` survives post-training, so the seam's
+`step()` stays action-conditioned. A cold-start tax that is **per-shape** (7.5×)
+as well as per-process (4.3×) and per-machine-image (70×) — the single most
+actionable operational finding here. And, on the ladder, **real-time-capable
+DROID policy inference on AMD: 479.5 ms/chunk at 256p/5 steps against a 1067 ms
+budget.** The AMD claim in the port plan is **earned** — as of this run nobody
 else has published a Cosmos 3 ROCm number, and NVIDIA's own
 `inference_benchmarks.md` still has no policy row on any hardware.
 
-**Does not settle:** anything comparative against H100; anything about
-trajectory quality; anything about candidate batching beyond "the stock
-interface cannot do it"; anything about the levers ladder.
+**Does not settle:** anything comparative against H100; whether any reduced rung
+is *usable* (drift is not quality — §4.5, and `RoboLab` is the missing harness);
+anything about candidate batching beyond "the stock interface cannot do it";
+anything about behaviour on real camera input rather than a grey canvas.

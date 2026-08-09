@@ -55,6 +55,40 @@
     "actions_per_sec_required": 15.0,
     "ms_per_action": 225.6
   },
+  "forward_dynamics_gate": {
+    "verdict": "WORKS on the post-trained Policy-DROID checkpoint",
+    "chunk_ms": 3565.1,
+    "frames": 17,
+    "returns_actions": false,
+    "note": "Fed a policy call's own predicted (16,10) chunk back as raw_actions. Confirms models/cosmos3.py can keep step_mode=forward_dynamics, so step() stays action-conditioned; and confirms the _Cosmos3Pipeline Protocol's documented 'actions_norm is None in fd mode'."
+  },
+  "levers_ladder_warm": {
+    "reference_ms": 3611.8,
+    "realtime_budget_ms": 1067,
+    "rows": [
+      {"tier": 480, "steps": 30, "ms": 3611.8, "speedup": 1.0, "drift_max_abs": 0.0, "drift_mean_rel": 0.0, "samples": 3},
+      {"tier": 480, "steps": 20, "ms": 2628.6, "speedup": 1.37, "drift_max_abs": 0.0547, "drift_mean_rel": 0.019, "samples": 1},
+      {"tier": 480, "steps": 15, "ms": 2134.5, "speedup": 1.69, "drift_max_abs": 0.0781, "drift_mean_rel": 0.0326, "samples": 1},
+      {"tier": 480, "steps": 10, "ms": 1648.8, "speedup": 2.19, "drift_max_abs": 0.1094, "drift_mean_rel": 0.051, "samples": 1},
+      {"tier": 480, "steps": 5, "ms": 1161.6, "speedup": 3.11, "drift_max_abs": 0.1875, "drift_mean_rel": 0.0911, "samples": 3},
+      {"tier": 256, "steps": 30, "ms": 1834.8, "speedup": 1.97, "drift_max_abs": 0.0977, "drift_mean_rel": 0.0655, "samples": 3},
+      {"tier": 256, "steps": 5, "ms": 479.5, "speedup": 7.53, "drift_max_abs": null, "drift_mean_rel": null, "samples": 3}
+    ],
+    "drift_definition": "deviation of the predicted (16,10) action chunk from the 480p/30-step baseline, in the model's normalized [-1,1] space. A proxy for 'how much does cutting compute change the decision' -- NOT a quality metric. No success-rate harness was run; RoboLab is the missing piece.",
+    "discarded_artifact": "A first pass computed speedups against a COLD first-in-process baseline (15336.4 ms), yielding a 4.25x 'speedup' for the 30-step row against its own configuration. Every speedup in that pass was inflated ~4.25x. Recomputed here against the warm 3611.8 ms reference."
+  },
+  "cold_start_is_per_shape": {
+    "finding": "MIOpen autotune is paid per tensor shape, not only per process. Changing num_inference_steps costs nothing extra (iteration count, not shape); changing resolution_tier does.",
+    "evidence_ms": {
+      "tier256_steps30": [13820.7, 1831.5, 1834.8],
+      "tier256_steps5": [480.1, 479.5, 476.4],
+      "tier480_steps30": [3645.1, 3610.2, 3611.8],
+      "tier480_steps5": [1164.8, 1161.6, 1156.5]
+    },
+    "first_call_penalty_new_shape": 7.53,
+    "discarded_artifact": "A single cold 256p run measured 49791.4 ms and read as '256p is 13.8x SLOWER than 480p'. It was autotune for an unseen shape. Warm 256p is 1834.8 ms -- nearly 2x FASTER than 480p. The sign of the conclusion was wrong, not just the magnitude.",
+    "implication": "A serving fleet must pre-warm every (resolution, batch) shape it intends to serve, not merely load weights."
+  },
   "batching_gate": {
     "verdict": "NOT MEASURABLE - stock interface exposes no candidate-batching axis",
     "evidence": "Cosmos3OmniPipeline.__call__ has no num_videos_per_prompt/num_images_per_prompt parameter; CosmosActionCondition carries a single image. Passing prompt=[p]*N returned 1 candidate with identical wall time (3595-3610 ms) and identical peak HBM (33.59 GiB) at N=1,2,4,8 - the batch was silently ignored.",
