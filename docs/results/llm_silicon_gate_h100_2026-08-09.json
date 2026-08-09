@@ -1,0 +1,139 @@
+{
+  "mode": "llm_silicon_gate_v0",
+  "measured": "2026-08-09",
+  "leg": "H100 (NVIDIA) \u2014 MI300X leg pending",
+  "plan": "docs/LLM_SILICON_GATE_PLAN.md",
+  "note": "HALF the experiment. No gate verdict is possible until the MI300X leg runs; R is undefined with one vendor.",
+  "env": {
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "vendor": "NVIDIA",
+    "vllm": "0.26.0",
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "attention_backend": "<default>",
+    "host": "RunPod SECURE, US-GA-2, $3.29/hr",
+    "dtype": "bfloat16"
+  },
+  "models": {
+    "Qwen2.5-7B-Instruct": {
+      "max_model_len": 8192,
+      "shapes": [
+        {
+          "tag": "S1-interactive",
+          "prompt_toks": 512,
+          "decode": 512,
+          "conc": 1,
+          "elapsed_s_median": 3.1214,
+          "elapsed_s_all": [
+            3.1214,
+            3.1208,
+            3.1266,
+            3.1204,
+            3.1214
+          ],
+          "output_tok_per_s": 164.03,
+          "generated_tokens": 512,
+          "expected_tokens": 512,
+          "equal_work_ok": true
+        },
+        {
+          "tag": "S2-interactive-load",
+          "prompt_toks": 512,
+          "decode": 512,
+          "conc": 32,
+          "elapsed_s_median": 3.4551,
+          "elapsed_s_all": [
+            3.4542,
+            3.4562,
+            3.4597,
+            3.4214,
+            3.4551
+          ],
+          "output_tok_per_s": 4741.99,
+          "generated_tokens": 16384,
+          "expected_tokens": 16384,
+          "equal_work_ok": true
+        },
+        {
+          "tag": "S3-batch",
+          "prompt_toks": 4096,
+          "decode": 128,
+          "conc": 32,
+          "elapsed_s_median": 1.3101,
+          "elapsed_s_all": [
+            1.3066,
+            1.3224,
+            1.2924,
+            1.3137,
+            1.3101
+          ],
+          "output_tok_per_s": 3126.59,
+          "generated_tokens": 4096,
+          "expected_tokens": 4096,
+          "equal_work_ok": true
+        }
+      ],
+      "accuracy_smoke_saved": 20
+    },
+    "Qwen2.5-32B-Instruct": {
+      "max_model_len": 8192,
+      "shapes": [
+        {
+          "tag": "S1-interactive",
+          "prompt_toks": 512,
+          "decode": 512,
+          "conc": 1,
+          "elapsed_s_median": 12.5373,
+          "elapsed_s_all": [
+            12.5593,
+            12.5373,
+            12.5399,
+            12.5365,
+            12.5341
+          ],
+          "output_tok_per_s": 40.84,
+          "generated_tokens": 512,
+          "expected_tokens": 512,
+          "equal_work_ok": true
+        },
+        {
+          "tag": "S2-interactive-load",
+          "prompt_toks": 512,
+          "decode": 512,
+          "conc": 32,
+          "elapsed_s_median": 13.6531,
+          "elapsed_s_all": [
+            13.6398,
+            13.6476,
+            13.6531,
+            13.67,
+            13.6668
+          ],
+          "output_tok_per_s": 1200.02,
+          "generated_tokens": 16384,
+          "expected_tokens": 16384,
+          "equal_work_ok": true
+        },
+        {
+          "tag": "S3-batch",
+          "prompt_toks": 4096,
+          "decode": 128,
+          "conc": 32,
+          "elapsed_s_median": 4.243,
+          "elapsed_s_all": [
+            4.235,
+            4.243,
+            4.2291,
+            4.2471,
+            4.2475
+          ],
+          "output_tok_per_s": 965.35,
+          "generated_tokens": 4096,
+          "expected_tokens": 4096,
+          "equal_work_ok": true
+        }
+      ],
+      "accuracy_smoke_saved": 20
+    }
+  }
+}

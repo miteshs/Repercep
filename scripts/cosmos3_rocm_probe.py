@@ -235,6 +235,12 @@ def stage4_real_call() -> None:
         torch_dtype=torch.bfloat16,
         safety_checker=None,
         enable_safety_checker=False,  # guardrail is gated; not needed for a latency gate
+        # Explicit because the default is environment-dependent: on the H100 box
+        # it resolved to False and the load died with "`low_cpu_mem_usage` cannot
+        # be False when `keep_in_fp32_modules` is True", while the MI300X box
+        # defaulted to True and loaded fine. Pinning it keeps the two rows
+        # comparable and the probe portable.
+        low_cpu_mem_usage=True,
     )
     pipe.to("cuda")
     load_s = time.time() - t0

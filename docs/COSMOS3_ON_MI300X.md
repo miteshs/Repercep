@@ -245,6 +245,42 @@ preparation, and **whether it then yields a win is still completely unmeasured**
 candidates) as the number to beat. Nothing about batching goes in any external
 artifact until that is done.
 
+### 4.7 H100 comparison (added 2026-08-09, same day, same script)
+
+Run on a RunPod H100 80GB HBM3 with the same pinned diffusers `d6726f38`, same
+bf16, same policy geometry. Same `warm.py`, so the numbers are directly
+comparable.
+
+| | MI300X | H100 | MI300X / H100 |
+|---|---:|---:|---:|
+| **chunk latency (warm median)** | 3610 ms | **3013 ms** | **0.83×** |
+| VAE decode | 452 ms | 345 ms | 0.76× |
+| resident weights | 29.70 GiB | 29.66 GiB | 1.00× |
+| peak HBM | 33.59 GiB | 33.42 GiB | 1.00× |
+| **first call in a fresh process** | 15,454 ms (**4.28×** steady) | 3,824 ms (**1.27×** steady) | — |
+
+Three readings, in descending confidence:
+
+1. **H100 is ~1.2× faster on this workload.** MI300X lands at 0.83× — above the
+   0.75 line `BUSINESS_PLAN` §233–234 uses as a kill threshold, though that
+   threshold was written for *token* throughput and this is diffusion. It is a
+   data point, not the gate (`LLM_SILICON_GATE_RESULT.md`).
+2. **Identical memory to two decimal places** (29.70 vs 29.66 GiB resident,
+   33.59 vs 33.42 GiB peak) — the same model doing the same work, which is a
+   good sign the two runs are genuinely comparable rather than accidentally
+   configured apart.
+3. **The cold-start gap is the real vendor difference: 4.28× on ROCm against
+   1.27× on CUDA.** Steady-state throughput differs by 20%; *first-call* cost
+   differs by 4×. On the whole-machine cold path it is far starker still — 253 s
+   on a fresh MI300X box against 7.5 s for the H100's first call. Combined with
+   §4.3's per-shape finding, cold start is where AMD actually loses on this
+   workload, and it is a solvable engineering problem (pre-warmed caches) rather
+   than a silicon deficit.
+
+Weight-load time is **not** compared: H100 showed 7.7 s against MI300X's 82.1 s,
+but the two boxes had different storage (RunPod network volume vs local disk) and
+different page-cache states. That number is provider noise, not a vendor result.
+
 ## 5b. `forward_dynamics` works on the Policy-DROID checkpoint — the seam is safe
 
 The port plan flagged this as a Phase-1 gate: the fd path is demonstrated on the
