@@ -1,0 +1,120 @@
+{
+  "mode": "llm_silicon_gate_v0",
+  "measured": "2026-08-09",
+  "status": "COMPLETE (both legs)",
+  "plan": "docs/LLM_SILICON_GATE_PLAN.md (incl. \u00a76b amendment)",
+  "verdict": "PASS -- R = 1.02-1.38 at all six points, vs a 0.75 kill threshold",
+  "env": {
+    "h100": {
+      "gpu": "NVIDIA H100 80GB HBM3",
+      "vllm": "0.26.0",
+      "torch": "2.11.0+cu130",
+      "cuda": "13.0",
+      "host": "RunPod SECURE US-GA-2",
+      "usd_per_hr": 3.29
+    },
+    "mi300x": {
+      "gpu": "AMD Instinct MI300X VF",
+      "vllm": "0.23.1.dev1+g9ddef7117.d20260715",
+      "torch": "2.11.0+rocm7.14.0",
+      "hip": "7.14.60850",
+      "host": "AMD Developer Cloud (DigitalOcean), gpu-mi300x1-192gb-devcloud",
+      "usd_per_hr": 1.99,
+      "container": "rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0"
+    },
+    "controls": {
+      "torch_version_matched": "2.11.0 on both (cu130 vs rocm7.14.0)",
+      "dtype": "bfloat16 both",
+      "engine_version_matched": false,
+      "engine_handicap_direction": "favours H100 (0.26.0 vs 0.23.1) -- results are LOWER BOUNDS on AMD"
+    }
+  },
+  "results": [
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "shape": "S1-interactive",
+      "h100_tok_s": 164.03,
+      "mi300x_tok_s": 216.11,
+      "R": 1.318,
+      "usd_per_mtok_h100": 5.5715,
+      "usd_per_mtok_mi300x": 2.5579,
+      "cost_advantage": 2.18,
+      "equal_work": true
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "shape": "S2-interactive-load",
+      "h100_tok_s": 4741.99,
+      "mi300x_tok_s": 4816.44,
+      "R": 1.016,
+      "usd_per_mtok_h100": 0.1927,
+      "usd_per_mtok_mi300x": 0.1148,
+      "cost_advantage": 1.68,
+      "equal_work": true
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "shape": "S3-batch",
+      "h100_tok_s": 3126.59,
+      "mi300x_tok_s": 3397.19,
+      "R": 1.087,
+      "usd_per_mtok_h100": 0.2923,
+      "usd_per_mtok_mi300x": 0.1627,
+      "cost_advantage": 1.8,
+      "equal_work": true
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "shape": "S1-interactive",
+      "h100_tok_s": 40.84,
+      "mi300x_tok_s": 56.44,
+      "R": 1.382,
+      "usd_per_mtok_h100": 22.3773,
+      "usd_per_mtok_mi300x": 9.7941,
+      "cost_advantage": 2.28,
+      "equal_work": true
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "shape": "S2-interactive-load",
+      "h100_tok_s": 1200.02,
+      "mi300x_tok_s": 1319.48,
+      "R": 1.1,
+      "usd_per_mtok_h100": 0.7616,
+      "usd_per_mtok_mi300x": 0.4189,
+      "cost_advantage": 1.82,
+      "equal_work": true
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "shape": "S3-batch",
+      "h100_tok_s": 965.35,
+      "mi300x_tok_s": 1065.77,
+      "R": 1.104,
+      "usd_per_mtok_h100": 0.9467,
+      "usd_per_mtok_mi300x": 0.5187,
+      "cost_advantage": 1.83,
+      "equal_work": true
+    }
+  ],
+  "equal_work_ok_all_points": true,
+  "accuracy_smoke": {
+    "method": "20 prompts, temperature=0, 64 tokens, exact string compare",
+    "Qwen2.5-7B-Instruct_identical": "16/20",
+    "Qwen2.5-32B-Instruct_identical": "16/20",
+    "reading": "Textual divergence mid-generation from cross-vendor floating-point nondeterminism. Content remained correct in every diverging case (e.g. 'a subset of AI' vs 'a type of AI'). This is NOT evidence for SemiAnalysis's '25% of models fail accuracy tests on ROCm' -- that is a claim about benchmark scores, not greedy-decode determinism. 0/40 produced incorrect or degraded content."
+  },
+  "predictions_scored": {
+    "1_R>=0.75_on_S3_batch": "CORRECT (1.09 / 1.10)",
+    "2_R<0.75_on_S1_interactive_c1": "WRONG, and by the largest margin -- measured 1.32 / 1.38. This was SemiAnalysis's strongest claim and the plan's moderate-confidence prediction.",
+    "3_32B_favours_MI300X_more_than_7B": "CORRECT (1.38/1.10/1.10 vs 1.32/1.02/1.09)",
+    "4_shape_scoped_survival_not_clean_pass": "WRONG -- clean pass at all six points"
+  },
+  "caveats": [
+    "Single box per vendor, single session, no cross-box replication.",
+    "Engine versions differ (0.26.0 vs 0.23.1); handicap favours H100 so the PASS is robust, but the exact ratios are not a matched-version measurement.",
+    "MI300X is a VF (virtualised) instance and still won.",
+    "Cost ratio is provider-confounded: AMD devcloud $1.99 vs RunPod $3.29. It is NOT a property of the silicon.",
+    "Qwen2.5 dense models only -- no MoE, no long-context, no FP8."
+  ]
+}

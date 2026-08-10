@@ -230,8 +230,25 @@ operator — the customer never sees which engine runs under the API. That is a 
 
 | Input | Plan value | Breaks if | Consequence |
 |---|---|---|---|
-| MI300X committed rate | $2.20/hr **[A]** | >$2.80/hr | Lever B gone; §6.2 margin → ~19% |
-| MI300X vs H100 token throughput | parity **[A]** | <0.75× | Lever B gone even at $2.20 |
+| MI300X committed rate | $2.20/hr modelled; **$1.99/hr observed [V]** | >$2.80/hr | Lever B gone; §6.2 margin → ~19% |
+| ~~MI300X vs H100 token throughput~~ | **MEASURED 2026-08-09: `R = 1.02–1.38×` [V]** | ~~<0.75×~~ **did not fire** | **Criterion cleared.** See `docs/LLM_SILICON_GATE_RESULT.md` |
+
+**The throughput criterion is no longer an assumption.** Measured on
+2026-08-09 under a pre-registered plan (`docs/LLM_SILICON_GATE_PLAN.md`): a
+single MI300X matched or beat a single H100 on output throughput at **every
+shape and both models** tested — Qwen2.5-7B and -32B, interactive at
+concurrency 1 and 32, and prefill-heavy batch — giving **1.7–2.3× lower cost
+per million output tokens** at observed prices ($1.99/hr vs $3.29/hr). The
+result is a *lower bound*: the AMD leg ran an older vLLM (0.23.1 vs 0.26.0),
+a handicap that favours H100.
+
+**Three limits on that claim, which belong in any external use of it:** it
+covers **dense Qwen2.5-class models only** (no MoE, no long-context, no FP8);
+it is **one box per vendor, one session**; and the cost half is
+**provider-confounded** — $1.99 is AMD Developer Cloud and $3.29 is RunPod, so
+part of the advantage is procurement rather than engineering, and procurement
+advantages are less durable. The throughput half is a clean silicon comparison;
+the cost half is not.
 | ~~Lever A on LLM~~ | **withdrawn 2026-07-27** | — | **Not a differentiator.** The 1.5× is real but available to every provider running the same engine; we could not capture it for customers who don't already send `n=N`. §6.3 rewritten below |
 | Utilization | 70% **[A]** | <50% | All margins ~20 points thinner. **Most likely early failure mode** |
 | Tail willingness to pay per call | assumed **[A]** | customers insist on GPU-hours | S2 wedge collapses to commodity hosting |
