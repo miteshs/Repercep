@@ -134,6 +134,41 @@ expected and unremarkable; any divergence beyond the first few tokens is a
 finding worth reporting even though it does not move the gate.** Bit-exactness
 across vendors is not expected and is not the bar.
 
+## 6b. AMENDMENT 2026-08-09 — engine-version asymmetry, written before the MI300X run
+
+Discovered while preparing the MI300X leg, and recorded **before** any AMD
+measurement so it cannot be used to explain away a result afterwards.
+
+The H100 leg ran **vLLM 0.26.0** (PyPI). On MI300X, the newest vLLM available in
+AMD's official `rocm/vllm` images is **0.23.0**
+(`rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0`). The full set
+for gfx942 tops out there. Building 0.26.0 from ROCm source is possible but
+vLLM's own docs note `pip install .` does not work on ROCm and it needs a
+`setup.py develop` build with `PYTORCH_ROCM_ARCH="gfx90a;gfx942"` — a long
+compile with real failure risk, and not worth the box time.
+
+So the two legs cannot be version-matched today. §4 already pre-declared this
+class of confound ("if vLLM's ROCm build differs materially… we are comparing
+feature sets, not chips"); this is that confound, made concrete.
+
+**The confound is directional, and that makes one outcome already decisive.**
+0.23.0 is three minor versions behind 0.26.0, so any engine-level improvement in
+between accrues to the H100 side. The handicap therefore runs **against** AMD.
+Consequently:
+
+- **If `R ≥ 0.75` despite the handicap → the gate passes, robustly.** A
+  conclusion that survives a bias pointing the other way does not need the
+  matched re-run. Report it as a *lower bound* on AMD's true position.
+- **If `R < 0.75` → the result is NOT decisive and Lever B is not withdrawn on
+  it.** Part of the gap could be three versions of engine work rather than
+  silicon. The correct follow-up is a short H100 re-run pinned to
+  `vllm==0.23.0` (cheap: PyPI has CUDA wheels for it), and the gate is decided
+  on *that* pair.
+
+Recording the asymmetry now is the whole point: without it written down, a
+failing result would look like a clean kill and a passing result would look
+lucky. Neither reading would be right.
+
 ## 7. Session scope and sequencing
 
 The H100 leg runs on RunPod, driven directly. **The MI300X leg needs a manual
