@@ -63,16 +63,21 @@ def main():
     # The plan's §4 requires any leg where this differs to say so in its first
     # paragraph; storing it means the JSON cannot silently lose that fact.
     ap.add_argument("--tensor-parallel-size", type=int, default=1)
+    # Default off so every dense-gate invocation is unchanged. Needed by some
+    # MoE checkpoints whose config carries an auto_map; a no-op where vLLM has
+    # a native implementation, and it does not affect what is measured.
+    ap.add_argument("--trust-remote-code", action="store_true")
     args = ap.parse_args()
 
     import torch
     gpu = torch.cuda.get_device_name(0)
     is_rocm = getattr(torch.version, "hip", None) is not None
 
-    tok = AutoTokenizer.from_pretrained(args.model)
+    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
     llm = LLM(model=args.model, dtype="bfloat16", max_model_len=args.max_model_len,
               enforce_eager=False, gpu_memory_utilization=0.90,
-              tensor_parallel_size=args.tensor_parallel_size)
+              tensor_parallel_size=args.tensor_parallel_size,
+              trust_remote_code=args.trust_remote_code)
 
     result = {
         "gpu": gpu, "vendor": "AMD" if is_rocm else "NVIDIA",
@@ -84,6 +89,7 @@ def main():
         "max_model_len": args.max_model_len,
         "tensor_parallel_size": args.tensor_parallel_size,
         "gpus_used": args.tensor_parallel_size,
+        "trust_remote_code": args.trust_remote_code,
         "shapes": [],
     }
     try:
