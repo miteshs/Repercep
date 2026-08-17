@@ -191,6 +191,7 @@ ignore = ["ANN401"]
 # FastAPI resolves route annotations at runtime (get_type_hints at startup),
 # so request/response types cannot live under TYPE_CHECKING here.
 "src/repercep/serving/app.py" = ["TCH"]
+"src/repercep/serving/llm_proxy.py" = ["TCH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

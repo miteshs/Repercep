@@ -43,3 +43,26 @@ class RuntimeConfig(BaseSettings):
         None,
         description="HuggingFace token for gated weights (Cosmos). Prefer REPERCEP_HF_TOKEN.",
     )
+
+    # --- Co-located LLM proxy (see docs/LLM_PROXY.md) ---
+    # The gateway can reverse-proxy an OpenAI-compatible LLM server (vLLM /
+    # SGLang) running alongside the world-model runtime — same box, same auth,
+    # same MI300X — WITHOUT routing that traffic through the world-model
+    # scheduler/driver, which would serialize the upstream's own continuous
+    # batching. Off by default: deployment coverage for an embodied stack's
+    # language head, not a Repercep headline.
+    llm_enabled: bool = Field(
+        False, description="Expose the co-located OpenAI-compatible LLM proxy endpoints."
+    )
+    llm_upstream_url: str = Field(
+        "http://127.0.0.1:8001",
+        description="Base URL of the co-located vLLM/SGLang OpenAI server.",
+    )
+    llm_upstream_timeout_s: float = Field(
+        600.0, gt=0, description="Per-request timeout when proxying to the LLM upstream."
+    )
+    llm_upstream_api_key: str | None = Field(
+        None,
+        description="Bearer token for a secured upstream (vLLM --api-key). Injected on "
+        "upstream calls; the client's own Authorization header is never forwarded.",
+    )
