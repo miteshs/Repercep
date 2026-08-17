@@ -52,6 +52,17 @@ def main():
     ap.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     ap.add_argument("--max-model-len", type=int, default=8192)
     ap.add_argument("--out", default="/workspace/gate_result.json")
+    # Added 2026-08-16 for the MoE gate (docs/LLM_MOE_GATE_PLAN.md). The dense
+    # gate ran TP=1 on both vendors, which is why this never existed. Mixtral
+    # 8x7B in bf16 (~87 GB) fits MI300X's 192 GB and does NOT fit one 80 GB
+    # H100, so the H100 leg cannot be expressed at all without this flag.
+    #
+    # It is recorded in the result JSON because a TP=1-vs-TP=2 comparison is a
+    # per-NODE result, not a per-GPU one. Quoting it as a silicon ratio would
+    # be exactly the class of fake number the Cosmos 3 batching gate caught.
+    # The plan's §4 requires any leg where this differs to say so in its first
+    # paragraph; storing it means the JSON cannot silently lose that fact.
+    ap.add_argument("--tensor-parallel-size", type=int, default=1)
     args = ap.parse_args()
 
     import torch
@@ -60,7 +71,8 @@ def main():
 
     tok = AutoTokenizer.from_pretrained(args.model)
     llm = LLM(model=args.model, dtype="bfloat16", max_model_len=args.max_model_len,
-              enforce_eager=False, gpu_memory_utilization=0.90)
+              enforce_eager=False, gpu_memory_utilization=0.90,
+              tensor_parallel_size=args.tensor_parallel_size)
 
     result = {
         "gpu": gpu, "vendor": "AMD" if is_rocm else "NVIDIA",
@@ -70,6 +82,8 @@ def main():
         "attention_backend": os.environ.get("VLLM_ATTENTION_BACKEND", "<default>"),
         "model": args.model, "dtype": "bfloat16",
         "max_model_len": args.max_model_len,
+        "tensor_parallel_size": args.tensor_parallel_size,
+        "gpus_used": args.tensor_parallel_size,
         "shapes": [],
     }
     try:

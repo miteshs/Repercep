@@ -38,7 +38,7 @@ new code, no new metrics, no new shapes.
 
 | | |
 |---|---|
-| Harness | `scripts/bench_llm_silicon_gate.py`, **unchanged** |
+| Harness | `scripts/bench_llm_silicon_gate.py` + a `--tensor-parallel-size` flag (§2.2) |
 | Engine | vLLM, same rationale as the dense gate (most mature ROCm path) |
 | Model | **`mistralai/Mixtral-8x7B-Instruct-v0.1`** (~87 GB bf16) — primary |
 | Fallback | If Mixtral will not serve on one side, `Qwen/Qwen3-30B-A3B` |
@@ -63,7 +63,27 @@ smaller MoE. See §4 — this confound is the main design risk in the gate.
 Reusing the shapes verbatim is the point: the dense result is the control, and
 a shape change would make the two ungraphable together.
 
-### 2.2 Metrics
+### 2.2 The one harness change, made before the run
+
+The dense gate ran TP=1 on both vendors, so `bench_llm_silicon_gate.py` never
+had a tensor-parallel option — it took vLLM's default of 1. **The H100 leg of
+a Mixtral run could therefore not be expressed at all.** Added 2026-08-16,
+before any measurement:
+
+- `--tensor-parallel-size` (default 1, so every dense-gate invocation is
+  byte-identical in behaviour to before).
+- `tensor_parallel_size` and `gpus_used` are written into the result JSON.
+
+The second half is the part that matters. A TP=1-vs-TP=2 run is a **per-node**
+comparison, not a per-GPU one, and recording it in the artifact means the
+number cannot later be quoted as a silicon ratio by someone reading the JSON
+without the plan. §4's first confound is the reason.
+
+Recorded here rather than in a commit message alone because the plan is the
+binding document: the capability was added, the default is unchanged, and no
+metric or shape moved.
+
+### 2.3 Metrics
 
 Primary: **median output tokens/sec**, per shape, per model. Secondary: TTFT,
 end-to-end latency, completion-token totals (the equal-work check, enforced
