@@ -37,7 +37,19 @@ kernels/cpu/*/*.so
 # uv lockfile — repo flow is `uv venv` / `uv pip install`, not `uv sync`
 uv.lock
 
-# repercep.ai marketing site (published separately, not Repercep source)
+# repercep.ai marketing site — NOT Repercep source. Canonical location is the
+# separate PUBLIC repo github.com/miteshs/repercep-site (~/Projects/repercep-site),
+# published to https://repercep.ai via GitHub Pages. Edit there, never here.
+#
+# A local site/ directory is therefore an untracked MIRROR that goes stale
+# silently. On 2026-08-16 a project audit read this stale copy, found the
+# pre-pivot "compute substrate for world models" framing plus the dropped
+# Repercep Worlds product, and concluded the public site contradicted the pivot
+# strategy — which was WRONG; the live site had been correct for weeks.
+#
+# Also: this repo is PRIVATE and holds confidential strategy/pricing/partner
+# material. Never copy content from here into a repercep-site path, including
+# an unreferenced file — GitHub Pages still serves it.
 site/
 *.pdf
 

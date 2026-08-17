@@ -113,6 +113,16 @@ to how inference works here? Start the line-by-line tour at
 - [`docs/walkthroughs/`](docs/walkthroughs/) — line-by-line tour of Cosmos inference, outermost → kernel
 - [`docs/walkthroughs-vjepa2-ac/`](docs/walkthroughs-vjepa2-ac/) — the same, for the interactive / energy-based path
 
+## The marketing site is a different repo
+
+repercep.ai is **not** built from this repository. It lives in the separate
+**public** repo `github.com/miteshs/repercep-site` and deploys via GitHub Pages.
+A local `site/` directory here is a gitignored mirror that goes stale silently —
+edit the site repo, not this one, and treat anything under `site/` as
+untrustworthy. This repo is private and holds confidential material; never copy
+from here into a site path, including an unreferenced file, because Pages still
+serves it.
+
 ## Requirements
 
 - An AMD GPU host with **ROCm 7.x** installed (`/dev/kfd` readable by your user).
