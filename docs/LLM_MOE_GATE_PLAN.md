@@ -40,8 +40,9 @@ new code, no new metrics, no new shapes.
 |---|---|
 | Harness | `scripts/bench_llm_silicon_gate.py` + a `--tensor-parallel-size` flag (§2.2) |
 | Engine | vLLM, same rationale as the dense gate (most mature ROCm path) |
-| Model | **`mistralai/Mixtral-8x7B-Instruct-v0.1`** (~87 GB bf16) — primary |
-| Fallback | If Mixtral will not serve on one side, `Qwen/Qwen3-30B-A3B` |
+| Model | **`deepseek-ai/DeepSeek-V2-Lite`** (~31 GB bf16) — decided 2026-08-16, see §2.1a |
+| ~~Primary~~ | ~~`mistralai/Mixtral-8x7B-Instruct-v0.1`~~ — **rejected**, does not fit one H100 |
+| ~~Fallback~~ | ~~`Qwen/Qwen3-30B-A3B`~~ — **rejected on arithmetic**, §2.1a |
 | Precision | bf16 both sides. No FP8 on either, even where supported |
 | Client | co-located on the pod, against `127.0.0.1` |
 | Repeats | 5 timed, median reported, warm-up discarded |
@@ -51,6 +52,55 @@ Mixtral-8x7B at ~87 GB bf16 **fits MI300X's 192 GB and does not fit a single
 80 GB H100.** That is not an accident and it must not be quoted as a throughput
 win: the H100 leg therefore needs either tensor-parallel across 2× H100 or a
 smaller MoE. See §4 — this confound is the main design risk in the gate.
+
+### 2.1a Model decision — settled on arithmetic, before any box was created
+
+The instruction was "the smaller MoE that fits both sides single-GPU." Working
+out which model that actually *is* eliminated the plan's own named fallback.
+
+Config values read from each model's `config.json`; KV per token is
+`2 × kv_heads × head_dim × layers × 2 bytes` (MLA models instead carry
+`kv_lora_rank + rope_dim` per layer). The binding shape is **S3-batch**, whose
+working set is `32 × (4096 + 128) = 135,168` tokens. H100 budget is
+`80 GB × 0.90 = 72 GB` minus weights.
+
+| candidate | weights bf16 | KV/token | S3 KV need | H100 KV free | verdict |
+|---|---:|---:|---:|---:|---|
+| Mixtral-8x7B | ~87 GB | 24 KiB | 3.1 GiB | **negative** | **does not fit at all** |
+| Qwen3-30B-A3B | ~61 GB | 96 KiB | **12.4 GiB** | **~11 GB** | **does not fit** |
+| Qwen1.5-MoE-A2.7B | ~29 GB | 192 KiB | 24.8 GiB | ~43 GB | fits, but a 2024-era model |
+| **DeepSeek-V2-Lite** | **~31 GB** | **30 KiB** | **4.0 GiB** | **~41 GB** | **fits, large headroom** |
+
+**Why Qwen3-30B-A3B was rejected, and why it matters more than it looks.** It
+*loads* on an 80 GB H100 — 61 GB of weights leaves ~11 GB for KV — but the
+S3-batch working set needs ~12.4 GiB. vLLM would not crash; it would preempt
+and queue, quietly serving fewer concurrent requests. MI300X, with ~111 GB of
+KV headroom after the same weights, would run the full batch.
+
+That produces an MI300X win **on S3-batch that is a memory-capacity result
+wearing a throughput result's clothes** — and it would inflate our own number,
+which is the direction we have the least licence to be wrong in. It is the
+same failure mode as the Mixtral fit asymmetry (§4), one level less obvious,
+and it would have been invisible in the output JSON.
+
+**Why DeepSeek-V2-Lite is the right answer rather than merely a working one.**
+It is the **DeepSeek architecture** — the exact family §1 names as the source
+of SemiAnalysis's NVIDIA-favourable findings, so it probes the counter-example
+head-on instead of near it. Its MLA attention is also a genuinely distinct
+kernel path where ROCm maturity is most likely to differ from CUDA's, which is
+the highest-information place to look. And at 30 KiB/token of KV it clears
+every shape on both GPUs with room to spare, so **nothing in the result can be
+attributed to memory capacity.**
+
+Recorded risk, in advance: **MLA on ROCm under vLLM 0.23.x is the least
+certain part of this gate.** If it will not serve, that is not a failed
+experiment — a DeepSeek-class model failing to run on ROCm is a first-class
+finding and gets published as one under §3's outcome 3.
+
+The 16B/2.4B size is smaller than the dense gate's 32B. Stated plainly so it
+is not discovered later: this gate answers "does the advantage survive an MoE
+*architecture*", not "does it survive a *large* MoE." The latter needs
+multi-GPU and is out of scope by §6's one-day rule.
 
 ### 2.1 Workload shapes — identical to the dense gate, reported separately
 
