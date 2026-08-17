@@ -1,0 +1,156 @@
+{
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "vendor": "NVIDIA",
+  "torch": "2.11.0+cu130",
+  "hip": null,
+  "cuda": "13.0",
+  "attention_backend": "<default>",
+  "model": "deepseek-ai/DeepSeek-V2-Lite",
+  "dtype": "bfloat16",
+  "max_model_len": 8192,
+  "tensor_parallel_size": 1,
+  "gpus_used": 1,
+  "trust_remote_code": true,
+  "shapes": [
+    {
+      "tag": "S1-interactive",
+      "prompt_toks": 512,
+      "decode": 512,
+      "conc": 1,
+      "elapsed_s_median": 2.1424,
+      "elapsed_s_all": [
+        2.1447,
+        2.1415,
+        2.1439,
+        2.1417,
+        2.1424
+      ],
+      "generated_tokens": 512,
+      "expected_tokens": 512,
+      "equal_work_ok": true,
+      "output_tok_per_s": 238.99,
+      "per_request_latency_s": 2.1424
+    },
+    {
+      "tag": "S2-interactive-load",
+      "prompt_toks": 512,
+      "decode": 512,
+      "conc": 32,
+      "elapsed_s_median": 4.9761,
+      "elapsed_s_all": [
+        4.6328,
+        4.8232,
+        4.9761,
+        4.9762,
+        4.9835
+      ],
+      "generated_tokens": 16384,
+      "expected_tokens": 16384,
+      "equal_work_ok": true,
+      "output_tok_per_s": 3292.56,
+      "per_request_latency_s": 4.9761
+    },
+    {
+      "tag": "S3-batch",
+      "prompt_toks": 4096,
+      "decode": 128,
+      "conc": 32,
+      "elapsed_s_median": 1.8185,
+      "elapsed_s_all": [
+        1.8294,
+        1.8185,
+        1.826,
+        1.8071,
+        1.8079
+      ],
+      "generated_tokens": 4096,
+      "expected_tokens": 4096,
+      "equal_work_ok": true,
+      "output_tok_per_s": 2252.35,
+      "per_request_latency_s": 1.8185
+    }
+  ],
+  "vllm": "0.23.0",
+  "accuracy_smoke": [
+    {
+      "prompt": "What is the capital of France?",
+      "output": "\nParis is the capital of France.\nWhat is the capital of the United States?\nWashington, D.C. is the capital of the United States.\nWhat is the capital of the United Kingdom?\nLondon is the capital of the United Kingdom.\nWhat is the capital of Germany?\nBerlin is"
+    },
+    {
+      "prompt": "Explain gravity in one sentence.",
+      "output": "\n\nGravity is the force that attracts objects with mass to each other.\n\nWhat is the difference between mass and weight?\n\nMass is the amount of matter in an object. Weight is the force of gravity on an object.\n\nWhat is the difference between inertia and mass?\n\nInertia"
+    },
+    {
+      "prompt": "Write a haiku about winter.",
+      "output": "\nI\u2019m not sure what a haiku is, but I\u2019ll give it a try.\nWinter is cold and white\nSnowflakes fall from the sky\nI\u2019m ready for spring\nWhat is your favorite winter activity?\nI love to go sledding with my kids.\nWhat is your"
+    },
+    {
+      "prompt": "What is 17 * 23?",
+      "output": "\n391\nWhat is the product of 0.01 and 0.01?\n0.0001\nWhat is the product of 0.01 and 0.01?\n0.0001\nWhat is the product of 0.0"
+    },
+    {
+      "prompt": "Name three primary colors.",
+      "output": "\n\nRed, blue, and yellow.\n\nWhat is the name of the first color in the rainbow?\n\nRed.\n\nWhat is the name of the second color in the rainbow?\n\nOrange.\n\nWhat is the name of the third color in the rainbow?\n\nYellow.\n"
+    },
+    {
+      "prompt": "Who wrote Pride and Prejudice?",
+      "output": "\nJane Austen\nWhat is the setting of Pride and Prejudice?\nEngland, 1813\nWhat is the main conflict in Pride and Prejudice?\nThe main conflict in Pride and Prejudice is the conflict between Elizabeth and Darcy.\nWhat is the climax of Pride and Prejud"
+    },
+    {
+      "prompt": "What does HTTP stand for?",
+      "output": "\nHypertext Transfer Protocol\nWhat is the difference between HTTP and HTTPS?\nHTTP is the protocol that is used to transfer data between a web browser and a web server. HTTPS is a secure version of HTTP. It is used to transfer data between a web browser and a web server.\nWhat is the difference between"
+    },
+    {
+      "prompt": "Define entropy briefly.",
+      "output": "\n\n## Entropy\n\nEntropy is a measure of the disorder of a system.\n\nThe entropy of a system is the amount of energy that is unavailable to do work.\n\nThe entropy of a system is a measure of the disorder of the system.\n\nThe entropy of a system is a"
+    },
+    {
+      "prompt": "What is the boiling point of water in Celsius?",
+      "output": "\n\n100\u00b0C\n\n### What is the boiling point of water in Fahrenheit?\n\n212\u00b0F\n\n### What is the boiling point of water in Kelvin?\n\n373.15 K\n\n### What is the boiling point of water in Rankine?\n"
+    },
+    {
+      "prompt": "Translate 'good morning' to Spanish.",
+      "output": "\n\n1. _______________________\n\n2. _______________________\n\n3. _______________________\n\n4. _______________________\n\n5. _______________________\n\n6. _______________________\n\n7. _______________________\n\n8. _______________________"
+    },
+    {
+      "prompt": "What is the largest planet?",
+      "output": "\nThe largest planet in the solar system is Jupiter.\nWhat is the smallest planet?\nThe smallest planet in the solar system is Mercury.\nWhat is the hottest planet?\nThe hottest planet in the solar system is Venus.\nWhat is the coldest planet?\nThe coldest planet in the solar system"
+    },
+    {
+      "prompt": "Summarize photosynthesis in one line.",
+      "output": "\nAnswer: Photosynthesis is the process by which green plants prepare their food.\nQuestion 2.\nWhat is the role of chlorophyll in photosynthesis?\nAnswer: Chlorophyll is the green pigment present in the chloroplasts of the leaves. It absorbs light energy from the sun and uses it to convert"
+    },
+    {
+      "prompt": "What year did the Apollo 11 landing occur?",
+      "output": "\nWhat was the name of the first man to walk on the moon?\nWhat was the name of the first woman to walk on the moon?\nWhat was the name of the first man to walk on the moon?\nWhat was the name of the first woman to walk on the moon?\nWhat was the"
+    },
+    {
+      "prompt": "What is a prime number?",
+      "output": "\nA prime number is a whole number with exactly two integral divisors, 1 and itself.\n\n## What is the prime factorization of 10000000000000000000000000000000000"
+    },
+    {
+      "prompt": "Name the longest river in Africa.",
+      "output": "\n\nA. Nile\n\nB. Congo\n\nC. Niger\n\nD. Zambezi\n\nAnswer: A\n\nQuestion 10.\n\nWhich of the following is the largest country in Africa?\n\nA. Algeria\n\nB. Egypt\n\nC. Nigeria\n"
+    },
+    {
+      "prompt": "What is the speed of light?",
+      "output": "\n\n## What is the speed of light?\n\nThe speed of light in a vacuum is 299,792,458 metres per second, or about 186,282 miles per second.\n\n## What is the speed of light in a vacuum?\n"
+    },
+    {
+      "prompt": "Define recursion in programming.",
+      "output": "\n\nRecursion is a programming technique that allows a function to call itself repeatedly until a certain condition is met. It is a powerful tool for solving complex problems, but it can also be difficult to understand and debug.\n\n## What is recursion in programming?\n\nRecursion is a programming technique that allows a"
+    },
+    {
+      "prompt": "What is the chemical symbol for gold?",
+      "output": "\nGold is the chemical symbol Au.\nWhat is the chemical symbol for gold?\nGold is the chemical symbol Au.\nWhat is the chemical symbol for gold?\nGold is the chemical symbol Au.\nWhat is the chemical symbol for gold?\nGold is the chemical symbol Au.\nWhat is the chemical"
+    },
+    {
+      "prompt": "How many continents are there?",
+      "output": "\nThere are seven continents in the world. They are:\n- Africa\n- Antarctica\n- Asia\n- Australia\n- Europe\n- North America\n- South America\nWhat is the largest continent?\nThe largest continent is Asia. It covers 30% of the Earth\u2019s land surface.\n"
+    },
+    {
+      "prompt": "What is machine learning?",
+      "output": "\nMachine learning is a branch of artificial intelligence that uses algorithms to learn from data and make predictions or decisions without being explicitly programmed. It is a subset of artificial intelligence that focuses on the development of computer programs that can improve their performance through experience.\nMachine learning algorithms are used to analyze large amounts of data and identify patterns"
+    }
+  ]
+}

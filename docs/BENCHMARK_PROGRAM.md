@@ -85,10 +85,20 @@ is a decision-changing reason and it gets run. Curiosity is not.
 
 ---
 
-## 4. The one exception: an MoE row
+## 4. The one exception: an MoE row — **RUN 2026-08-16, and it FAILED**
 
-Pre-registered separately in **`docs/LLM_MOE_GATE_PLAN.md`**. Scope: one day,
-one model pair, both boxes, no new harness.
+Pre-registered in **`docs/LLM_MOE_GATE_PLAN.md`**; result in
+**`docs/LLM_MOE_GATE_RESULT.md`**. Scope held: one day, one model pair, ~$8.40.
+
+**The counter-example is real.** At matched engine versions and default
+configuration, MI300X reached `R = 0.53 / 0.74 / 0.60` of H100 on
+DeepSeek-V2-Lite — failing the 0.75 threshold at every shape, where the dense
+gate had passed at 1.02–1.38. The silicon claim is now bounded by measurement
+rather than by caution, and "dense" is load-bearing in every external use of it.
+
+This is the outcome the §4 argument below said was *worth paying for*, and it
+paid: we found it ourselves, in writing, before a partner's engineer did. The
+reasoning that follows is left exactly as written before the run.
 
 The reasoning is adversarial rather than curious. Our silicon result covers
 **dense Qwen2.5 only**. SemiAnalysis's data most favours NVIDIA on
@@ -112,6 +122,10 @@ the only measurement worth spending time on before the raise.
 
 Explicitly, so this does not drift into a permanent stop:
 
+0. **Already reopened once, narrowly:** the MoE gate ran on 2026-08-16 and
+   failed (§4). It also surfaced a variable no gate had named — *kernel backend
+   selection*, worth 22–35% on ROCm — which is now a required pre-registered
+   variable for any future architecture gate.
 1. **After the round closes** — the deferred list in §3 becomes P1/P2 work.
 2. **On request from a named investor or design partner** — a question from
    someone deciding is decision-changing by definition.

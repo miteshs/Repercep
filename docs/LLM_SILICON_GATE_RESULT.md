@@ -81,6 +81,13 @@ output tokens.*
 **The claim that is NOT supportable** and must not be written anywhere: that
 this generalises to all models, all engines, or all providers. See §5.
 
+> **2026-08-16 — the "dense only" limit is now MEASURED, not precautionary.**
+> The MoE gate (`docs/LLM_MOE_GATE_RESULT.md`) ran DeepSeek-V2-Lite on both
+> vendors at matched engine versions and **the comparison inverts**: MI300X
+> reached only `R = 0.53 / 0.74 / 0.60` of H100, failing the 0.75 threshold at
+> every shape. Nothing in this document changes — but the word **"dense"** is
+> now load-bearing and must appear in any external use of the claim above.
+
 ---
 
 ## 3. Predictions scored — two of four wrong, including the headline one

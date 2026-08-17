@@ -242,8 +242,20 @@ per million output tokens** at observed prices ($1.99/hr vs $3.29/hr). The
 result is a *lower bound*: the AMD leg ran an older vLLM (0.23.1 vs 0.26.0),
 a handicap that favours H100.
 
+> **MEASURED LIMIT, 2026-08-16.** The "no MoE" caveat below is no longer a
+> precaution. `docs/LLM_MOE_GATE_RESULT.md` ran DeepSeek-V2-Lite on both
+> vendors at matched engine versions: **the comparison inverts on MoE** —
+> MI300X reached only `R = 0.53 / 0.74 / 0.60` of H100, failing the 0.75
+> threshold at every shape. The dense result stands exactly as measured; its
+> scope is now a boundary we have tested rather than assumed, and **"dense"
+> must appear in any external use of the silicon claim.** One operator-side
+> gain came out of it: ROCm's *default* kernel selection leaves 22–35% on the
+> table versus AMD's AITER library, though AITER's output divergence is
+> unresolved and it is not yet safe to deploy on that basis.
+
 **Three limits on that claim, which belong in any external use of it:** it
-covers **dense Qwen2.5-class models only** (no MoE, no long-context, no FP8);
+covers **dense Qwen2.5-class models only** (no MoE — now measured as a real
+boundary, above; no long-context, no FP8);
 it is **one box per vendor, one session**; and the cost half is
 **provider-confounded** — $1.99 is AMD Developer Cloud and $3.29 is RunPod, so
 part of the advantage is procurement rather than engineering, and procurement

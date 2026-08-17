@@ -1,0 +1,156 @@
+{
+  "gpu": "AMD Instinct MI300X VF",
+  "vendor": "AMD",
+  "torch": "2.11.0+rocm7.14.0",
+  "hip": "7.14.60850",
+  "cuda": null,
+  "attention_backend": "<default>",
+  "model": "deepseek-ai/DeepSeek-V2-Lite",
+  "dtype": "bfloat16",
+  "max_model_len": 8192,
+  "tensor_parallel_size": 1,
+  "gpus_used": 1,
+  "trust_remote_code": true,
+  "shapes": [
+    {
+      "tag": "S1-interactive",
+      "prompt_toks": 512,
+      "decode": 512,
+      "conc": 1,
+      "elapsed_s_median": 3.3235,
+      "elapsed_s_all": [
+        3.4519,
+        3.3215,
+        3.3128,
+        3.3235,
+        3.4036
+      ],
+      "generated_tokens": 512,
+      "expected_tokens": 512,
+      "equal_work_ok": true,
+      "output_tok_per_s": 154.06,
+      "per_request_latency_s": 3.3235
+    },
+    {
+      "tag": "S2-interactive-load",
+      "prompt_toks": 512,
+      "decode": 512,
+      "conc": 32,
+      "elapsed_s_median": 4.9723,
+      "elapsed_s_all": [
+        5.0677,
+        4.9498,
+        5.0866,
+        4.9723,
+        4.9327
+      ],
+      "generated_tokens": 16384,
+      "expected_tokens": 16384,
+      "equal_work_ok": true,
+      "output_tok_per_s": 3295.08,
+      "per_request_latency_s": 4.9723
+    },
+    {
+      "tag": "S3-batch",
+      "prompt_toks": 4096,
+      "decode": 128,
+      "conc": 32,
+      "elapsed_s_median": 2.2479,
+      "elapsed_s_all": [
+        2.1093,
+        2.3378,
+        2.2479,
+        2.1945,
+        2.2483
+      ],
+      "generated_tokens": 4096,
+      "expected_tokens": 4096,
+      "equal_work_ok": true,
+      "output_tok_per_s": 1822.18,
+      "per_request_latency_s": 2.2479
+    }
+  ],
+  "vllm": "0.23.1.dev1+g9ddef7117.d20260715",
+  "accuracy_smoke": [
+    {
+      "prompt": "What is the capital of France?",
+      "output": "\nParis\n\nWhat is the capital of Germany?\nBerlin\n\nWhat is the capital of Italy?\nRome\n\nWhat is the capital of Spain?\nMadrid\n\nWhat is the capital of the United Kingdom?\nLondon\n\nWhat is the capital of the United States?\nWashington, D."
+    },
+    {
+      "prompt": "Explain gravity in one sentence.",
+      "output": "\n\nGravity is the force that attracts objects with mass to each other.\n\nWhat is the difference between mass and weight?\n\nMass is the amount of matter in an object. Weight is the force of gravity on an object.\n\nWhat is the difference between inertia and momentum?\n\nInertia"
+    },
+    {
+      "prompt": "Write a haiku about winter.",
+      "output": "\n\n## 2. Write a haiku about spring.\n\n## 3. Write a haiku about summer.\n\n## 4. Write a haiku about fall.\n\n## 5. Write a haiku about a favorite season.\n\n## 6. Write a haiku"
+    },
+    {
+      "prompt": "What is 17 * 23?",
+      "output": "\n391\nWhat is the product of 0.01 and 0.01?\n0.0001\nWhat is the product of 0.01 and 0.01?\n0.0001\nWhat is the product of 0.0"
+    },
+    {
+      "prompt": "Name three primary colors.",
+      "output": "\n\nRed, blue, and yellow.\n\nWhat is the name of the first color in the rainbow?\n\nRed.\n\nWhat is the name of the second color in the rainbow?\n\nOrange.\n\nWhat is the name of the third color in the rainbow?\n\nYellow.\n"
+    },
+    {
+      "prompt": "Who wrote Pride and Prejudice?",
+      "output": "\n, 1813\n, 1813\n, 1813\n, 1813\n, 1813\n, 1813\n, 1813\n, 1813\n, 1813\n"
+    },
+    {
+      "prompt": "What does HTTP stand for?",
+      "output": "\n\nHTTP stands for Hypertext Transfer Protocol.\n\nWhat is the difference between HTTP and HTTPS?\n\nHTTP is the standard protocol used for transferring data over the internet. HTTPS is a secure version of HTTP that uses SSL/TLS encryption to protect data in transit.\n\nWhat is the difference between GET and"
+    },
+    {
+      "prompt": "Define entropy briefly.",
+      "output": "\n\n- Entropy is a measure of the randomness of a system.\n- Entropy is a measure of the disorder of a system.\n- Entropy is a measure of the uncertainty of a system.\n\n- Entropy is a measure of the randomness of a system.\n\n- Entropy is"
+    },
+    {
+      "prompt": "What is the boiling point of water in Celsius?",
+      "output": "\nThe boiling point of water in Celsius is 100 degrees.\n\n## What is the boiling point of water in Fahrenheit?\nThe boiling point of water in Fahrenheit is 212 degrees.\n\n## What is the boiling point of water in Kelvin?\nThe boiling point of water in Kelvin"
+    },
+    {
+      "prompt": "Translate 'good morning' to Spanish.",
+      "output": "\n\n1. _______________________\n\n2. _______________________\n\n3. _______________________\n\n4. _______________________\n\n5. _______________________\n\n6. _______________________\n\n7. _______________________\n\n8. _______________________"
+    },
+    {
+      "prompt": "What is the largest planet?",
+      "output": "\n.\n\n## What is the smallest planet?\nMercury\n\n## What is the biggest planet in the solar system?\nJupiter\n\n## What is the smallest planet in the solar system?\nMercury\n\n## What is the biggest planet in the solar system?\nJupiter\n\n"
+    },
+    {
+      "prompt": "Summarize photosynthesis in one line.",
+      "output": "\nPhotosynthesis is the process by which plants make their own food.\nWhat is the process of photosynthesis?\nThe process of photosynthesis is the process by which plants make their own food.\nWhat is the process of photosynthesis?\nThe process of photosynthesis is the process by which plants make their own"
+    },
+    {
+      "prompt": "What year did the Apollo 11 landing occur?",
+      "output": "\nWhat year did the first man land on the moon?\nWhat year did the first man land on the moon?\nWhat year did the first man land on the moon?\nWhat year did the first man land on the moon?\nWhat year did the first man land on the moon?\nWhat year did"
+    },
+    {
+      "prompt": "What is a prime number?",
+      "output": "\nPrime numbers are natural numbers greater than 1 that are only divisible by 1 and themselves.\nFor example, 13 is a prime number because it is only divisible by 1 and 13.\n\n## How do you find the prime factors of a number?\nTo find the prime factors"
+    },
+    {
+      "prompt": "Name the longest river in Africa.",
+      "output": "\n\nA. Nile\n\nB. Congo\n\nC. Niger\n\nD. Zambezi\n\nAnswer: A\n\nQuestion 10.\n\nWhich of the following is the largest country in Africa?\n\nA. Algeria\n\nB. Egypt\n\nC. Nigeria\n"
+    },
+    {
+      "prompt": "What is the speed of light?",
+      "output": "\n\n## What is the speed of light?\n\nThe speed of light in a vacuum is 299,792,458 metres per second, or about 186,282 miles per second.\n\n## What is the speed of light in a vacuum?\n"
+    },
+    {
+      "prompt": "Define recursion in programming.",
+      "output": "\n\nRecursion is a programming technique in which a function calls itself.\n\nRecursion is a programming technique in which a function calls itself.\n\nRecursion is a programming technique in which a function calls itself.\n\nRecursion is a programming technique in which a function calls itself.\n\nRecursion"
+    },
+    {
+      "prompt": "What is the chemical symbol for gold?",
+      "output": "\nThe chemical symbol for gold is Au.\nWhat is the chemical symbol for silver?\nThe chemical symbol for silver is Ag.\nWhat is the chemical symbol for copper?\nThe chemical symbol for copper is Cu.\nWhat is the chemical symbol for lead?\nThe chemical symbol for lead is Pb.\n"
+    },
+    {
+      "prompt": "How many continents are there?",
+      "output": "\n, 2022-07-26 09:00:00,\nThe answer to this question is not as simple as you might think. There are seven continents, but they are not all the same size. The largest continent is Asia, which covers about 30"
+    },
+    {
+      "prompt": "What is machine learning?",
+      "output": "\n\nMachine learning is a branch of artificial intelligence that uses algorithms to learn from data and make predictions or decisions without being explicitly programmed.\n\nWhat is deep learning?\n\nDeep learning is a subset of machine learning that uses artificial neural networks to learn from data and make predictions or decisions.\n\nWhat is reinforcement"
+    }
+  ]
+}
