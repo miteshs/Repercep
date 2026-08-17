@@ -47,6 +47,20 @@ Security: the client's own `Authorization` (the *gateway* token) is **never**
 forwarded upstream. If the upstream is secured (`vllm serve --api-key`), set
 `REPERCEP_LLM_UPSTREAM_API_KEY` and the proxy injects it.
 
+## Metering
+
+When the gateway runs with `REPERCEP_GATEWAY_DB` set, every call proxied here
+is attributed to the calling customer's API key and token-metered into the
+usage ledger. The proxy stays ignorant of *who* the caller is — it reports
+what was spent and lets the gateway resolve attribution.
+
+The passthrough remains byte-identical to the upstream's response, with one
+deliberate exception on the streaming path: where the client did not specify
+`stream_options`, the proxy asks the upstream for a usage chunk and then
+suppresses that chunk, so billing is exact and the client's stream is
+unchanged. See **`docs/METERED_GATEWAY.md`** for the full rationale, the
+estimated-token disclosure rule, and the operator CLI.
+
 ## Co-location on MI300X (the vendor-neutral part, for free)
 
 vLLM and SGLang both ship first-class ROCm support, so the LLM head runs on the

@@ -22,13 +22,22 @@ The driver thread, scheduler, and router are owned by the FastAPI app's
 from __future__ import annotations
 
 import asyncio
+import hmac
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import anyio
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -51,7 +60,9 @@ from repercep.runtime.types import (
     ResetRequest,
 )
 from repercep.serving.driver import EngineDriver, _SchedulerAdapter
-from repercep.serving.llm_proxy import LlmProxy
+from repercep.serving.llm_proxy import CallRecord, LlmProxy
+from repercep.serving.tenancy import LEGACY_KEY_ID, KeyStore, Principal
+from repercep.serving.usage import UsageEvent, UsageLedger, month_start
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -81,6 +92,14 @@ _DEFAULT_SESSION_IDLE_TIMEOUT_S = 300.0
 
 # Default per-request timeout when proxying to a co-located LLM upstream.
 _DEFAULT_LLM_TIMEOUT_S = 600.0
+
+# Attribution used when the gateway runs with no auth configured at all (the
+# local-dev default). Usage is still metered so a single-tenant box has a
+# working ledger the day it grows a second tenant.
+_ANONYMOUS = Principal(key_id="anonymous", customer="anonymous")
+
+# Attribution for the pre-tenancy shared bearer token.
+_LEGACY = Principal(key_id=LEGACY_KEY_ID, customer="legacy")
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +182,8 @@ def create_app(
     max_sessions: int = _DEFAULT_MAX_INTERACTIVE_SESSIONS,
     session_idle_timeout_s: float = _DEFAULT_SESSION_IDLE_TIMEOUT_S,
     api_token: str | None = None,
+    key_store: KeyStore | None = None,
+    usage_ledger: UsageLedger | None = None,
     llm_proxy: LlmProxy | None = None,
     llm_upstream_url: str | None = None,
     llm_upstream_timeout_s: float = _DEFAULT_LLM_TIMEOUT_S,
@@ -192,7 +213,19 @@ def create_app(
             every HTTP endpoint except ``/health``, and on the
             ``/v2/world/session`` WebSocket (header or ``?token=`` query
             param, checked before ``accept()``). ``None`` (default) disables
-            auth entirely — existing callers are unaffected.
+            auth entirely — existing callers are unaffected. Still accepted
+            alongside ``key_store``, so a deployment can migrate its callers
+            to per-customer keys without a flag day.
+        key_store: per-customer API keys
+            (:class:`~repercep.serving.tenancy.KeyStore`). When set, a caller
+            may authenticate with any live ``rpc_...`` key and every request
+            is attributed to that key's customer. This is what makes the
+            gateway multi-tenant; ``api_token`` alone cannot attribute or
+            revoke per customer.
+        usage_ledger: where per-call token usage is written
+            (:class:`~repercep.serving.usage.UsageLedger`). Required for
+            billing and for ``monthly_token_quota`` enforcement; without it
+            the gateway serves fine and records nothing.
         llm_proxy: a pre-built
             :class:`~repercep.serving.llm_proxy.LlmProxy` (e.g. with an
             injected client for tests). Takes precedence over
@@ -212,6 +245,25 @@ def create_app(
     active_interactive = interactive_engine
     active_sessions = 0
 
+    def _record_call(request: Request, record: CallRecord) -> None:
+        """Metering sink for the LLM proxy: attribute a call and store it."""
+        if usage_ledger is None:
+            return
+        principal: Principal = getattr(request.state, "principal", _ANONYMOUS)
+        usage_ledger.record(
+            UsageEvent(
+                key_id=principal.key_id,
+                customer=principal.customer,
+                route=record.route,
+                model=record.model,
+                prompt_tokens=record.prompt_tokens,
+                completion_tokens=record.completion_tokens,
+                exact=record.exact,
+                status=record.status,
+                latency_ms=record.latency_ms,
+            )
+        )
+
     active_llm_proxy = llm_proxy
     if active_llm_proxy is None and llm_upstream_url is not None:
         active_llm_proxy = LlmProxy(
@@ -219,12 +271,67 @@ def create_app(
             timeout_s=llm_upstream_timeout_s,
             api_key=llm_upstream_api_key,
         )
+    if active_llm_proxy is not None:
+        # Installed here rather than only at construction so an injected
+        # proxy is metered too — the gateway, not the proxy's builder, owns
+        # attribution.
+        active_llm_proxy.attach_call_sink(_record_call)
 
-    def _require_api_token(authorization: Annotated[str | None, Header()] = None) -> None:
-        if api_token is None:
+    def _resolve(bearer: str | None) -> Principal | None:
+        """Map a presented bearer credential to a principal.
+
+        ``None`` means reject. Order matters: per-customer keys are tried
+        first so a deployment that has both configured attributes traffic to
+        real customers rather than collapsing it into ``legacy``.
+        """
+        if key_store is None and api_token is None:
+            return _ANONYMOUS
+        if bearer is None:
+            return None
+        if key_store is not None:
+            principal = key_store.authenticate(bearer)
+            if principal is not None:
+                return principal
+        if api_token is not None and hmac.compare_digest(bearer, api_token):
+            return _LEGACY
+        return None
+
+    def _check_quota(principal: Principal) -> None:
+        """Reject a caller that has spent its monthly token allowance.
+
+        Enforced at call boundaries against *already-billed* usage, because
+        a call's token cost is unknowable until it completes. A customer can
+        therefore overshoot its quota by at most one call. That is the
+        standard behaviour for token quotas and it is deliberate — the
+        alternative (reserving a worst-case ``max_tokens`` up front) would
+        reject calls that would have fitted.
+        """
+        if principal.monthly_token_quota is None or usage_ledger is None:
             return
-        if authorization != f"Bearer {api_token}":
+        spent = usage_ledger.tokens_since(key_id=principal.key_id, since=month_start())
+        if spent >= principal.monthly_token_quota:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"monthly token quota exhausted "
+                    f"({spent}/{principal.monthly_token_quota})"
+                ),
+            )
+
+    def _require_api_token(
+        request: Request, authorization: Annotated[str | None, Header()] = None
+    ) -> None:
+        bearer = (
+            authorization.removeprefix("Bearer ")
+            if authorization is not None and authorization.startswith("Bearer ")
+            else None
+        )
+        principal = _resolve(bearer)
+        if principal is None:
             raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+        _check_quota(principal)
+        # Downstream handlers and the metering sink read attribution here.
+        request.state.principal = principal
 
     _auth = [Depends(_require_api_token)]
 
@@ -275,6 +382,36 @@ def create_app(
     @app.get("/v1/info", dependencies=_auth)
     def info() -> EngineInfo:
         return active_engine.info()
+
+    @app.get("/v1/usage", dependencies=_auth)
+    def usage(request: Request) -> dict[str, object]:
+        """The calling key's own month-to-date usage.
+
+        Scoped to the caller deliberately: this is the endpoint a customer
+        polls to see what they are spending, not an operator view. Key
+        management and cross-customer reporting are CLI-only (``repercep
+        keys`` / ``repercep usage``) so that no HTTP surface can mint or
+        enumerate credentials.
+        """
+        principal: Principal = getattr(request.state, "principal", _ANONYMOUS)
+        since = month_start()
+        if usage_ledger is None:
+            return {"key_id": principal.key_id, "metering": "disabled", "since": since}
+        rows = [
+            s for s in usage_ledger.summary(since=since) if s.key_id == principal.key_id
+        ]
+        spent = rows[0] if rows else None
+        return {
+            "key_id": principal.key_id,
+            "customer": principal.customer,
+            "since": since,
+            "calls": spent.calls if spent else 0,
+            "prompt_tokens": spent.prompt_tokens if spent else 0,
+            "completion_tokens": spent.completion_tokens if spent else 0,
+            "total_tokens": spent.total_tokens if spent else 0,
+            "estimated_tokens": spent.estimated_tokens if spent else 0,
+            "monthly_token_quota": principal.monthly_token_quota,
+        }
 
     @app.post("/v1/generate/stream", dependencies=_auth)
     def generate_stream(request: GenerationRequest) -> StreamingResponse:
@@ -394,13 +531,13 @@ def create_app(
         """
         nonlocal active_sessions
 
-        if api_token is not None:
+        if api_token is not None or key_store is not None:
             supplied = ws.query_params.get("token")
             if supplied is None:
                 auth_header = ws.headers.get("authorization", "")
                 if auth_header.startswith("Bearer "):
                     supplied = auth_header.removeprefix("Bearer ")
-            if supplied != api_token:
+            if _resolve(supplied) is None:
                 await ws.close(code=1008)
                 return
 
@@ -489,7 +626,12 @@ def create_app_from_config(config: RuntimeConfig | None = None) -> FastAPI:
     effect. Tests construct :func:`create_app` directly with explicit args.
     """
     cfg = config if config is not None else RuntimeConfig()
+    store = KeyStore(cfg.gateway_db) if cfg.gateway_db is not None else None
+    ledger = UsageLedger(cfg.gateway_db) if cfg.gateway_db is not None else None
     return create_app(
+        api_token=cfg.api_token,
+        key_store=store,
+        usage_ledger=ledger,
         llm_upstream_url=cfg.llm_upstream_url if cfg.llm_enabled else None,
         llm_upstream_timeout_s=cfg.llm_upstream_timeout_s,
         llm_upstream_api_key=cfg.llm_upstream_api_key,
