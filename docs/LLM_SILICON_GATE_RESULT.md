@@ -167,6 +167,10 @@ throughout.
 3. **Highest-value follow-up: an MoE model** (DeepSeek/Mixtral class). That is
    where SemiAnalysis's data most favours NVIDIA and where our coverage is
    zero — the shape most likely to produce a counter-example, which makes it
-   the one worth running next.
+   the one worth running next. **Pre-registered 2026-08-16 as
+   `docs/LLM_MOE_GATE_PLAN.md`; not yet run.** It is the one measurement
+   `docs/BENCHMARK_PROGRAM.md` holds open before the seed round, and its main
+   design risk is that Mixtral bf16 does not fit a single 80 GB H100 — see
+   that plan's §4 before running it.
 4. Matched-version re-run (`vllm==0.23.0` on H100) is now optional rather than
    required; it would sharpen ratios, not change the verdict.

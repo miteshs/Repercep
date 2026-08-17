@@ -367,16 +367,32 @@ business that the same assets support. That fallback is why the downside is boun
 
 ## 11. Open items before this plan is investor-ready
 
+**Updated 2026-08-16.** Three of the six are closed. What remains is
+uniformly commercial, which is itself the finding — see
+`docs/BENCHMARK_PROGRAM.md`.
+
 1. ~~**Run the §6.3 gate experiment.**~~ **Done 2026-07-27** — measured 1.5×, table
-   rebuilt, price posture revised down (`docs/LLM_BESTOFN_RESULT.md`). The follow-on that
-   now matters most: **benchmark against SGLang**, whose RadixAttention may close the
-   simultaneous-fan-out gap vLLM's APC leaves open. If it does, the lever shrinks against
-   that engine and §6.3 moves again.
-2. **Confirm the partner list** in §7.2 — replace `[CONFIRM]` with real status.
-3. **Measure MI300X LLM throughput vs H100** — §6.2 assumes parity and has never been
-   measured on our side. It is the second load-bearing assumption.
-4. **Get a committed MI300X quote** to replace the $2.20/hr **[A]** with a real number.
-5. **Fix `AUDIT` §1.2 P0 items** — no CI, failing lint/typecheck. A technical diligence
-   call will find these in ten minutes.
-6. **Decide on Repercep Worlds** (`PIVOT` §5.4) — recommend dropping; it is currently on
-   the public site and contradicts platform neutrality.
+   rebuilt, price posture revised down (`docs/LLM_BESTOFN_RESULT.md`). The SGLang
+   follow-on also ran (`6ca6889`): the lever measured *larger* on SGLang (1.67×), and
+   the claim was withdrawn anyway because we cannot capture it for the customer.
+2. ~~**Measure MI300X LLM throughput vs H100.**~~ **Done 2026-08-09** — `R = 1.02–1.38×`
+   at every shape, 1.7–2.3× cheaper per Mtok (`docs/LLM_SILICON_GATE_RESULT.md`).
+   §6.2's parity assumption is retired; the surviving scope limit is dense
+   Qwen2.5-class only, and the MoE counter-example is pre-registered but unrun
+   (`docs/LLM_MOE_GATE_PLAN.md`).
+3. ~~**Fix `AUDIT` §1.2 P0 items** — no CI, failing lint/typecheck.~~ **Done** — CI runs
+   ruff, `mypy --strict` and pytest plus a CPU end-to-end smoke on every PR and every
+   push to `main` (`.github/workflows/ci.yml`); all three are green. The metered
+   multi-tenant gateway that §8's P0 asks for now exists in part
+   (`docs/METERED_GATEWAY.md`): per-customer keys, exact token metering, an append-only
+   usage ledger, and quotas. Still missing from P0: self-serve signup, payments,
+   autoscaling, and a model catalog.
+4. **Confirm the partner list** in §7.2 — replace `[CONFIRM]` with real status.
+5. **Get a committed MI300X quote** to replace the $2.20/hr **[A]** with a real number.
+6. ~~**Decide on Repercep Worlds**~~ **Done 2026-08-16** — dropped from the public site
+   per `PIVOT` §5.4; the platform-neutrality contradiction is resolved.
+
+**The remaining two are both commercial, and so are all five of
+`decks/VC_QA.md` §6's losing questions.** No further measurement moves them.
+That is the explicit basis on which `docs/BENCHMARK_PROGRAM.md` closes the
+gate program until the round is done.
